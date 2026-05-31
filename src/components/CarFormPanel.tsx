@@ -45,8 +45,6 @@ export function CarFormPanel({
     : null;
   const formRef = useRef<HTMLFormElement>(null);
 
-  const prevSold = useRef(isSold);
-
   useEffect(() => {
     if (isSold) {
       const el = document.getElementById("car-selling");
