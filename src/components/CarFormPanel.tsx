@@ -171,288 +171,286 @@ export function CarFormPanel({
   };
 
   return (
-    <div className={`car-form-panel car-form-panel--${form.status === "مبيوعة" ? "sold" : "avail"}`}>
-      <header className="cf-header">
-        {onClose && (
-          <button
-            type="button"
-            className="cf-close"
-            onClick={onClose}
-            aria-label="إغلاق"
-            disabled={saving}
-          >
-            ×
-          </button>
-        )}
-        <div className="cf-header__info">
-          <p className="cf-header__line">{title}</p>
-          {plateLabel && (
-            <p className="cf-header__line" dir="ltr">{plateLabel}</p>
-          )}
-        </div>
-        <div className="cf-header__status">
-          <ElegantSwitch
-            checked={form.status === "مبيوعة"}
-            onChange={(checked) => onChange({ status: checked ? "مبيوعة" : "متوفرة" })}
-            offLabel="متوفرة"
-            onLabel="تم البيع"
-            offColor="#10b981"
-            onColor="#f43f5e"
-            direction="horizontal"
-            noLabels
-          />
-          <span className={`cf-status-label${form.status === "مبيوعة" ? " cf-status-label--sold" : ""}`}>
-            {form.status === "مبيوعة" ? "مبيوعة" : "متوفرة"}
-          </span>
-        </div>
-      </header>
-
-      <form className="car-form" onSubmit={handleSubmit} ref={formRef}>
-        <div className="cf-board">
-          <section className="cf-zone cf-zone--vehicle">
-            <h3 className="cf-zone__title">بيانات السيارة</h3>
-            <div className="cf-zone__body">
-          <div className="cf-board__row cf-board__row--vehicle">
-            <div className="cf-field cf-field--model">
-              <label className="cf-label" htmlFor="car-model">نوع السيارة</label>
-              <ComboBox
-                id="car-model"
-                value={form.model}
-                options={BYD_MODELS}
-                onChange={(v) => onChange({ model: v })}
-                transformInput={(v) => arabicKeyboardToEnglish(v).toUpperCase()}
-                placeholder="الموديل"
-                dir="ltr"
-                required
-                autoFocus={!isEditing}
-              />
-            </div>
-            <div className="cf-field cf-field--year">
-              <label className="cf-label" htmlFor="car-year">سنة الصنع</label>
-              <YearScrollField
-                id="car-year"
-                value={form.year}
-                onChange={(year) => onChange({ year })}
-                required
-              />
-            </div>
-            <div className="cf-field cf-field--color">
-              <label className="cf-label" htmlFor="car-color">اللون</label>
-              <ComboBox
-                id="car-color"
-                value={form.color}
-                options={CAR_COLORS}
-                onChange={(v) => onChange({ color: v })}
-                transformInput={englishKeyboardToArabic}
-                placeholder="لون"
-                required
-              />
-            </div>
-            <div className="cf-field cf-field--plate">
-              <label className="cf-label" htmlFor="car-num">رقم اللوحة</label>
-              <input
-                id="car-num" className="input" type="text" inputMode="decimal"
-                value={form.num} dir="ltr"
-                autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
-                onInput={(e) => patchEnglishText("num", e.currentTarget.value)}
-                onChange={(e) => patchEnglishText("num", e.target.value)}
-                onBlur={(e) => patchEnglishText("num", e.currentTarget.value)}
-                onFocus={(e) => e.target.select()}
-                onMouseUp={(e) => e.preventDefault()}
-                placeholder="12345"
-                required
-              />
-            </div>
-            <div className="cf-field cf-field--province">
-              <label className="cf-label" htmlFor="car-province">المحافظة</label>
-              <ComboBox
-                id="car-province"
-                value={form.province}
-                options={IRAQ_PROVINCES}
-                onChange={(v) => onChange({ province: v })}
-                transformInput={englishKeyboardToArabic}
-                placeholder="محافظة"
-                required
-              />
-            </div>
-            <div className="cf-field cf-field--chassis">
-              <label className="cf-label" htmlFor="car-chassis">رقم الشاصي</label>
-              <input
-                id="car-chassis" className="input" type="text"
-                value={form.chassis} dir="ltr"
-                autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
-                onInput={(e) => patchEnglishText("chassis", e.currentTarget.value)}
-                onChange={(e) => patchEnglishText("chassis", e.target.value)}
-                onBlur={(e) => patchEnglishText("chassis", e.currentTarget.value)}
-                placeholder="VIN"
-                required
-              />
-            </div>
-          </div>
-            </div>
-          </section>
-
-          <div className="cf-trade-split">
-            <section className="cf-zone cf-zone--purchase">
-              <h3 className="cf-zone__title">الشراء</h3>
-              <div className="cf-zone__body">
-                <div className="cf-board__row cf-board__row--deal">
-                  <div className="cf-field cf-field--price">
-                    <label className="cf-label" htmlFor="car-purchase">سعر الشراء</label>
-                    <NumberInput id="car-purchase" value={form.purchase} wheelMultiply={1000}
-                      onChange={(purchase) => onChange({ purchase })} required />
-                  </div>
-                  <div className="cf-field cf-field--date">
-                    <label className="cf-label">تاريخ الشراء</label>
-                    <UnifiedDateField
-                      value={form.purchaseDate}
-                      onChange={(purchaseDate) => onChange({ purchaseDate })}
-                    />
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section className={`cf-zone cf-zone--sale${!isSold ? " cf-zone--muted" : ""}`}>
-              <h3 className="cf-zone__title">البيع</h3>
-              <div className="cf-zone__body cf-zone__body--sale">
-                <div className="cf-board__row cf-board__row--deal">
-                  <div className="cf-field cf-field--price">
-                    <label className="cf-label" htmlFor="car-selling">سعر البيع</label>
-                    <NumberInput id="car-selling" value={form.selling} wheelMultiply={1000}
-                      onChange={(selling) => onChange({ selling })} required disabled={!isSold}
-                      tabIndex={1} onKeyDown={(e) => {
-                        if (e.key === "Enter") onChange({ amountPaid: form.selling });
-                      }} />
-                  </div>
-                  <div className="cf-field cf-field--price-sm">
-                    <label className="cf-label" htmlFor="amount-paid">المبلغ المستلم</label>
-                    <NumberInput id="amount-paid" value={form.amountPaid} wheelMultiply={1000}
-                      onChange={(amountPaid) => onChange({ amountPaid })} required disabled={!isSold}
-                      tabIndex={2} />
-                  </div>
-                </div>
-                <div className="cf-board__row">
-                  <div className="cf-field cf-field--date">
-                    <label className="cf-label">تاريخ البيع</label>
-                    <UnifiedDateField
-                      value={form.saleDate}
-                      onChange={(saleDate) => onChange({ saleDate })}
-                      disabled={!isSold}
-                      tabIndex={3}
-                    />
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section className={`cf-zone cf-zone--buyer${!isSold ? " cf-zone--muted" : ""}`}>
-              <h3 className="cf-zone__title">المشتري</h3>
-              <div className="cf-zone__body cf-zone__body--buyer">
-                <div className="cf-field cf-field--buyer">
-                  <label className="cf-label" htmlFor="buyer-name">اسم المشتري</label>
-                  <input
-                    id="buyer-name" className="input" type="text"
-                    value={form.buyerName}
-                    onChange={(e) => onChange({ buyerName: e.target.value })}
-                    placeholder="الاسم"
-                    disabled={!isSold}
-                    required={isSold}
-                    tabIndex={4}
-                  />
-                </div>
-                <div className="cf-field cf-field--phone">
-                  <label className="cf-label" htmlFor="buyer-phone">رقم الهاتف</label>
-                  <input id="buyer-phone" className="input" type="text" value={form.phone}
-                    autoComplete="new-password" autoCorrect="off" autoCapitalize="off" spellCheck={false}
-                    dir="ltr" placeholder="07XX XXX XXXX"
-                    disabled={!isSold}
-                    onInput={(e) => onChange({ phone: e.currentTarget.value })}
-                    onChange={(e) => onChange({ phone: e.target.value })}
-                    onBlur={(e) => onChange({ phone: e.currentTarget.value })}
-                    tabIndex={5} />
-                </div>
-              </div>
-            </section>
-          </div>
-
-          <section className={`cf-zone cf-zone--pay cf-zone--pay-${autoPaymentType === "كاش" ? "cash" : autoPaymentType === "موعد" ? "promise" : "installment"}${!isSold ? " cf-zone--muted" : ""}`}>
-            <h3 className="cf-zone__title">
-              الدفع {autoPaymentType === "كاش" ? "كاش" : autoPaymentType === "موعد" ? "موعد تسليم" : "أقساط"}
-            </h3>
-            <div className="cf-zone__body">
-          <div className="cf-board__row cf-board__row--pay">
-            <div className="cf-field cf-field--price-sm">
-              <label className="cf-label" htmlFor="amount-remaining">المتبقي</label>
-              <NumberInput id="amount-remaining" value={form.amountRemaining} wheelMultiply={1000}
-                onChange={(amountRemaining) => onChange({ amountRemaining })}
-                required={isSold} disabled={!isSold || autoPaymentType === "كاش"}
-                tabIndex={6} />
-            </div>
-            <div className="cf-field cf-field--months">
-              <label className="cf-label" htmlFor="installment-months">الأشهر</label>
-              <NumberInput id="installment-months" value={form.installmentMonths} min={1} step={1}
-                onChange={(v) => onChange({ installmentMonths: String(Math.max(1, Number(v) || 1)) })}
-                required disabled={!isSold || autoPaymentType === "كاش"}
-                tabIndex={8} />
-            </div>
-            <div className="cf-field cf-field--first-pay-date">
-              <label className="cf-label" htmlFor="first-payment-date">
-                {autoPaymentType === "موعد" ? "موعد التسليم" : "موعد القسط الأول"}
-              </label>
-              <UnifiedDateField id="first-payment-date"
-                value={autoPaymentType === "موعد" ? form.deliveryDate : form.firstPaymentDate}
-                onChange={(v) => {
-                  if (autoPaymentType === "موعد") onChange({ deliveryDate: v });
-                  else onChange({ firstPaymentDate: v });
-                }}
-                disabled={!isSold || autoPaymentType === "كاش"}
-                tabIndex={9}
-              />
-            </div>
-            <div className={`cf-install-summary${autoPaymentType !== "اقساط" ? " cf-install-summary--muted" : ""}`}>
-              <span className="cf-label">القسط الشهري</span>
-              <strong className="cf-install-amount">{formatIqd(monthly)}</strong>
-            </div>
-          </div>
-            </div>
-          </section>
-
-          <section className="cf-zone cf-zone--notes">
-            <h3 className="cf-zone__title">ملاحظات</h3>
-            <div className="cf-zone__body cf-zone__body--notes">
-          <div className="cf-field cf-field--notes">
-            <textarea
-              id="car-details"
-              className="textarea cf-textarea"
-              value={form.details}
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              onChange={(e) => onChange({ details: e.target.value })}
-              placeholder="حالة السيارة، الصبغ..."
-              rows={2}
-              tabIndex={10}
+    <div className="car-form-overlay">
+      <div className="car-form-modal">
+        <div className="car-form-modal__header">
+          <h2 className="car-form-modal__title">
+            <span className="cf-header__info">
+              <span className="cf-header__line">{title}</span>
+              {plateLabel && (
+                <span className="cf-header__line" dir="ltr" style={{ fontSize: "0.85rem", color: "var(--gold-light)" }}>{plateLabel}</span>
+              )}
+            </span>
+          </h2>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <ElegantSwitch
+              checked={form.status === "مبيوعة"}
+              onChange={(checked) => onChange({ status: checked ? "مبيوعة" : "متوفرة" })}
+              offLabel="متوفرة"
+              onLabel="تم البيع"
+              offColor="#10b981"
+              onColor="#f43f5e"
+              direction="horizontal"
+              noLabels
             />
-          </div>
-            </div>
-          </section>
-        </div>
-
-        <footer className="cf-footer">
-          <div className="cf-footer__left">
-            <button type="submit" className="btn btn--primary btn--sm" disabled={saving} tabIndex={11}>
-              {saving ? "جاري الحفظ..." : isEditing ? "حفظ" : "إضافة"}
-            </button>
+            <span className={`cf-status-label${form.status === "مبيوعة" ? " cf-status-label--sold" : ""}`}>
+              {form.status === "مبيوعة" ? "مبيوعة" : "متوفرة"}
+            </span>
             {onClose && (
-              <button type="button" className="btn btn--ghost btn--sm" onClick={onClose} disabled={saving} tabIndex={12}>
-                إلغاء
-              </button>
+              <button type="button" className="car-form-modal__close" onClick={onClose} disabled={saving} aria-label="إغلاق">×</button>
             )}
           </div>
-        </footer>
-      </form>
+        </div>
+
+        <div className="car-form-modal__body">
+          <form id="car-form" className="car-form" onSubmit={handleSubmit} ref={formRef}>
+            <div className={`car-form-panel car-form-panel--${form.status === "مبيوعة" ? "sold" : "avail"}`} style={{ padding: 0, background: "none", border: "none", boxShadow: "none" }}>
+          <div className="cf-board">
+            <section className="cf-zone cf-zone--vehicle">
+              <h3 className="cf-zone__title">بيانات السيارة</h3>
+              <div className="cf-zone__body">
+            <div className="cf-board__row cf-board__row--vehicle">
+              <div className="cf-field cf-field--model">
+                <label className="cf-label" htmlFor="car-model">نوع السيارة</label>
+                <ComboBox
+                  id="car-model"
+                  value={form.model}
+                  options={BYD_MODELS}
+                  onChange={(v) => onChange({ model: v })}
+                  transformInput={(v) => arabicKeyboardToEnglish(v).toUpperCase()}
+                  placeholder="الموديل"
+                  dir="ltr"
+                  required
+                  autoFocus={!isEditing}
+                />
+              </div>
+              <div className="cf-field cf-field--year">
+                <label className="cf-label" htmlFor="car-year">سنة الصنع</label>
+                <YearScrollField
+                  id="car-year"
+                  value={form.year}
+                  onChange={(year) => onChange({ year })}
+                  required
+                />
+              </div>
+              <div className="cf-field cf-field--color">
+                <label className="cf-label" htmlFor="car-color">اللون</label>
+                <ComboBox
+                  id="car-color"
+                  value={form.color}
+                  options={CAR_COLORS}
+                  onChange={(v) => onChange({ color: v })}
+                  transformInput={englishKeyboardToArabic}
+                  placeholder="لون"
+                  required
+                />
+              </div>
+              <div className="cf-field cf-field--plate">
+                <label className="cf-label" htmlFor="car-num">رقم اللوحة</label>
+                <input
+                  id="car-num" className="input" type="text" inputMode="decimal"
+                  value={form.num} dir="ltr"
+                  autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+                  onInput={(e) => patchEnglishText("num", e.currentTarget.value)}
+                  onChange={(e) => patchEnglishText("num", e.target.value)}
+                  onBlur={(e) => patchEnglishText("num", e.currentTarget.value)}
+                  onFocus={(e) => e.target.select()}
+                  onMouseUp={(e) => e.preventDefault()}
+                  placeholder="12345"
+                  required
+                />
+              </div>
+              <div className="cf-field cf-field--province">
+                <label className="cf-label" htmlFor="car-province">المحافظة</label>
+                <ComboBox
+                  id="car-province"
+                  value={form.province}
+                  options={IRAQ_PROVINCES}
+                  onChange={(v) => onChange({ province: v })}
+                  transformInput={englishKeyboardToArabic}
+                  placeholder="محافظة"
+                  required
+                />
+              </div>
+              <div className="cf-field cf-field--chassis">
+                <label className="cf-label" htmlFor="car-chassis">رقم الشاصي</label>
+                <input
+                  id="car-chassis" className="input" type="text"
+                  value={form.chassis} dir="ltr"
+                  autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+                  onInput={(e) => patchEnglishText("chassis", e.currentTarget.value)}
+                  onChange={(e) => patchEnglishText("chassis", e.target.value)}
+                  onBlur={(e) => patchEnglishText("chassis", e.currentTarget.value)}
+                  placeholder="VIN"
+                  required
+                />
+              </div>
+            </div>
+              </div>
+            </section>
+
+            <div className="cf-trade-split">
+              <section className="cf-zone cf-zone--purchase">
+                <h3 className="cf-zone__title">الشراء</h3>
+                <div className="cf-zone__body">
+                  <div className="cf-board__row cf-board__row--deal">
+                    <div className="cf-field cf-field--price">
+                      <label className="cf-label" htmlFor="car-purchase">سعر الشراء</label>
+                      <NumberInput id="car-purchase" value={form.purchase} wheelMultiply={1000}
+                        onChange={(purchase) => onChange({ purchase })} required />
+                    </div>
+                    <div className="cf-field cf-field--date">
+                      <label className="cf-label">تاريخ الشراء</label>
+                      <UnifiedDateField
+                        value={form.purchaseDate}
+                        onChange={(purchaseDate) => onChange({ purchaseDate })}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className={`cf-zone cf-zone--sale${!isSold ? " cf-zone--muted" : ""}`}>
+                <h3 className="cf-zone__title">البيع</h3>
+                <div className="cf-zone__body cf-zone__body--sale">
+                  <div className="cf-board__row cf-board__row--deal">
+                    <div className="cf-field cf-field--price">
+                      <label className="cf-label" htmlFor="car-selling">سعر البيع</label>
+                      <NumberInput id="car-selling" value={form.selling} wheelMultiply={1000}
+                        onChange={(selling) => onChange({ selling })} required disabled={!isSold}
+                        tabIndex={1} onKeyDown={(e) => {
+                          if (e.key === "Enter") onChange({ amountPaid: form.selling });
+                        }} />
+                    </div>
+                    <div className="cf-field cf-field--price-sm">
+                      <label className="cf-label" htmlFor="amount-paid">المبلغ المستلم</label>
+                      <NumberInput id="amount-paid" value={form.amountPaid} wheelMultiply={1000}
+                        onChange={(amountPaid) => onChange({ amountPaid })} required disabled={!isSold}
+                        tabIndex={2} />
+                    </div>
+                  </div>
+                  <div className="cf-board__row">
+                    <div className="cf-field cf-field--date">
+                      <label className="cf-label">تاريخ البيع</label>
+                      <UnifiedDateField
+                        value={form.saleDate}
+                        onChange={(saleDate) => onChange({ saleDate })}
+                        disabled={!isSold}
+                        tabIndex={3}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className={`cf-zone cf-zone--buyer${!isSold ? " cf-zone--muted" : ""}`}>
+                <h3 className="cf-zone__title">المشتري</h3>
+                <div className="cf-zone__body cf-zone__body--buyer">
+                  <div className="cf-field cf-field--buyer">
+                    <label className="cf-label" htmlFor="buyer-name">اسم المشتري</label>
+                    <input
+                      id="buyer-name" className="input" type="text"
+                      value={form.buyerName}
+                      onChange={(e) => onChange({ buyerName: e.target.value })}
+                      placeholder="الاسم"
+                      disabled={!isSold}
+                      required={isSold}
+                      tabIndex={4}
+                    />
+                  </div>
+                  <div className="cf-field cf-field--phone">
+                    <label className="cf-label" htmlFor="buyer-phone">رقم الهاتف</label>
+                    <input id="buyer-phone" className="input" type="text" value={form.phone}
+                      autoComplete="new-password" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+                      dir="ltr" placeholder="07XX XXX XXXX"
+                      disabled={!isSold}
+                      onInput={(e) => onChange({ phone: e.currentTarget.value })}
+                      onChange={(e) => onChange({ phone: e.target.value })}
+                      onBlur={(e) => onChange({ phone: e.currentTarget.value })}
+                      tabIndex={5} />
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <section className={`cf-zone cf-zone--pay cf-zone--pay-${autoPaymentType === "كاش" ? "cash" : autoPaymentType === "موعد" ? "promise" : "installment"}${!isSold ? " cf-zone--muted" : ""}`}>
+              <h3 className="cf-zone__title">
+                الدفع {autoPaymentType === "كاش" ? "كاش" : autoPaymentType === "موعد" ? "موعد تسليم" : "أقساط"}
+              </h3>
+              <div className="cf-zone__body">
+            <div className="cf-board__row cf-board__row--pay">
+              <div className="cf-field cf-field--price-sm">
+                <label className="cf-label" htmlFor="amount-remaining">المتبقي</label>
+                <NumberInput id="amount-remaining" value={form.amountRemaining} wheelMultiply={1000}
+                  onChange={(amountRemaining) => onChange({ amountRemaining })}
+                  required={isSold} disabled={!isSold || autoPaymentType === "كاش"}
+                  tabIndex={6} />
+              </div>
+              <div className="cf-field cf-field--months">
+                <label className="cf-label" htmlFor="installment-months">الأشهر</label>
+                <NumberInput id="installment-months" value={form.installmentMonths} min={1} step={1}
+                  onChange={(v) => onChange({ installmentMonths: String(Math.max(1, Number(v) || 1)) })}
+                  required disabled={!isSold || autoPaymentType === "كاش"}
+                  tabIndex={8} />
+              </div>
+              <div className="cf-field cf-field--first-pay-date">
+                <label className="cf-label" htmlFor="first-payment-date">
+                  {autoPaymentType === "موعد" ? "موعد التسليم" : "موعد القسط الأول"}
+                </label>
+                <UnifiedDateField id="first-payment-date"
+                  value={autoPaymentType === "موعد" ? form.deliveryDate : form.firstPaymentDate}
+                  onChange={(v) => {
+                    if (autoPaymentType === "موعد") onChange({ deliveryDate: v });
+                    else onChange({ firstPaymentDate: v });
+                  }}
+                  disabled={!isSold || autoPaymentType === "كاش"}
+                  tabIndex={9}
+                />
+              </div>
+              <div className={`cf-install-summary${autoPaymentType !== "اقساط" ? " cf-install-summary--muted" : ""}`}>
+                <span className="cf-label">القسط الشهري</span>
+                <strong className="cf-install-amount">{formatIqd(monthly)}</strong>
+              </div>
+            </div>
+              </div>
+            </section>
+
+            <section className="cf-zone cf-zone--notes">
+              <h3 className="cf-zone__title">ملاحظات</h3>
+              <div className="cf-zone__body cf-zone__body--notes">
+            <div className="cf-field cf-field--notes">
+              <textarea
+                id="car-details"
+                className="textarea cf-textarea"
+                value={form.details}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                onChange={(e) => onChange({ details: e.target.value })}
+                placeholder="حالة السيارة، الصبغ..."
+                rows={2}
+                tabIndex={10}
+              />
+            </div>
+              </div>
+            </section>
+          </div>
+            </div>
+          </form>
+        </div>
+
+        <div className="car-form-modal__footer">
+          <button type="submit" form="car-form" className="btn btn--primary" disabled={saving} tabIndex={11}>
+            {saving ? "جاري الحفظ..." : isEditing ? "حفظ" : "إضافة"}
+          </button>
+          {onClose && (
+            <button type="button" className="btn btn--ghost" onClick={onClose} disabled={saving} tabIndex={12}>
+              إلغاء
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
