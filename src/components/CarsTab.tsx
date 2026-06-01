@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buildCarInvokeArgs, callTauri } from "../api/tauri";
 import type { Car, CarFormState, PartnerTransaction } from "../types";
-import { carNetProfit, carProfitPercentage, formatIqd, formatNumber } from "../utils/finance";
+import { carNetProfit, carProfitPercentage } from "../utils/finance";
 import { cleanAndNormalizeNumbers } from "../utils/numberInput";
 import { todayIsoDate } from "../utils/dateSegments";
 import { CarFormPanel } from "./CarFormPanel";
+import { ActionButton, PriceDisplay, TextInput } from "@/components/ui";
 
 interface CarsTabProps {
   cars: Car[];
@@ -20,8 +21,7 @@ type CarSortKey =
   | "number"
   | "chassis"
   | "purchase"
-  | "selling"
-  | "status";
+  | "selling";
 
 const SORT_LABELS: Record<CarSortKey, string> = {
   model: "نوع السيارة",
@@ -31,7 +31,6 @@ const SORT_LABELS: Record<CarSortKey, string> = {
   chassis: "رقم الشاصي",
   purchase: "سعر الشراء",
   selling: "سعر البيع",
-  status: "الحالة",
 };
 
 type CarsTabId = "available" | "sold";
@@ -48,6 +47,10 @@ const emptyForm = (): CarFormState => ({
   status: "متوفرة", paymentType: "كاش",
   amountPaid: "", amountRemaining: "", installmentMonths: "1",
   buyerName: "", phone: "", purchaseDate: "", saleDate: "", deliveryDate: "", firstPaymentDate: "",
+  currency: "IQD",
+  saleCurrency: "IQD",
+  purchasePaymentType: "قاصه",
+  salePaymentType: "قاصه",
 });
 
 function carToForm(car: Car): CarFormState {
@@ -73,6 +76,10 @@ function carToForm(car: Car): CarFormState {
     saleDate: car.sale_date ?? "",
     deliveryDate: car.delivery_date ?? "",
     firstPaymentDate: car.first_payment_date ?? "",
+    currency: (car.currency as "IQD" | "USD") ?? "IQD",
+    saleCurrency: (car.sale_currency as "IQD" | "USD") ?? "IQD",
+    purchasePaymentType: (car.purchase_payment_type as "قاصه" | "ماستر" | "مصرف") ?? "قاصه",
+    salePaymentType: (car.sale_payment_type as "قاصه" | "ماستر" | "مصرف") ?? "قاصه",
   };
 }
 
@@ -125,13 +132,13 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
           : sortConfig.key === "color" ? (a.color ?? "")
           : sortConfig.key === "number" ? (a.car_plate_num ?? a.car_number)
           : sortConfig.key === "chassis" ? (a.chassis_number ?? "")
-          : a.status;
+          : "";
         const bv = sortConfig.key === "model" ? (b.car_model || b.car_name)
           : sortConfig.key === "year" ? (b.car_year ?? "")
           : sortConfig.key === "color" ? (b.color ?? "")
           : sortConfig.key === "number" ? (b.car_plate_num ?? b.car_number)
           : sortConfig.key === "chassis" ? (b.chassis_number ?? "")
-          : b.status;
+          : "";
         return String(av).localeCompare(String(bv), "ar", { numeric: true }) * sign;
       });
     }
@@ -167,21 +174,19 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
   };
 
   const patchForm = (patch: Partial<CarFormState>) => {
-    return setForm(() => {
-      const normalized: Record<string, unknown> = {};
-      for (const [key, val] of Object.entries(patch)) {
-        normalized[key] = typeof val === "string" ? cleanAndNormalizeNumbers(val) : val;
-      }
-      const next = { ...formRef.current, ...normalized } as CarFormState;
-      if ("model" in patch || "year" in patch) {
-        next.name = [next.model, next.year].filter(Boolean).join(" ");
-      }
-      if ("selling" in patch || "amountPaid" in patch) {
-        next.amountRemaining = String(Math.max(0, Number(next.selling) - Number(next.amountPaid)));
-      }
-      formRef.current = next;
-      return next;
-    });
+    const normalized: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(patch)) {
+      normalized[key] = typeof val === "string" ? cleanAndNormalizeNumbers(val) : val;
+    }
+    const next = { ...formRef.current, ...normalized } as CarFormState;
+    if ("model" in patch || "year" in patch) {
+      next.name = [next.model, next.year].filter(Boolean).join(" ");
+    }
+    if ("selling" in patch || "amountPaid" in patch) {
+      next.amountRemaining = String(Math.max(0, Number(next.selling) - Number(next.amountPaid)));
+    }
+    formRef.current = next;
+    setForm(next);
   };
 
   const toggleSort = (key: CarSortKey) => {
@@ -204,10 +209,6 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
     e.preventDefault();
     if (!form.num.trim() || !form.model.trim()) {
       showToast("يرجى إدخال رقم اللوحة والموديل");
-      return;
-    }
-    if (!form.province) {
-      showToast("يرجى اختيار المحافظة");
       return;
     }
     const purchaseNum = Number(form.purchase);
@@ -237,13 +238,29 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
 
     setSaving(true);
     try {
-      await callTauri("add_car", buildCarInvokeArgs(form));
+      // تحديد السيارة الأصلية قبل التعديل
+      const originalCar = cars.find((c) => c.car_number === selectedId);
+      // هل كانت السيارة مبيوعة أصلاً قبل هذا التعديل
+      const wasSold = originalCar?.status === "مبيوعة";
+      // هل تحولت السيارة من متوفرة إلى مبيوعة الآن → بيع جديد
+      const isSaleOnly = isEditing && wasSold;
+
+      // أرسل بيانات السيارة للحفظ
+      const carArgs = buildCarInvokeArgs(form);
+
+      // عند تعديل سيارة مبيوعة → احتفظ بتاريخ الشراء الأصلي ولا تتغيره
+      if (isSaleOnly && originalCar) {
+        carArgs.purchaseDate = originalCar.purchase_date ?? carArgs.purchaseDate;
+      }
+
+      await callTauri("add_car", carArgs);
 
       // ═══════════════════════════════════════════════
       //  Automation Pipeline — يُشتغل مرة واحدة فقط عند
       //  أول مرة تُباع فيها السيارة (status transition)
       // ═══════════════════════════════════════════════
-      if (isNewSale && form.status === "مبيوعة" && form.paymentType !== "كاش") {
+      // لا تُسجّل حركة بيع جديدة إذا كانت السيارة مبيوعة أصلاً (isSaleOnly)
+      if (isNewSale && !isSaleOnly && form.status === "مبيوعة" && form.paymentType !== "كاش") {
         const buyerName = form.buyerName.trim();
         const phone = form.phone.trim();
         const carLabel = form.name || form.model || "سيارة";
@@ -395,19 +412,15 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
           <span className="cars-page__count">{filteredCars.length} سيارة</span>
         </div>
         <div className="toolbar-controls">
-          <button type="button" className="btn btn--primary" onClick={startNewCar}>
+          <ActionButton type="button" variant="primary" onClick={startNewCar}>
             + سيارة جديدة
-          </button>
-          <input
-            className="input input--search"
+          </ActionButton>
+          <TextInput
             type="search"
             placeholder="بحث..."
             value={search}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck={false}
             onChange={(e) => setSearch(e.target.value)}
+            containerClassName="min-w-[200px]"
           />
         </div>
       </div>
@@ -420,9 +433,9 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
           {filteredCars.length === 0 ? (
             <div className="cars-empty">
               <p>لا توجد سيارات مطابقة</p>
-              <button type="button" className="btn btn--primary" onClick={startNewCar}>
+              <ActionButton type="button" variant="primary" onClick={startNewCar}>
                 إضافة أول سيارة
-              </button>
+              </ActionButton>
             </div>
           ) : (
             <div className="table-wrapper">
@@ -436,7 +449,7 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
                     <th className="ct-chassis">{renderSortHeader("chassis")}</th>
                     <th className="ct-price">{renderSortHeader("purchase")}</th>
                     <th className="ct-price">{renderSortHeader("selling")}</th>
-                    <th className="ct-status">{renderSortHeader("status")}</th>
+                    <th className="ct-profit" colSpan={2}>الأرباح</th>
                     <th className="ct-delete">حذف</th>
                   </tr>
                 </thead>
@@ -465,23 +478,21 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
                           )}
                         </td>
                         <td className="ct-chassis">{car.chassis_number || "—"}</td>
-                        <td className="ct-price">{formatIqd(car.purchase_price)}</td>
-                        <td className="ct-price">
+                        <td className="ct-price" style={{ color: car.currency === "USD" ? "#10b981" : "#d8a85a" }}>
+                          <PriceDisplay amount={car.purchase_price} currency={car.currency} />
+                        </td>
+                        <td className="ct-price" style={{ color: car.sale_currency === "USD" ? "#10b981" : "#d8a85a" }}>
                           {isSold ? (
-                            <>
-                              <div>{formatIqd(car.selling_price)}</div>
-                              <div className="ct-profit text-green">
-                                +{formatNumber(profit)} ({carProfitPercentage(car)}%)
-                              </div>
-                            </>
+                            <div><PriceDisplay amount={car.selling_price} currency={car.sale_currency} /></div>
                           ) : (
                             <span className="text-muted">—</span>
                           )}
                         </td>
-                        <td className="ct-status">
-                          <span className={`badge ${isSold ? "badge--sold" : "badge--available"}`}>
-                            {car.status}
-                          </span>
+                        <td className="ct-profit">
+                          {isSold ? <span><PriceDisplay amount={profit} currency={car.sale_currency} /></span> : <span className="text-muted">—</span>}
+                        </td>
+                        <td className="ct-profit-pct">
+                          {isSold ? <span className="text-green">({carProfitPercentage(car)}%)</span> : <span className="text-muted">—</span>}
                         </td>
                         <td className="ct-delete" onClick={(e) => e.stopPropagation()}>
                           <button
@@ -506,23 +517,14 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
       </div>
 
       {panelMode !== null && (
-        <div className="modal-overlay modal-overlay--soft" role="presentation" onClick={handleClosePanel}>
-          <div
-            className="modal-dialog modal-dialog--wide modal-dialog--car"
-            role="dialog"
-            aria-modal="true"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <CarFormPanel
-              form={form}
-              isEditing={isEditing}
-              saving={saving}
-              onChange={patchForm}
-              onSubmit={handleSubmit}
-              onClose={handleClosePanel}
-            />
-          </div>
-        </div>
+        <CarFormPanel
+          form={form}
+          isEditing={isEditing}
+          saving={saving}
+          onChange={patchForm}
+          onSubmit={handleSubmit}
+          onClose={handleClosePanel}
+        />
       )}
 
       {/* نافذة تأكيد الحذف من الجدول */}
@@ -539,22 +541,22 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
               لا يمكن التراجع عن هذا الإجراء.
             </p>
             <div className="modal-dialog__actions">
-              <button
+              <ActionButton
                 type="button"
-                className="btn btn--ghost"
+                variant="ghost"
                 onClick={() => { setShowDeleteModal(false); setCarToDelete(null); }}
                 disabled={saving}
               >
                 إلغاء
-              </button>
-              <button
+              </ActionButton>
+              <ActionButton
                 type="button"
-                className="btn btn--danger-solid"
+                variant="danger"
                 onClick={() => void executeTableDelete()}
                 disabled={saving}
               >
                 {saving ? "جاري الحذف..." : "تأكيد الحذف"}
-              </button>
+              </ActionButton>
             </div>
           </div>
         </div>

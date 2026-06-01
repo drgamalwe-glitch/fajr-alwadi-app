@@ -15,6 +15,8 @@ pub struct Car {
     pub color: String,
     pub details: String,
     pub purchase_price: f64,
+    pub currency: Option<String>,
+    pub sale_currency: Option<String>,
     pub selling_price: f64,
     pub status: String,
     pub payment_type: Option<String>,
@@ -29,6 +31,7 @@ pub struct Car {
     pub sale_date: Option<String>,
     pub delivery_date: Option<String>,
     pub first_payment_date: Option<String>,
+    pub purchase_payment_type: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -48,6 +51,8 @@ pub struct PartnerTransaction {
     pub amount: f64,
     pub date: String,
     pub notes: Option<String>,
+    pub currency: Option<String>,
+    pub payment_type: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -58,6 +63,7 @@ pub struct ExpenseEntry {
     pub date: String,
     pub time: String,
     pub notes: Option<String>,
+    pub currency: Option<String>,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -70,6 +76,19 @@ pub struct CashRegisterEntry {
     pub description: String,
     pub notes: Option<String>,
     pub balance: f64,
+    pub currency: String,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct FinancialSummary {
+    pub iqd_balance: f64,
+    pub usd_balance: f64,
+    pub inventory_value: f64,
+    pub total_investments: f64,
+    pub total_partner_capital: f64,
+    pub total_debtors: f64,
+    pub total_expenses: f64,
+    pub net_capital: f64,
 }
 
 pub struct AppState {
@@ -89,6 +108,8 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
             color TEXT,
             details TEXT,
             purchase_price REAL DEFAULT 0.0,
+            currency TEXT DEFAULT 'IQD',
+            sale_currency TEXT DEFAULT 'IQD',
             selling_price REAL DEFAULT 0.0,
             status TEXT NOT NULL,
             payment_type TEXT,
@@ -119,6 +140,12 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
     let _ = conn.execute("ALTER TABLE cars ADD COLUMN sale_date TEXT", []);
     let _ = conn.execute("ALTER TABLE cars ADD COLUMN delivery_date TEXT", []);
     let _ = conn.execute("ALTER TABLE cars ADD COLUMN first_payment_date TEXT", []);
+    let _ = conn.execute("ALTER TABLE cars ADD COLUMN currency TEXT DEFAULT 'IQD'", []);
+    let _ = conn.execute("ALTER TABLE cars ADD COLUMN selling_currency TEXT DEFAULT 'IQD'", []);
+    let _ = conn.execute("ALTER TABLE cars ADD COLUMN paid_currency TEXT DEFAULT 'IQD'", []);
+    let _ = conn.execute("ALTER TABLE cars ADD COLUMN remaining_currency TEXT DEFAULT 'IQD'", []);
+    let _ = conn.execute("ALTER TABLE cars ADD COLUMN sale_currency TEXT DEFAULT 'IQD'", []);
+    let _ = conn.execute("ALTER TABLE cars ADD COLUMN purchase_payment_type TEXT DEFAULT 'قاصه'", []);
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS partners (
@@ -139,7 +166,9 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
             type TEXT NOT NULL,
             amount REAL NOT NULL,
             date TEXT NOT NULL,
-            notes TEXT
+            notes TEXT,
+            currency TEXT DEFAULT 'IQD',
+            payment_type TEXT DEFAULT 'قاصه'
         )",
         [],
     )?;
@@ -164,7 +193,8 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
             amount REAL NOT NULL,
             date TEXT NOT NULL,
             time TEXT DEFAULT '00:00',
-            notes TEXT
+            notes TEXT,
+            currency TEXT DEFAULT 'IQD'
         )",
         [],
     )?;
@@ -172,7 +202,10 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
     // add time column if upgrading
     let _ = conn.execute("ALTER TABLE cash_register ADD COLUMN time TEXT DEFAULT '00:00'", []);
     let _ = conn.execute("ALTER TABLE partner_transactions ADD COLUMN time TEXT DEFAULT '00:00'", []);
+    let _ = conn.execute("ALTER TABLE partner_transactions ADD COLUMN currency TEXT DEFAULT 'IQD'", []);
+    let _ = conn.execute("ALTER TABLE partner_transactions ADD COLUMN payment_type TEXT DEFAULT 'قاصه'", []);
     let _ = conn.execute("ALTER TABLE cars ADD COLUMN purchase_time TEXT DEFAULT '00:00'", []);
+    let _ = conn.execute("ALTER TABLE expenses ADD COLUMN currency TEXT DEFAULT 'IQD'", []);
     let _ = conn.execute("ALTER TABLE cars ADD COLUMN sale_time TEXT DEFAULT '00:00'", []);
 
     // ترقيم قاعدة البيانات للترحيل
@@ -227,6 +260,8 @@ fn add_car(
     color: String,
     details: String,
     purchase: f64,
+    currency: Option<String>,
+    sale_currency: Option<String>,
     selling: f64,
     status: String,
     payment_type: Option<String>,
@@ -241,6 +276,7 @@ fn add_car(
     sale_date: Option<String>,
     delivery_date: Option<String>,
     first_payment_date: Option<String>,
+    purchase_payment_type: Option<String>,
     old_num: Option<String>,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
@@ -264,10 +300,11 @@ fn add_car(
         "INSERT OR REPLACE INTO cars (
             car_number, car_plate_num, car_province, chassis_number,
             car_model, car_year, car_name, color, details, 
-            purchase_price, selling_price, status,
+            purchase_price, currency, sale_currency,
+            selling_price, status,
             payment_type, cash_price, amount_paid, amount_remaining,
-            installment_months, monthly_payment
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+            installment_months, monthly_payment, purchase_payment_type
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
         params![
             car_number.as_str(),
             plate_num,
@@ -279,6 +316,8 @@ fn add_car(
             color.trim(),
             details.trim(),
             purchase,
+            currency,
+            sale_currency,
             selling,
             status,
             payment_type,
@@ -287,23 +326,25 @@ fn add_car(
             amount_remaining,
             installment_months,
             monthly_payment,
+            purchase_payment_type,
         ],
     )
     .map_err(|e| e.to_string())?;
 
     // UPDATE extra fields
     db.execute(
-        "UPDATE cars SET buyer_name = ?1, buyer_phone = ?2, purchase_date = ?3, sale_date = ?4, delivery_date = ?5, first_payment_date = ?6 WHERE car_number = ?7",
-        (buyer_name, buyer_phone, purchase_date, sale_date, delivery_date, first_payment_date, car_number.as_str()),
+        "UPDATE cars SET buyer_name = ?1, buyer_phone = ?2, purchase_date = ?3, sale_date = ?4, delivery_date = ?5, first_payment_date = ?6, purchase_payment_type = ?7 WHERE car_number = ?8",
+        (buyer_name, buyer_phone, purchase_date, sale_date, delivery_date, first_payment_date, purchase_payment_type, car_number.as_str()),
     )
     .map_err(|e| e.to_string())?;
 
-    // تسجيل وقت العمليات
+    // تسجيل وقت الشراء — مرة واحدة فقط عند الإضافة الأولى (لا يُعاد عند البيع أو التعديل)
     db.execute(
-        "UPDATE cars SET purchase_time = strftime('%H:%M', 'now', 'localtime') WHERE car_number = ?1 AND purchase_date IS NOT NULL AND purchase_date != ''",
+        "UPDATE cars SET purchase_time = strftime('%H:%M', 'now', 'localtime') WHERE car_number = ?1 AND purchase_date IS NOT NULL AND purchase_date != '' AND (purchase_time IS NULL OR purchase_time = '' OR purchase_time = '00:00')",
         [car_number.as_str()],
     )
     .map_err(|e| e.to_string())?;
+    // تسجيل وقت البيع — يُحدَّث فقط عند وجود تاريخ البيع
     db.execute(
         "UPDATE cars SET sale_time = strftime('%H:%M', 'now', 'localtime') WHERE car_number = ?1 AND sale_date IS NOT NULL AND sale_date != ''",
         [car_number.as_str()],
@@ -319,11 +360,13 @@ fn get_cars(state: State<AppState>) -> Result<Vec<Car>, String> {
     let mut stmt = db
         .prepare(
             "SELECT car_number, chassis_number, car_name, color, details, 
-                    purchase_price, selling_price, status,
+                    purchase_price, currency,
+                    sale_currency,
+                    selling_price, status,
                     payment_type, cash_price, amount_paid, amount_remaining,
                     installment_months, monthly_payment,
                     buyer_name, buyer_phone, purchase_date, sale_date,
-                    delivery_date, first_payment_date,
+                    delivery_date, first_payment_date, purchase_payment_type,
                     COALESCE(car_plate_num, car_number), COALESCE(car_province, ''),
                     COALESCE(car_model, car_name), COALESCE(car_year, '')
              FROM cars ORDER BY car_name",
@@ -334,29 +377,32 @@ fn get_cars(state: State<AppState>) -> Result<Vec<Car>, String> {
         .query_map([], |row| {
             Ok(Car {
                 car_number: row.get(0)?,
-                car_plate_num: row.get(20)?,
-                car_province: row.get(21)?,
+                car_plate_num: row.get(23)?,
+                car_province: row.get(24)?,
                 chassis_number: row.get(1)?,
-                car_model: row.get(22)?,
-                car_year: row.get(23)?,
+                car_model: row.get(25)?,
+                car_year: row.get(26)?,
                 car_name: row.get(2)?,
                 color: row.get(3)?,
                 details: row.get(4)?,
                 purchase_price: row.get(5)?,
-                selling_price: row.get(6)?,
-                status: row.get(7)?,
-                payment_type: row.get(8)?,
-                cash_price: row.get(9)?,
-                amount_paid: row.get(10)?,
-                amount_remaining: row.get(11)?,
-                installment_months: row.get(12)?,
-                monthly_payment: row.get(13)?,
-                buyer_name: row.get(14)?,
-                buyer_phone: row.get(15)?,
-                purchase_date: row.get(16)?,
-                sale_date: row.get(17)?,
-                delivery_date: row.get(18)?,
-                first_payment_date: row.get(19)?,
+                currency: row.get(6)?,
+                sale_currency: row.get(7)?,
+                selling_price: row.get(8)?,
+                status: row.get(9)?,
+                payment_type: row.get(10)?,
+                cash_price: row.get(11)?,
+                amount_paid: row.get(12)?,
+                amount_remaining: row.get(13)?,
+                installment_months: row.get(14)?,
+                monthly_payment: row.get(15)?,
+                buyer_name: row.get(16)?,
+                buyer_phone: row.get(17)?,
+                purchase_date: row.get(18)?,
+                sale_date: row.get(19)?,
+                delivery_date: row.get(20)?,
+                first_payment_date: row.get(21)?,
+                purchase_payment_type: row.get(22)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -491,11 +537,13 @@ fn add_partner_transaction(
     amount: f64,
     date: String,
     notes: Option<String>,
+    currency: Option<String>,
+    payment_type: Option<String>,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.execute(
-        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes)
-         VALUES (?1, ?2, ?3, ?4, ?5, strftime('%H:%M', 'now', 'localtime'), ?6)",
+        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+         VALUES (?1, ?2, ?3, ?4, ?5, strftime('%H:%M', 'now', 'localtime'), ?6, ?7, ?8)",
         (
             partner_name.trim(),
             kind.trim(),
@@ -503,6 +551,8 @@ fn add_partner_transaction(
             amount,
             date.trim(),
             notes,
+            currency,
+            payment_type,
         ),
     )
     .map_err(|e| e.to_string())?;
@@ -522,17 +572,21 @@ fn update_partner_transaction(
     amount: f64,
     date: String,
     notes: Option<String>,
+    currency: Option<String>,
+    payment_type: Option<String>,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.execute(
         "UPDATE partner_transactions
-         SET type = ?1, amount = ?2, date = ?3, time = strftime('%H:%M', 'now', 'localtime'), notes = ?4
-         WHERE id = ?5 AND partner_name = ?6 AND kind = ?7",
+         SET type = ?1, amount = ?2, date = ?3, time = strftime('%H:%M', 'now', 'localtime'), notes = ?4, currency = ?5, payment_type = ?6
+         WHERE id = ?7 AND partner_name = ?8 AND kind = ?9",
         (
             type_.trim(),
             amount,
             date.trim(),
             notes,
+            currency,
+            payment_type,
             id,
             partner_name.trim(),
             kind.trim(),
@@ -573,7 +627,7 @@ fn get_partner_transactions(
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let mut stmt = db
         .prepare(
-            "SELECT id, partner_name, kind, type, amount, date, notes
+            "SELECT id, partner_name, kind, type, amount, date, notes, currency, COALESCE(payment_type, 'قاصه')
              FROM partner_transactions WHERE partner_name = ?1 AND kind = ?2 ORDER BY id ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -588,6 +642,8 @@ fn get_partner_transactions(
                 amount: row.get(4)?,
                 date: row.get(5)?,
                 notes: row.get(6)?,
+                currency: row.get(7)?,
+                payment_type: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -598,20 +654,34 @@ fn get_partner_transactions(
 }
 
 #[tauri::command]
-fn get_cash_register_entries(state: State<AppState>) -> Result<Vec<CashRegisterEntry>, String> {
+fn get_cash_register_entries(
+    state: State<AppState>,
+    payment_type: Option<String>,
+) -> Result<Vec<CashRegisterEntry>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let mut entries: Vec<CashRegisterEntry> = Vec::new();
 
+    let filter_sql = match &payment_type {
+        Some(pt) => {
+            if pt == "قاصه" || pt == "قاصة" {
+                " AND (c.purchase_payment_type = 'قاصه' OR c.purchase_payment_type = 'قاصة' OR c.purchase_payment_type IS NULL OR c.purchase_payment_type = '')".to_string()
+            } else {
+                format!(" AND c.purchase_payment_type = '{}'", pt.replace('\'', "''"))
+            }
+        }
+        None => String::new(),
+    };
+
     // 1. شراء السيارات (outflow)
     {
-        let mut stmt = db
-            .prepare(
-                "SELECT c.purchase_date, COALESCE(c.purchase_time, '00:00'), c.car_name, c.car_number, c.purchase_price
-                 FROM cars c
-                 WHERE c.purchase_date IS NOT NULL AND c.purchase_price > 0
-                 ORDER BY c.purchase_date ASC",
-            )
-            .map_err(|e| e.to_string())?;
+        let sql = format!(
+            "SELECT c.purchase_date, COALESCE(c.purchase_time, '00:00'), c.car_name, c.car_number, c.purchase_price, COALESCE(c.currency, 'IQD')
+             FROM cars c
+             WHERE c.purchase_date IS NOT NULL AND c.purchase_price > 0{}
+             ORDER BY c.purchase_date ASC",
+            filter_sql
+        );
+        let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
 
         let rows = stmt
             .query_map([], |row| {
@@ -621,12 +691,13 @@ fn get_cash_register_entries(state: State<AppState>) -> Result<Vec<CashRegisterE
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, f64>(4)?,
+                    row.get::<_, String>(5)?,
                 ))
             })
             .map_err(|e| e.to_string())?;
 
         for row in rows {
-            let (date, time, car_name, car_number, price) = row.map_err(|e| e.to_string())?;
+            let (date, time, car_name, car_number, price, currency) = row.map_err(|e| e.to_string())?;
             entries.push(CashRegisterEntry {
                 id: 0,
                 date: date.unwrap_or_default(),
@@ -636,21 +707,22 @@ fn get_cash_register_entries(state: State<AppState>) -> Result<Vec<CashRegisterE
                 description: format!("{} - {}", car_name, car_number),
                 notes: None,
                 balance: 0.0,
+                currency,
             });
         }
     }
 
     // 2. بيع السيارات كاش (inflow = المبلغ المستلم)
     {
-        let mut stmt = db
-            .prepare(
-                "SELECT c.sale_date, COALESCE(c.sale_time, '00:00'), c.car_name, c.car_number, c.selling_price
-                 FROM cars c
-                 WHERE c.status = 'مبيوعة' AND c.payment_type = 'كاش'
-                   AND c.sale_date IS NOT NULL AND c.sale_date != ''
-                 ORDER BY c.sale_date ASC",
-            )
-            .map_err(|e| e.to_string())?;
+        let sql = format!(
+            "SELECT c.sale_date, COALESCE(c.sale_time, '00:00'), c.car_name, c.car_number, c.selling_price, COALESCE(c.sale_currency, 'IQD')
+             FROM cars c
+             WHERE c.status = 'مبيوعة' AND c.payment_type = 'كاش'
+               AND c.sale_date IS NOT NULL AND c.sale_date != ''{}
+             ORDER BY c.sale_date ASC",
+            filter_sql
+        );
+        let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
 
         let rows = stmt
             .query_map([], |row| {
@@ -660,12 +732,13 @@ fn get_cash_register_entries(state: State<AppState>) -> Result<Vec<CashRegisterE
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, f64>(4)?,
+                    row.get::<_, String>(5)?,
                 ))
             })
             .map_err(|e| e.to_string())?;
 
         for row in rows {
-            let (date, time, car_name, car_number, price) = row.map_err(|e| e.to_string())?;
+            let (date, time, car_name, car_number, price, currency) = row.map_err(|e| e.to_string())?;
             entries.push(CashRegisterEntry {
                 id: 0,
                 date: date.unwrap_or_default(),
@@ -675,21 +748,22 @@ fn get_cash_register_entries(state: State<AppState>) -> Result<Vec<CashRegisterE
                 description: format!("{} - {}", car_name, car_number),
                 notes: None,
                 balance: 0.0,
+                currency,
             });
         }
     }
 
     // 3. بيع السيارات آجل (inflow = المبلغ المستلم)
     {
-        let mut stmt = db
-            .prepare(
-                "SELECT c.sale_date, COALESCE(c.sale_time, '00:00'), c.car_name, c.car_number, c.amount_paid
-                 FROM cars c
-                 WHERE c.status = 'مبيوعة' AND c.payment_type = 'موعد'
-                   AND c.sale_date IS NOT NULL AND c.sale_date != ''
-                 ORDER BY c.sale_date ASC",
-            )
-            .map_err(|e| e.to_string())?;
+        let sql = format!(
+            "SELECT c.sale_date, COALESCE(c.sale_time, '00:00'), c.car_name, c.car_number, c.amount_paid, COALESCE(c.sale_currency, 'IQD')
+             FROM cars c
+             WHERE c.status = 'مبيوعة' AND c.payment_type = 'موعد'
+               AND c.sale_date IS NOT NULL AND c.sale_date != ''{}
+             ORDER BY c.sale_date ASC",
+            filter_sql
+        );
+        let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
 
         let rows = stmt
             .query_map([], |row| {
@@ -699,12 +773,13 @@ fn get_cash_register_entries(state: State<AppState>) -> Result<Vec<CashRegisterE
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, Option<f64>>(4)?,
+                    row.get::<_, String>(5)?,
                 ))
             })
             .map_err(|e| e.to_string())?;
 
         for row in rows {
-            let (date, time, car_name, car_number, amount_paid) = row.map_err(|e| e.to_string())?;
+            let (date, time, car_name, car_number, amount_paid, currency) = row.map_err(|e| e.to_string())?;
             entries.push(CashRegisterEntry {
                 id: 0,
                 date: date.unwrap_or_default(),
@@ -714,21 +789,22 @@ fn get_cash_register_entries(state: State<AppState>) -> Result<Vec<CashRegisterE
                 description: format!("{} - {}", car_name, car_number),
                 notes: None,
                 balance: 0.0,
+                currency,
             });
         }
     }
 
     // 4. مقدمات السيارات بالتقسيط (inflow = المقدمة)
     {
-        let mut stmt = db
-            .prepare(
-                "SELECT c.sale_date, COALESCE(c.sale_time, '00:00'), c.car_name, c.car_number, c.amount_paid
-                 FROM cars c
-                 WHERE c.status = 'مبيوعة' AND c.payment_type = 'اقساط'
-                   AND c.sale_date IS NOT NULL AND c.sale_date != ''
-                 ORDER BY c.sale_date ASC",
-            )
-            .map_err(|e| e.to_string())?;
+        let sql = format!(
+            "SELECT c.sale_date, COALESCE(c.sale_time, '00:00'), c.car_name, c.car_number, c.amount_paid, COALESCE(c.sale_currency, 'IQD')
+             FROM cars c
+             WHERE c.status = 'مبيوعة' AND c.payment_type = 'اقساط'
+               AND c.sale_date IS NOT NULL AND c.sale_date != ''{}
+             ORDER BY c.sale_date ASC",
+            filter_sql
+        );
+        let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
 
         let rows = stmt
             .query_map([], |row| {
@@ -738,12 +814,13 @@ fn get_cash_register_entries(state: State<AppState>) -> Result<Vec<CashRegisterE
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, Option<f64>>(4)?,
+                    row.get::<_, String>(5)?,
                 ))
             })
             .map_err(|e| e.to_string())?;
 
         for row in rows {
-            let (date, time, car_name, car_number, amount_paid) = row.map_err(|e| e.to_string())?;
+            let (date, time, car_name, car_number, amount_paid, currency) = row.map_err(|e| e.to_string())?;
             entries.push(CashRegisterEntry {
                 id: 0,
                 date: date.unwrap_or_default(),
@@ -753,20 +830,32 @@ fn get_cash_register_entries(state: State<AppState>) -> Result<Vec<CashRegisterE
                 description: format!("{} - {}", car_name, car_number),
                 notes: None,
                 balance: 0.0,
+                currency,
             });
         }
     }
 
+    let filter_pt_sql = match &payment_type {
+        Some(pt) => {
+            if pt == "قاصه" || pt == "قاصة" {
+                " AND (pt.payment_type = 'قاصه' OR pt.payment_type = 'قاصة' OR pt.payment_type IS NULL OR pt.payment_type = '')".to_string()
+            } else {
+                format!(" AND pt.payment_type = '{}'", pt.replace('\'', "''"))
+            }
+        }
+        None => String::new(),
+    };
+
     // 5. معاملات الشركاء والمستثمرين والمديونيات (المدفوعات فقط)
     {
-        let mut stmt = db
-            .prepare(
-                "SELECT pt.date, COALESCE(pt.time, '00:00'), pt.kind, pt.type, pt.amount, pt.partner_name, pt.notes
-                 FROM partner_transactions pt
-                 WHERE NOT (pt.kind = 'مطلوب' AND pt.type = 'سحب')
-                 ORDER BY pt.date ASC, pt.id ASC",
-            )
-            .map_err(|e| e.to_string())?;
+        let sql = format!(
+            "SELECT pt.date, COALESCE(pt.time, '00:00'), pt.kind, pt.type, pt.amount, pt.partner_name, pt.notes, COALESCE(pt.currency, 'IQD')
+             FROM partner_transactions pt
+             WHERE NOT (pt.kind = 'مطلوب' AND pt.type = 'سحب'){}
+             ORDER BY pt.date ASC, pt.id ASC",
+            filter_pt_sql
+        );
+        let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
 
         let rows = stmt
             .query_map([], |row| {
@@ -778,12 +867,13 @@ fn get_cash_register_entries(state: State<AppState>) -> Result<Vec<CashRegisterE
                     row.get::<_, f64>(4)?,
                     row.get::<_, String>(5)?,
                     row.get::<_, Option<String>>(6)?,
+                    row.get::<_, String>(7)?,
                 ))
             })
             .map_err(|e| e.to_string())?;
 
         for row in rows {
-            let (date, time, kind, tx_type, amount, partner_name, notes) =
+            let (date, time, kind, tx_type, amount, partner_name, notes, currency) =
                 row.map_err(|e| e.to_string())?;
             let (type_, signed_amount) = match (kind.as_str(), tx_type.as_str()) {
                 ("شريك", "ايداع") => ("ايداع شريك", amount),
@@ -803,55 +893,71 @@ fn get_cash_register_entries(state: State<AppState>) -> Result<Vec<CashRegisterE
                 description: partner_name,
                 notes,
                 balance: 0.0,
+                currency,
             });
         }
     }
 
-    // 6. المصروفات (outflow)
-    {
-        let mut stmt = db
-            .prepare(
-                "SELECT e.date, COALESCE(e.time, '00:00'), e.description, e.amount, e.notes
-                 FROM expenses e
-                 ORDER BY e.date ASC, e.id ASC",
-            )
-            .map_err(|e| e.to_string())?;
+    let include_others = match &payment_type {
+        Some(pt) => pt == "قاصه" || pt == "قاصة",
+        None => true,
+    };
 
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, f64>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                ))
-            })
-            .map_err(|e| e.to_string())?;
+    if include_others {
+        // 6. المصروفات (outflow)
+        {
+            let mut stmt = db
+                .prepare(
+                    "SELECT e.date, COALESCE(e.time, '00:00'), e.description, e.amount, e.notes, COALESCE(e.currency, 'IQD')
+                     FROM expenses e
+                     ORDER BY e.date ASC, e.id ASC",
+                )
+                .map_err(|e| e.to_string())?;
 
-        for row in rows {
-            let (date, time, description, amount, notes) = row.map_err(|e| e.to_string())?;
-            entries.push(CashRegisterEntry {
-                id: 0,
-                date,
-                time,
-                type_: "مصروف".to_string(),
-                amount: -amount,
-                description,
-                notes,
-                balance: 0.0,
-            });
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, f64>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                })
+                .map_err(|e| e.to_string())?;
+
+            for row in rows {
+                let (date, time, description, amount, notes, currency) = row.map_err(|e| e.to_string())?;
+                entries.push(CashRegisterEntry {
+                    id: 0,
+                    date,
+                    time,
+                    type_: "مصروف".to_string(),
+                    amount: -amount,
+                    description,
+                    notes,
+                    balance: 0.0,
+                    currency,
+                });
+            }
         }
     }
 
-    // ترتيب تصاعدي (الأقدم أولاً) مع مراعاة الوقت
+    // ترتيب تصاعدي (الأقدم أولاً) لحساب الرصيد
     entries.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| a.time.cmp(&b.time)).then_with(|| a.id.cmp(&b.id)));
 
-    // حساب الرصيد الجاري (تراكمي من الأقدم للأحدث)
-    let mut running = 0.0;
+    // رصيد منفصل لكل عملة
+    let mut iqd_running = 0.0;
+    let mut usd_running = 0.0;
     for entry in entries.iter_mut() {
-        running += entry.amount;
-        entry.balance = running;
+        if entry.currency == "USD" {
+            usd_running += entry.amount;
+            entry.balance = usd_running;
+        } else {
+            iqd_running += entry.amount;
+            entry.balance = iqd_running;
+        }
     }
 
     // إعادة ترقيم
@@ -977,12 +1083,13 @@ fn add_expense(
     amount: f64,
     date: String,
     notes: Option<String>,
+    currency: Option<String>,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.execute(
-        "INSERT INTO expenses (description, amount, date, time, notes)
-         VALUES (?1, ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4)",
-        (description.trim(), amount, date.trim(), notes),
+        "INSERT INTO expenses (description, amount, date, time, notes, currency)
+         VALUES (?1, ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5)",
+        (description.trim(), amount, date.trim(), notes, currency),
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -992,7 +1099,7 @@ fn add_expense(
 fn get_expenses(state: State<AppState>) -> Result<Vec<ExpenseEntry>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let mut stmt = db
-        .prepare("SELECT id, description, amount, date, COALESCE(time, '00:00'), notes FROM expenses ORDER BY id ASC")
+        .prepare("SELECT id, description, amount, date, COALESCE(time, '00:00'), notes, currency FROM expenses ORDER BY id ASC")
         .map_err(|e| e.to_string())?;
 
     let expenses = stmt
@@ -1004,6 +1111,7 @@ fn get_expenses(state: State<AppState>) -> Result<Vec<ExpenseEntry>, String> {
                 date: row.get(3)?,
                 time: row.get(4)?,
                 notes: row.get(5)?,
+                currency: row.get(6)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -1019,6 +1127,177 @@ fn delete_expense(state: State<AppState>, id: i64) -> Result<(), String> {
     db.execute("DELETE FROM expenses WHERE id = ?1", [id])
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+fn get_financial_summary(
+    state: State<AppState>,
+    payment_type: Option<String>,
+) -> Result<FinancialSummary, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut iqd_balance = 0.0;
+    let mut usd_balance = 0.0;
+
+    let filter_sql = match &payment_type {
+        Some(pt) => {
+            if pt == "قاصه" || pt == "قاصة" {
+                " AND (c.purchase_payment_type = 'قاصه' OR c.purchase_payment_type = 'قاصة' OR c.purchase_payment_type IS NULL OR c.purchase_payment_type = '')".to_string()
+            } else {
+                format!(" AND c.purchase_payment_type = '{}'", pt.replace('\'', "''"))
+            }
+        }
+        None => String::new(),
+    };
+
+    let filter_pt_sql = match &payment_type {
+        Some(pt) => {
+            if pt == "قاصه" || pt == "قاصة" {
+                " AND (pt.payment_type = 'قاصه' OR pt.payment_type = 'قاصة' OR pt.payment_type IS NULL OR pt.payment_type = '')".to_string()
+            } else {
+                format!(" AND pt.payment_type = '{}'", pt.replace('\'', "''"))
+            }
+        }
+        None => String::new(),
+    };
+
+    // 1. رصيد القاصة (IQD & USD) - مشتريات السيارات
+    {
+        let sql = format!(
+            "SELECT c.currency, c.purchase_price FROM cars c WHERE c.purchase_date IS NOT NULL AND c.purchase_price > 0{}",
+            filter_sql
+        );
+        let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
+        let purchase_rows: Vec<(String, f64)> = stmt
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        drop(stmt);
+        for (currency, price) in &purchase_rows {
+            if currency == "USD" { usd_balance -= price; } else { iqd_balance -= price; }
+        }
+    }
+
+    // بيع السيارات
+    for (sale_type, amount_col) in [("كاش", "selling_price"), ("موعد", "amount_paid"), ("اقساط", "amount_paid")] {
+        let sql = format!(
+            "SELECT COALESCE(c.sale_currency, 'IQD'), c.{} FROM cars c WHERE c.status = 'مبيوعة' AND c.payment_type = ?1 AND c.sale_date IS NOT NULL AND c.sale_date != ''{}",
+            amount_col, filter_sql
+        );
+        let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
+        let sale_rows: Vec<(String, f64)> = stmt
+            .query_map([sale_type], |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        drop(stmt);
+        for (currency, amount) in &sale_rows {
+            if currency == "USD" { usd_balance += amount; } else { iqd_balance += amount; }
+        }
+    }
+
+    // معاملات الشركاء والمستثمرين
+    {
+        let sql = format!(
+            "SELECT pt.kind, pt.type, pt.amount, COALESCE(pt.currency, 'IQD')
+             FROM partner_transactions pt
+             WHERE NOT (pt.kind = 'مطلوب' AND pt.type = 'سحب'){}",
+            filter_pt_sql
+        );
+        let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
+        let tx_rows: Vec<(String, String, f64, String)> = stmt
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?, row.get::<_, String>(3)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        drop(stmt);
+        for (kind, tx_type, amount, currency) in &tx_rows {
+            let signed = match (kind.as_str(), tx_type.as_str()) {
+                ("شريك", "ايداع") | ("مستثمر", "ايداع") | ("مطلوب", "ايداع") => *amount,
+                ("شريك", "سحب") | ("مستثمر", "سحب") => -*amount,
+                _ => 0.0,
+            };
+            if currency == "USD" { usd_balance += signed; } else { iqd_balance += signed; }
+        }
+    }
+
+    // المصروفات
+    let include_others = match &payment_type {
+        Some(pt) => pt == "قاصه" || pt == "قاصة",
+        None => true,
+    };
+    if include_others {
+        let sql = "SELECT COALESCE(SUM(amount), 0), COALESCE(currency, 'IQD') FROM expenses GROUP BY currency";
+        let mut stmt = db.prepare(sql).map_err(|e| e.to_string())?;
+        let exp_rows: Vec<(f64, String)> = stmt
+            .query_map([], |row| Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        drop(stmt);
+        for (total, currency) in &exp_rows {
+            if currency == "USD" { usd_balance -= total; } else { iqd_balance -= total; }
+        }
+    }
+
+    // 2. قيمة المخزون (مجموع سعر شراء السيارات المتوفرة)
+    let inv_sql = format!(
+        "SELECT COALESCE(SUM(purchase_price), 0) FROM cars WHERE status = 'متوفرة'{}",
+        filter_sql
+    );
+    let inventory_value: f64 = db
+        .query_row(&inv_sql, [], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+
+    // 3. إجمالي استثمارات المستثمرين
+    let total_investments: f64 = db
+        .query_row(
+            "SELECT COALESCE(SUM(total_amount), 0) FROM partners WHERE kind = 'مستثمر' AND total_amount > 0",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    // 4. رأس مال الشركاء
+    let total_partner_capital: f64 = db
+        .query_row(
+            "SELECT COALESCE(SUM(total_amount), 0) FROM partners WHERE kind = 'شريك'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    // 5. إجمالي ديون العملاء
+    let total_debtors: f64 = db
+        .query_row(
+            "SELECT COALESCE(SUM(total_amount), 0) FROM partners WHERE kind = 'مطلوب' AND total_amount > 0",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    // 6. إجمالي المصروفات
+    let total_expenses: f64 = db
+        .query_row(
+            "SELECT COALESCE(SUM(amount), 0) FROM expenses",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    // 7. صافي رأس المال (النقد + المخزون + ديون العملاء - استثمارات المستثمرين)
+    let net_capital = iqd_balance + inventory_value + total_debtors - total_investments;
+
+    Ok(FinancialSummary {
+        iqd_balance,
+        usd_balance,
+        inventory_value,
+        total_investments,
+        total_partner_capital,
+        total_debtors,
+        total_expenses,
+        net_capital,
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1069,6 +1348,7 @@ pub fn run() {
             add_expense,
             get_expenses,
             delete_expense,
+            get_financial_summary,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

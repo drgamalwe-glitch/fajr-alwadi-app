@@ -22,8 +22,13 @@ export function formatNumber(amount: number): string {
 }
 
 export function computeDashboardStats(cars: Car[], partners: Partner[] = []) {
-  const totalInventoryValue = cars
-    .filter((c) => c.status === "متوفرة")
+  const availableCars = cars.filter((c) => c.status === "متوفرة");
+  const totalInventoryValue = availableCars.reduce((sum, c) => sum + c.purchase_price, 0);
+  const iqdInventory = availableCars
+    .filter((c) => c.currency !== "USD")
+    .reduce((sum, c) => sum + c.purchase_price, 0);
+  const usdInventory = availableCars
+    .filter((c) => c.currency === "USD")
     .reduce((sum, c) => sum + c.purchase_price, 0);
 
   const partnersTotal = partners
@@ -38,6 +43,8 @@ export function computeDashboardStats(cars: Car[], partners: Partner[] = []) {
 
   return {
     totalInventoryValue,
+    iqdInventory,
+    usdInventory,
     partnersTotal,
     investorsTotal,
     netCapital,

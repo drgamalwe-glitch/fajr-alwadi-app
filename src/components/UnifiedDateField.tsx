@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { cn } from "../lib/utils";
 import { toEnglishDigits } from "../utils/numberInput";
 import {
   bumpYearLastTwo,
@@ -157,57 +158,79 @@ export function UnifiedDateField({ value, onChange, disabled, id, tabIndex }: Un
   };
 
   return (
-    <input
-      ref={inputRef}
-      id={id}
-      type="text"
-      className="input unified-date-field"
-      dir="ltr"
-      disabled={disabled}
-      tabIndex={tabIndex}
-      value={display}
-      placeholder="YYYY-MM-DD"
-      autoComplete="off"
-      inputMode="decimal"
-      onFocus={(e) => {
-        const el = e.currentTarget;
-        setSegment("day");
-        setDigitBuf("");
-        requestAnimationFrame(() => {
-          if (el && typeof el.setSelectionRange === "function") {
-            const [start] = SEGMENT_RANGE["day"];
-            el.setSelectionRange(start, start + SEGMENT_MAX["day"]);
-          }
-        });
-      }}
-      onClick={(e) => {
-        const el = e.currentTarget;
-        const part = segmentFromPos(el.selectionStart ?? 0);
-        setSegment(part);
-        setDigitBuf("");
-        requestAnimationFrame(() => {
-          if (el && typeof el.setSelectionRange === "function") {
-            const [start] = SEGMENT_RANGE[part];
-            el.setSelectionRange(start, start + SEGMENT_MAX[part]);
-          }
-        });
-      }}
-      onChange={(e) => {
-        const next = normalizeIsoDate(e.target.value);
-        if (/^\d{4}-\d{2}-\d{2}$/.test(next)) {
-          onChange(next);
-        }
-      }}
-      onBlur={(e) => {
-        setDigitBuf("");
-        const next = normalizeIsoDate(e.target.value);
-        onChange(/^\d{4}-\d{2}-\d{2}$/.test(next) ? next : display);
-      }}
-      onKeyDown={onKeyDown}
-      onWheel={(e) => {
-        e.preventDefault();
-        applyDelta(e.deltaY > 0 ? -1 : 1);
-      }}
-    />
+    <div className="relative flex items-center w-full">
+      {/* Glow الخلفية المحيطة — تدار بالكامل بالـ CSS لضمان انطفائها فور خروج التركيز */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none rounded-xl">
+        <div
+          className="input-glow absolute w-[500px] h-[500px] rounded-full top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 pointer-events-none"
+          style={{
+            background: "radial-gradient(circle, rgba(216, 168, 90, 0.08), transparent 70%)",
+          }}
+        />
+      </div>
+
+      <div
+        className={cn(
+          "relative flex items-center w-full rounded-xl border px-3 py-2 unified-date-field-wrapper",
+          "bg-black/50 backdrop-blur-xl",
+          "transition-all duration-300",
+          "border-slate-800/60",
+          disabled && "opacity-48 pointer-events-none",
+        )}
+      >
+        <input
+          ref={inputRef}
+          id={id}
+          type="text"
+          className="w-full min-w-0 bg-transparent text-xl font-bold text-white placeholder-slate-600 outline-none text-center flex-1 unified-date-field"
+          dir="ltr"
+          disabled={disabled}
+          tabIndex={tabIndex}
+          value={display}
+          placeholder="YYYY-MM-DD"
+          autoComplete="off"
+          inputMode="decimal"
+          onFocus={(e) => {
+            const el = e.currentTarget;
+            setSegment("day");
+            setDigitBuf("");
+            requestAnimationFrame(() => {
+              if (el && typeof el.setSelectionRange === "function") {
+                const [start] = SEGMENT_RANGE["day"];
+                el.setSelectionRange(start, start + SEGMENT_MAX["day"]);
+              }
+            });
+          }}
+          onClick={(e) => {
+            const el = e.currentTarget;
+            const part = segmentFromPos(el.selectionStart ?? 0);
+            setSegment(part);
+            setDigitBuf("");
+            requestAnimationFrame(() => {
+              if (el && typeof el.setSelectionRange === "function") {
+                const [start] = SEGMENT_RANGE[part];
+                el.setSelectionRange(start, start + SEGMENT_MAX[part]);
+              }
+            });
+          }}
+          onChange={(e) => {
+            const next = normalizeIsoDate(e.target.value);
+            if (/^\d{4}-\d{2}-\d{2}$/.test(next)) {
+              onChange(next);
+            }
+          }}
+          onBlur={(e) => {
+            setDigitBuf("");
+            const next = normalizeIsoDate(e.target.value);
+            onChange(/^\d{4}-\d{2}-\d{2}$/.test(next) ? next : display);
+          }}
+          onKeyDown={onKeyDown}
+          onWheel={(e) => {
+            e.preventDefault();
+            applyDelta(e.deltaY > 0 ? -1 : 1);
+          }}
+        />
+      </div>
+    </div>
   );
 }

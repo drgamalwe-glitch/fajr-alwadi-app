@@ -5,8 +5,9 @@ import { englishKeyboardToArabic } from "../utils/keyboardLayout";
 import { toEnglishDigits } from "../utils/numberInput";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ElegantSwitch } from "./ElegantSwitch";
-import { NumberInput } from "./NumberInput";
 import { UnifiedDateField } from "./UnifiedDateField";
+import { ActionButton, TextInput, NumberInput, PriceInput, PriceDisplay } from "@/components/ui";
+import type { Currency } from "@/components/ui";
 
 interface PartnersTabProps {
   partners: Partner[];
@@ -37,12 +38,14 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
   const [transactions, setTransactions] = useState<PartnerTransaction[]>([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
 
+  const [txCurrency, setTxCurrency] = useState<Currency>("IQD");
   const [txForm, setTxForm] = useState({
     type: "ايداع" as TransactionType,
     amount: 0,
     date: new Date().toISOString().slice(0, 10),
     notes: "",
     installments: 1,
+    paymentType: "قاصه" as "قاصه" | "ماستر" | "مصرف",
   });
   const [editingTransactionId, setEditingTransactionId] = useState<number | null>(null);
   const [transactionSort, setTransactionSort] = useState<{
@@ -95,7 +98,7 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
     setEditingTransactionId(null);
     setTransactionSort({ key: "date", direction: "asc" });
     if (!preserveType) {
-      setTxForm({ type: "ايداع", amount: 0, date: new Date().toISOString().slice(0, 10), notes: "", installments: 1 });
+      setTxForm({ type: "ايداع", amount: 0, date: new Date().toISOString().slice(0, 10), notes: "", installments: 1, paymentType: "قاصه" });
     }
     setTransactionsLoading(true);
     try {
@@ -136,7 +139,7 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
 
   const resetTransactionForm = (type: TransactionType = txForm.type) => {
     setEditingTransactionId(null);
-    setTxForm({ type, amount: 0, date: new Date().toISOString().slice(0, 10), notes: "", installments: 1 });
+    setTxForm({ type, amount: 0, date: new Date().toISOString().slice(0, 10), notes: "", installments: 1, paymentType: "قاصه" });
   };
 
   const openDepositForm = () => {
@@ -151,13 +154,19 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
 
   const beginEditTransaction = (tx: PartnerTransaction) => {
     setEditingTransactionId(tx.id);
+    const rawPaymentType = tx.payment_type || tx.paymentType || "قاصه";
+    const paymentType = (rawPaymentType === "ماستر" || rawPaymentType === "مصرف") ? rawPaymentType : "قاصه";
     setTxForm({
       type: tx.type_ === "سحب" ? "سحب" : "ايداع",
       amount: tx.amount,
       date: tx.date?.split(" ")[0] || new Date().toISOString().slice(0, 10),
       notes: tx.notes ?? "",
       installments: 1,
+      paymentType,
     });
+    if (tx.currency === "USD" || tx.currency === "IQD") {
+      setTxCurrency(tx.currency);
+    }
     setShowTxModal(true);
   };
 
@@ -353,7 +362,7 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
       setTransactions(txs ?? []);
       if (editingTransactionId === tx.id) {
         setEditingTransactionId(null);
-        setTxForm({ type: "ايداع" as TransactionType, amount: 0, date: new Date().toISOString().slice(0, 10), notes: "", installments: 1 });
+        setTxForm({ type: "ايداع" as TransactionType, amount: 0, date: new Date().toISOString().slice(0, 10), notes: "", installments: 1, paymentType: "قاصه" });
       }
       await onRefresh();
     } catch (err) {
@@ -396,6 +405,8 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
           amount,
           date: dateStr_i,
           notes: monthNote,
+          currency: txCurrency,
+          paymentType: txForm.paymentType,
         };
 
         if (editingTransactionId) {
@@ -436,9 +447,9 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
       <section className="main-card customers-main-card">
         <div className="card-toolbar customers-toolbar partners-toolbar">
           <div className="partners-toolbar-buttons">
-            <button type="button" className="btn btn--primary partners-add-btn" onClick={startNew}>
+            <ActionButton type="button" variant="primary" onClick={startNew}>
               + إضافة {kind}
-            </button>
+            </ActionButton>
           </div>
           <h3 className="card-header card-header--inline customers-title partners-title">
             {kind === "مطلوب" ? "ديون العملاء" : kind === "مستثمر" ? "المستثمرون" : "الشركاء"} ({myPartners.length})
@@ -492,10 +503,10 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                       <td className="col-name cell-bold">{partner.partner_name}</td>
                       <td className="col-phone">{partner.phone || "—"}</td>
                       <td className={`col-money cell-bold ${fin && fin.remaining > 0 ? "text-red" : "text-green"}`}>
-                        {financesLoading ? "—" : fin ? fin.remaining.toLocaleString("en-US") : "0"}
+                        {financesLoading ? "—" : <PriceDisplay amount={fin ? fin.remaining : 0} />}
                       </td>
                       <td className="col-money cell-bold" style={{ color: "#60a5fa" }}>
-                        {financesLoading ? "—" : fin ? fin.installmentAmount.toLocaleString("en-US") : "0"}
+                        {financesLoading ? "—" : <PriceDisplay amount={fin ? fin.installmentAmount : 0} />}
                       </td>
                       <td className="col-due">
                         {financesLoading ? (
@@ -567,7 +578,7 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                       <td className="col-name cell-bold">{partner.partner_name}</td>
                       <td className="col-phone">{partner.phone || "—"}</td>
                       <td className={`col-money cell-bold ${partner.total_amount >= 0 ? "text-green" : "text-red"}`}>
-                        {partner.total_amount.toLocaleString("en-US")}
+                        <PriceDisplay amount={partner.total_amount} />
                       </td>
                       <td className="col-ratio">{ratio.toFixed(1)}%</td>
                       <td className="col-delete">
@@ -603,66 +614,18 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
       {modalMode !== null && (
         <div className="modal-overlay modal-overlay--soft" role="presentation" onClick={resetForm}>
           <div
-            className="modal-dialog modal-dialog--customer modal-dialog--partner"
+            className="modal-dialog modal-dialog--car modal-dialog--wide modal-dialog--partner"
             role="dialog"
             aria-modal="true"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="customer-form-panel partner-form-panel">
-              {modalMode === "view" && (
-                <div className="partner-summary-sidebar">
-                  <div className="partner-summary-field">
-                    <span className="partner-summary-field__label">الاسم</span>
-                    <span className="partner-summary-field__value">{form.name || "—"}</span>
-                  </div>
-                  <div className="partner-summary-field">
-                    <span className="partner-summary-field__label">رقم الهاتف</span>
-                    <span className="partner-summary-field__value" dir="ltr">{form.phone || "—"}</span>
-                  </div>
-                  {(kind === "مطلوب") ? (
-                    <>
-                      <div className="partner-summary-field">
-                        <span className="partner-summary-field__label">المبلغ الكلي</span>
-                        <span className="partner-summary-field__value partner-summary-field__value--total">
-                          {(totalWithdrawals + totalDeposits).toLocaleString("en-US")}
-                        </span>
-                      </div>
-                      <div className="partner-summary-field">
-                        <span className="partner-summary-field__label">تم تسديد</span>
-                        <span className="partner-summary-field__value partner-summary-field__value--paid">
-                          {totalDeposits.toLocaleString("en-US")}
-                        </span>
-                      </div>
-                      <div className="partner-summary-field">
-                        <span className="partner-summary-field__label">المتبقي</span>
-                        <span className="partner-summary-field__value partner-summary-field__value--remaining">
-                          {totalWithdrawals.toLocaleString("en-US")}
-                        </span>
-                      </div>
-                      <div className="partner-summary-field">
-                        <span className="partner-summary-field__label">القسط الشهري</span>
-                        <span className="partner-summary-field__value partner-summary-field__value--installment">
-                          {currentInstallment.toLocaleString("en-US")}
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="partner-summary-field">
-                      <span className="partner-summary-field__label">صافي المبلغ</span>
-                      <span className="partner-summary-field__value">
-                        {(totalDeposits - totalWithdrawals).toLocaleString("en-US")}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
-
               <div className="partner-main-content">
                 <div className="car-form-panel__header">
                   <h3 className="car-form-panel__title">
                     {modalMode === "new"
                       ? `إضافة ${kind}`
-                       : ""}
+                      : `سجل حركات الحساب: ${form.name}`}
                   </h3>
                 </div>
 
@@ -672,31 +635,31 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                     <label className="label" htmlFor="partner-name">
                       اسم {kind}
                     </label>
-                    <input id="partner-name" className="input" type="text" value={form.name}
-                      autoComplete="new-password" autoCorrect="off" autoCapitalize="off" spellCheck={false}
-                      onInput={(e) => patchName(e.currentTarget.value)}
-                      onChange={(e) => patchName(e.target.value)}
-                      onBlur={(e) => patchName(e.currentTarget.value)}
+                    <TextInput id="partner-name" value={form.name}
+                      autoComplete="new-password"
+                      onInput={(e: React.FormEvent<HTMLInputElement>) => patchName((e.target as HTMLInputElement).value)}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => patchName(e.target.value)}
+                      onBlur={(e: React.FocusEvent<HTMLInputElement>) => patchName(e.target.value)}
                       placeholder="الاسم الثلاثي" />
                   </div>
                   <div className="form-group">
                     <label className="label" htmlFor="partner-phone">
                       رقم الهاتف
                     </label>
-                    <input id="partner-phone" className="input" type="text" value={form.phone}
-                      autoComplete="new-password" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+                    <TextInput id="partner-phone" value={form.phone}
+                      autoComplete="new-password"
                       dir="ltr" placeholder="077xxxxxxxx"
-                      onInput={(e) => patchPhone(e.currentTarget.value)}
-                      onChange={(e) => patchPhone(e.target.value)}
-                      onBlur={(e) => patchPhone(e.currentTarget.value)} />
+                      onInput={(e: React.FormEvent<HTMLInputElement>) => patchPhone((e.target as HTMLInputElement).value)}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => patchPhone(e.target.value)}
+                      onBlur={(e: React.FocusEvent<HTMLInputElement>) => patchPhone(e.target.value)} />
                   </div>
                   <div className="car-form-panel__actions">
-                    <button type="submit" className="btn btn--success" disabled={saving}>
+                    <ActionButton type="submit" variant="success" disabled={saving}>
                       {saving ? "جاري الحفظ..." : `حفظ ${kind}`}
-                    </button>
-                    <button type="button" className="btn btn--ghost" onClick={resetForm}>
+                    </ActionButton>
+                    <ActionButton type="button" variant="ghost" onClick={resetForm}>
                       إلغاء
-                    </button>
+                    </ActionButton>
                   </div>
                 </form>
                 )}
@@ -716,50 +679,61 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                           <table className="data-table">
                             <thead>
                               <tr>
-                                <th>
+                                <th className="col-seq">
                                   <button type="button" className="th-sort-btn" onClick={() => handleSortTransactions("sequence")}>
                                     ت {transactionSort.key === "sequence" ? (transactionSort.direction === "asc" ? "▲" : "▼") : ""}
                                   </button>
                                 </th>
-                                <th>
+                                <th className="col-date">
                                   <button type="button" className="th-sort-btn" onClick={() => handleSortTransactions("date")}>
                                     التاريخ {transactionSort.key === "date" ? (transactionSort.direction === "asc" ? "▲" : "▼") : ""}
                                   </button>
                                 </th>
-                                <th>المبلغ</th>
-                                <th>ملاحظة</th>
-                                <th></th>
+                                <th className="col-account">الحساب</th>
+                                <th className="col-amount">المبلغ</th>
+                                <th className="col-notes">ملاحظة</th>
+                                <th className="col-actions"></th>
                               </tr>
                             </thead>
                             <tbody>
-                              {sortedTransactions.map((tx) => (
-                                <tr
-                                  key={tx.id}
-                                  className={`partner-tx-row ${tx.type_ === "ايداع" ? "partner-tx-row--deposit" : "partner-tx-row--withdraw"}`}
-                                  title="اضغط لتعديل المعاملة"
-                                  onClick={() => beginEditTransaction(tx)}
-                                >
-                                  <td className="cell-num">{sequenceByTransactionId.get(tx.id) ?? tx.id}</td>
-                                  <td>{tx.date}</td>
-                                  <td className={tx.type_ === "ايداع" ? "text-green" : "text-red"}>
-                                    {tx.amount.toLocaleString("en-US")}
-                                  </td>
-                                  <td className="text-muted">{tx.notes || "—"}</td>
-                                  <td>
-                                    <button
-                                      type="button"
-                                      className="partner-tx-delete-btn"
-                                      title="حذف المعاملة"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setDeleteTxConfirm(tx);
-                                      }}
-                                    >
-                                      ✕
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
+                              {sortedTransactions.map((tx) => {
+                                const rawPaymentType = tx.payment_type || tx.paymentType || "قاصه";
+                                const paymentTypeLabel = (rawPaymentType === "ماستر" || rawPaymentType === "مصرف") ? rawPaymentType : "قاصه";
+                                const badgeClass = paymentTypeLabel === "ماستر" ? "account-badge--master" : paymentTypeLabel === "مصرف" ? "account-badge--bank" : "account-badge--qasa";
+                                return (
+                                  <tr
+                                    key={tx.id}
+                                    className={`partner-tx-row ${tx.type_ === "ايداع" ? "partner-tx-row--deposit" : "partner-tx-row--withdraw"}`}
+                                    title="اضغط لتعديل المعاملة"
+                                    onClick={() => beginEditTransaction(tx)}
+                                  >
+                                    <td className="cell-num col-seq">{sequenceByTransactionId.get(tx.id) ?? tx.id}</td>
+                                    <td className="col-date">{tx.date}</td>
+                                    <td className="col-account">
+                                      <span className={`account-badge ${badgeClass}`}>
+                                        {paymentTypeLabel}
+                                      </span>
+                                    </td>
+                      <td className="col-amount" style={{ color: tx.currency === "USD" ? "#10b981" : "#d8a85a" }}>
+                                      <PriceDisplay amount={tx.amount} currency={tx.currency} />
+                                    </td>
+                                    <td className="text-muted col-notes">{tx.notes || "—"}</td>
+                                    <td className="col-actions">
+                                      <button
+                                        type="button"
+                                        className="partner-tx-delete-btn"
+                                        title="حذف المعاملة"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setDeleteTxConfirm(tx);
+                                        }}
+                                      >
+                                        ✕
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>
@@ -767,24 +741,72 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                     </div>
 
                     <div className="car-form-panel__actions partner-modal-actions" style={{ marginTop: "1rem" }}>
-                      <button
-                        type="button"
-                        className="btn btn--withdraw"
-                        onClick={openWithdrawForm}
-                      >
-                        {kind === "مطلوب" ? "إضافة دين" : "سحب"}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn--success"
-                        onClick={openDepositForm}
-                      >
-                        {kind === "مطلوب" ? "تسديد" : "إيداع"}
-                      </button>
+                    <ActionButton
+                      type="button"
+                      variant="success"
+                      onClick={openDepositForm}
+                    >
+                      {kind === "مطلوب" ? "تسديد" : "إيداع"}
+                    </ActionButton>
+                    <ActionButton
+                      type="button"
+                      variant="primary"
+                      onClick={openWithdrawForm}
+                    >
+                      {kind === "مطلوب" ? "إضافة دين" : "سحب"}
+                    </ActionButton>
                     </div>
                   </>
                 )}
               </div>
+
+              {modalMode === "view" && (
+                <div className="partner-summary-sidebar">
+                  <div className="partner-summary-field">
+                    <span className="partner-summary-field__label">👤 الاسم</span>
+                    <span className="partner-summary-field__value">{form.name || "—"}</span>
+                  </div>
+                  <div className="partner-summary-field">
+                    <span className="partner-summary-field__label">📞 رقم الهاتف</span>
+                    <span className="partner-summary-field__value" dir="ltr">{form.phone || "—"}</span>
+                  </div>
+                  {(kind === "مطلوب") ? (
+                    <>
+                      <div className="partner-summary-field">
+                        <span className="partner-summary-field__label">📊 المبلغ الكلي</span>
+                        <span className="partner-summary-field__value partner-summary-field__value--total">
+                          <PriceDisplay amount={totalWithdrawals + totalDeposits} />
+                        </span>
+                      </div>
+                      <div className="partner-summary-field">
+                        <span className="partner-summary-field__label">🟢 تم تسديد</span>
+                        <span className="partner-summary-field__value partner-summary-field__value--paid">
+                          <PriceDisplay amount={totalDeposits} />
+                        </span>
+                      </div>
+                      <div className="partner-summary-field">
+                        <span className="partner-summary-field__label">🔴 المتبقي</span>
+                        <span className="partner-summary-field__value partner-summary-field__value--remaining">
+                          <PriceDisplay amount={totalWithdrawals} />
+                        </span>
+                      </div>
+                      <div className="partner-summary-field">
+                        <span className="partner-summary-field__label">📅 القسط الشهري</span>
+                        <span className="partner-summary-field__value partner-summary-field__value--installment">
+                          <PriceDisplay amount={currentInstallment} />
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="partner-summary-field">
+                      <span className="partner-summary-field__label">💼 صافي المبلغ</span>
+                        <span className="partner-summary-field__value">
+                          <PriceDisplay amount={totalDeposits - totalWithdrawals} />
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -805,7 +827,7 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
       <ConfirmDialog
         open={!!deleteTxConfirm}
         title="تأكيد حذف المعاملة"
-        message={`هل تريد حذف هذه المعاملة بقيمة (${deleteTxConfirm?.amount.toLocaleString("en-US")})؟ لا يمكن التراجع عن هذا الإجراء.`}
+        message={<span>هل تريد حذف هذه المعاملة بقيمة ({deleteTxConfirm ? <PriceDisplay amount={deleteTxConfirm.amount} currency={deleteTxConfirm.currency} /> : ""})؟ لا يمكن التراجع عن هذا الإجراء.</span>}
         confirmLabel="نعم، احذف"
         cancelLabel="إلغاء"
         danger
@@ -857,10 +879,11 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
 
               <div className="form-group">
                 <label className="label">المبلغ</label>
-                <NumberInput
+                <PriceInput
                   value={String(txForm.amount)}
                   onChange={(amount) => setTxForm({ ...txForm, amount: Number(amount) || 0 })}
-                  wheelMultiply={1000}
+                  currency={txCurrency}
+                  onCurrencyChange={setTxCurrency}
                 />
               </div>
 
@@ -871,9 +894,26 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                     value={String(txForm.installments)}
                     onChange={(installments) => setTxForm({ ...txForm, installments: Math.max(1, Number(installments) || 1) })}
                     min={1}
+                    hideArrows
                   />
                 </div>
               )}
+
+              <div className="form-group">
+                <label className="label">طريقة الدفع</label>
+                <div className="payment-type-selector">
+                  {(["قاصه", "ماستر", "مصرف"] as const).map((opt) => (
+                    <button
+                      key={opt}
+                      type="button"
+                      className={`payment-type-btn payment-type-btn--${opt === "قاصه" ? "qasa" : opt === "ماستر" ? "master" : "bank"} ${txForm.paymentType === opt ? "payment-type-btn--active" : ""}`}
+                      onClick={() => setTxForm({ ...txForm, paymentType: opt })}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               <div className="form-group">
                 <label className="label">ملاحظة</label>
@@ -888,16 +928,16 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
               </div>
 
               <div className="modal-dialog__actions" style={{ marginTop: "1.5rem" }}>
-                <button type="button" className="btn btn--ghost" onClick={() => setShowTxModal(false)}>
+                <ActionButton type="button" variant="ghost" onClick={() => setShowTxModal(false)}>
                   إلغاء
-                </button>
-                <button
+                </ActionButton>
+                <ActionButton
                   type="submit"
-                  className={`btn ${txForm.type === "ايداع" ? "btn--success" : "btn--withdraw"}`}
+                  variant={txForm.type === "ايداع" ? "success" : "primary"}
                   disabled={saving}
                 >
                   {saving ? "جاري الحفظ..." : editingTransactionId ? "تحديث" : "إضافة"}
-                </button>
+                </ActionButton>
               </div>
             </form>
           </div>
@@ -918,17 +958,17 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
               لا يمكن التراجع عن هذا الإجراء.
             </p>
             <div className="modal-dialog__actions">
-              <button
+              <ActionButton
                 type="button"
-                className="btn btn--ghost"
+                variant="ghost"
                 onClick={() => { setShowDeleteModal(false); setPartnerToDelete(null); }}
                 disabled={saving}
               >
                 إلغاء
-              </button>
-              <button
+              </ActionButton>
+              <ActionButton
                 type="button"
-                className="btn btn--danger-solid"
+                variant="danger"
                 onClick={() => {
                   const p = partnerToDelete;
                   setShowDeleteModal(false);
@@ -938,7 +978,7 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                 disabled={saving}
               >
                 {saving ? "جاري الحذف..." : "تأكيد الحذف النهائي"}
-              </button>
+              </ActionButton>
             </div>
           </div>
         </div>

@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import { callTauri } from "../api/tauri";
 import { todayIsoDate } from "../utils/dateSegments";
-import { NumberInput } from "./NumberInput";
 import { UnifiedDateField } from "./UnifiedDateField";
 import type { ExpenseEntry } from "../types";
+import { ActionButton, TextInput, PriceInput, PriceDisplay } from "@/components/ui";
+import type { Currency } from "@/components/ui";
 
 export function ExpensesTab() {
   const [entries, setEntries] = useState<ExpenseEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [description, setDescription] = useState("");
+  const [currency, setCurrency] = useState<Currency>("IQD");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(todayIsoDate());
   const [notes, setNotes] = useState("");
@@ -37,6 +39,7 @@ export function ExpensesTab() {
       amount: Number(amount),
       date,
       notes: notes.trim() || null,
+      currency,
     });
     setDescription("");
     setAmount("");
@@ -60,7 +63,7 @@ export function ExpensesTab() {
           <p className="page-intro__desc">تسجيل وإدارة المصروفات</p>
         </div>
         <span style={{ fontWeight: 700, fontSize: "1.1rem", color: "var(--color-red)" }}>
-          إجمالي المصروفات: {totalExpenses.toLocaleString("en-US")}
+          إجمالي المصروفات: <PriceDisplay amount={totalExpenses} />
         </span>
       </div>
 
@@ -68,9 +71,7 @@ export function ExpensesTab() {
         <form onSubmit={handleAdd} style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "flex-end" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: "3px", flex: "2", minWidth: "200px" }}>
             <label className="cf-label">البيان</label>
-            <input
-              type="text"
-              className="input"
+            <TextInput
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               required
@@ -80,25 +81,23 @@ export function ExpensesTab() {
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "3px", flex: "1", minWidth: "120px" }}>
             <label className="cf-label">المبلغ</label>
-            <NumberInput value={amount} onChange={setAmount} wheelMultiply={1000} required />
+            <PriceInput value={amount} onChange={setAmount} required currency={currency} onCurrencyChange={setCurrency} />
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "3px", flex: "1", minWidth: "180px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "3px", flex: "1", minWidth: "150px" }}>
             <label className="cf-label">التاريخ</label>
             <UnifiedDateField value={date} onChange={setDate} />
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "3px", flex: "1", minWidth: "140px" }}>
             <label className="cf-label">ملاحظة</label>
-            <input
-              type="text"
-              className="input"
+            <TextInput
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="اختياري"
             />
           </div>
-          <button type="submit" className="btn btn--primary" style={{ height: "40px", whiteSpace: "nowrap" }}>
+          <ActionButton type="submit" variant="primary">
             + إضافة مصروف
-          </button>
+          </ActionButton>
         </form>
       </section>
 
@@ -128,18 +127,17 @@ export function ExpensesTab() {
                     <td style={{ whiteSpace: "nowrap" }}>{entry.date}</td>
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.85rem", textAlign: "center" }}>{entry.time}</td>
                     <td>{entry.description}</td>
-                    <td className="col-money text-red">{entry.amount.toLocaleString("en-US")}</td>
+                    <td className="col-money"><PriceDisplay amount={entry.amount} currency={entry.currency} /></td>
                     <td style={{ fontSize: "0.85rem" }}>{entry.notes || ""}</td>
                     <td>
-                      <button
+                      <ActionButton
                         type="button"
-                        className="btn btn--ghost"
+                        variant="ghost"
                         onClick={() => handleDelete(entry.id)}
-                        style={{ color: "var(--color-red)", padding: "2px 6px", fontSize: "0.85rem" }}
                         title="حذف"
                       >
                         ✕
-                      </button>
+                      </ActionButton>
                     </td>
                   </tr>
                 ))

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { cn } from "../lib/utils";
 import { toEnglishDigits } from "../utils/numberInput";
 import {
   bumpYearLastTwo,
@@ -71,55 +72,77 @@ export function YearScrollField({
   const display = normalizeYearValue(value, fallback);
 
   return (
-    <input
-      ref={inputRef}
-      id={id}
-      className="input year-scroll-field"
-      type="text"
-      inputMode="decimal"
-      dir="ltr"
-      disabled={disabled}
-      required={required}
-      defaultValue={display}
-      placeholder="سنة"
-      aria-label="سنة الصنع"
-      autoComplete="off"
-      onInput={handleInput}
-      onFocus={(e) => selectYearLastTwoDigits(e.target)}
-      onClick={(e) => selectYearLastTwoDigits(e.currentTarget)}
-      onMouseUp={(e) => e.preventDefault()}
-      onBlur={handleBlur}
-      onCompositionStart={() => { composing.current = true; }}
-      onCompositionEnd={() => {
-        composing.current = false;
-        handleInput();
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-          e.preventDefault();
-          const el = inputRef.current;
-          if (!el) return;
-          const delta = e.key === "ArrowUp" ? 1 : -1;
-          const next = String(bumpYearLastTwo(
-            parseInt(normalizeYearValue(value, fallback), 10) || fallback,
-            delta, minYear, maxYear,
-          ));
-          el.value = next;
-          onChange(next);
-        }
-      }}
-      onWheel={(e) => {
-        e.preventDefault();
-        const el = inputRef.current;
-        if (!el) return;
-        const delta = e.deltaY > 0 ? -1 : 1;
-        const next = String(bumpYearLastTwo(
-          parseInt(normalizeYearValue(value, fallback), 10) || fallback,
-          delta, minYear, maxYear,
-        ));
-        el.value = next;
-        onChange(next);
-      }}
-    />
+    <div className="relative flex items-center w-full year-scroll-field-wrapper">
+      {/* Glow الخلفية المحيطة — تدار بالكامل بالـ CSS لضمان انطفائها فور خروج التركيز */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none rounded-xl">
+        <div
+          className="input-glow absolute w-[500px] h-[500px] rounded-full top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 pointer-events-none"
+          style={{
+            background: "radial-gradient(circle, rgba(216, 168, 90, 0.08), transparent 70%)",
+          }}
+        />
+      </div>
+
+      <div
+        className={cn(
+          "relative flex items-center w-full rounded-xl border px-3 py-2",
+          "bg-black/50 backdrop-blur-xl",
+          "transition-all duration-300",
+          "border-slate-800/60",
+          disabled && "opacity-48 pointer-events-none",
+        )}
+      >
+        <input
+          ref={inputRef}
+          id={id}
+          className="w-full min-w-0 bg-transparent text-xl font-bold text-white placeholder-slate-600 outline-none text-center flex-1 year-scroll-field"
+          type="text"
+          inputMode="decimal"
+          dir="ltr"
+          disabled={disabled}
+          required={required}
+          defaultValue={display}
+          placeholder="سنة"
+          aria-label="سنة الصنع"
+          autoComplete="off"
+          onInput={handleInput}
+          onFocus={(e) => selectYearLastTwoDigits(e.target)}
+          onClick={(e) => selectYearLastTwoDigits(e.currentTarget)}
+          onMouseUp={(e) => e.preventDefault()}
+          onBlur={handleBlur}
+          onCompositionStart={() => { composing.current = true; }}
+          onCompositionEnd={() => {
+            composing.current = false;
+            handleInput();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+              e.preventDefault();
+              const el = inputRef.current;
+              if (!el) return;
+              const delta = e.key === "ArrowUp" ? 1 : -1;
+              const next = String(bumpYearLastTwo(
+                parseInt(normalizeYearValue(value, fallback), 10) || fallback,
+                delta, minYear, maxYear,
+              ));
+              el.value = next;
+              onChange(next);
+            }
+          }}
+          onWheel={(e) => {
+            e.preventDefault();
+            const el = inputRef.current;
+            if (!el) return;
+            const delta = e.deltaY > 0 ? -1 : 1;
+            const next = String(bumpYearLastTwo(
+              parseInt(normalizeYearValue(value, fallback), 10) || fallback,
+              delta, minYear, maxYear,
+            ));
+            el.value = next;
+            onChange(next);
+          }}
+        />
+      </div>
+    </div>
   );
 }

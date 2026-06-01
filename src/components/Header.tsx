@@ -13,8 +13,9 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: "partners", label: "الشركاء", icon: "⊕" },
   { id: "investors", label: "المستثمرين", icon: "⬢" },
   { id: "debtors", label: "ديون العملاء", icon: "◎" },
-  { id: "cashregister", label: "القاصه", icon: "▣" },
   { id: "expenses", label: "المصروفات", icon: "◉" },
+  { id: "financial-accounts", label: "الحسابات المالية", icon: "♢" },
+  { id: "financial-transactions", label: "الحركات المالية", icon: "⇄" },
 ];
 
 export function Header({ activeTab, onTabChange, debtorAlertCount = 0 }: HeaderProps) {

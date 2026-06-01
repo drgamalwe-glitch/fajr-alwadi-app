@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import type { InstallmentAlert } from "../utils/installments";
-import { formatIqd } from "../utils/finance";
+import { PriceDisplay } from "@/components/ui";
 
 interface InstallmentsTabProps {
   alerts: InstallmentAlert[];
@@ -115,7 +115,7 @@ export function InstallmentsTab({ alerts: resolvedAlerts }: InstallmentsTabProps
         <div className="stat-card" style={{ borderRight: "4px solid #6b7280" }}>
           <div style={{ fontSize: "0.8rem", opacity: 0.7 }}>إجمالي قيمة الأقساط المستحقة</div>
           <div style={{ fontSize: "1.4rem", fontWeight: 700, color: "var(--gold)", marginTop: "0.25rem" }}>
-            {formatIqd(stats.totalAmount)}
+            <PriceDisplay amount={stats.totalAmount} />
           </div>
         </div>
         <div className="stat-card" style={{ borderRight: "4px solid var(--danger, #dc3545)" }}>
@@ -172,7 +172,7 @@ export function InstallmentsTab({ alerts: resolvedAlerts }: InstallmentsTabProps
                     <td className="cell-bold">{alert.buyerName || "—"}</td>
                     <td dir="ltr" style={{ fontWeight: 600 }}>{alert.phone || "—"}</td>
                     <td dir="ltr" style={{ fontWeight: 700, color: "var(--gold)", textAlign: "right" }}>
-                      {formatIqd(alert.monthlyPayment)}
+                      <PriceDisplay amount={alert.monthlyPayment} />
                     </td>
                     <td dir="ltr" style={{ textAlign: "center", fontWeight: 600 }}>
                       {alert.dueDate || "—"}

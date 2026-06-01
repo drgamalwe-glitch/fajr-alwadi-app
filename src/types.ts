@@ -26,6 +26,10 @@ export interface Car {
   sale_date?: string | null;
   delivery_date?: string | null;
   first_payment_date?: string | null;
+  currency?: string | null;
+  sale_currency?: string | null;
+  purchase_payment_type?: string | null;
+  sale_payment_type?: string | null;
 }
 
 export interface Partner {
@@ -43,6 +47,9 @@ export interface PartnerTransaction {
   amount: number;
   date: string;
   notes: string | null;
+  currency?: string | null;
+  paymentType?: string | null;
+  payment_type?: string | null;
 }
 
 export interface ExpenseEntry {
@@ -52,6 +59,7 @@ export interface ExpenseEntry {
   date: string;
   time: string;
   notes: string | null;
+  currency?: string | null;
 }
 
 export interface CashRegisterEntry {
@@ -63,9 +71,21 @@ export interface CashRegisterEntry {
   description: string;
   notes: string | null;
   balance: number;
+  currency?: string | null;
 }
 
-export type TabId = "dashboard" | "cars" | "partners" | "investors" | "debtors" | "cashregister" | "expenses";
+export type TabId = "dashboard" | "cars" | "partners" | "investors" | "debtors" | "cashregister" | "expenses" | "financial-accounts" | "financial-transactions";
+
+export interface FinancialSummary {
+  iqd_balance: number;
+  usd_balance: number;
+  inventory_value: number;
+  total_investments: number;
+  total_partner_capital: number;
+  total_debtors: number;
+  net_capital: number;
+  total_expenses: number;
+}
 
 export interface CarFormState {
   num: string;
@@ -89,4 +109,8 @@ export interface CarFormState {
   saleDate: string;
   deliveryDate: string;
   firstPaymentDate: string;
+  currency: "IQD" | "USD";
+  saleCurrency: "IQD" | "USD";
+  purchasePaymentType: "قاصه" | "ماستر" | "مصرف";
+  salePaymentType: "قاصه" | "ماستر" | "مصرف";
 }

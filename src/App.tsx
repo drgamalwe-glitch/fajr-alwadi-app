@@ -4,8 +4,9 @@ import { BrandLogo } from "./components/BrandLogo";
 import { CarsTab } from "./components/CarsTab";
 import { Dashboard } from "./components/Dashboard";
 import { Header } from "./components/Header";
-import { CashRegisterTab } from "./components/CashRegisterTab";
 import { ExpensesTab } from "./components/ExpensesTab";
+import { FinancialAccountsTab } from "./components/FinancialAccountsTab";
+import { FinancialTransactionsTab } from "./components/FinancialTransactionsTab";
 import { PartnersTab } from "./components/PartnersTab";
 import type { Car, Partner, TabId } from "./types";
 import "./App.css";
@@ -116,21 +117,24 @@ export default function App() {
             {activeTab === "partners" && <PartnersTab partners={partners} onRefresh={refreshData} kind="شريك" />}
             {activeTab === "investors" && <PartnersTab partners={partners} onRefresh={refreshData} kind="مستثمر" />}
             {activeTab === "debtors" && <PartnersTab partners={partners} onRefresh={refreshData} kind="مطلوب" />}
-            {activeTab === "cashregister" && <CashRegisterTab />}
             {activeTab === "expenses" && <ExpensesTab />}
+            {activeTab === "financial-accounts" && <FinancialAccountsTab />}
+            {activeTab === "financial-transactions" && <FinancialTransactionsTab />}
           </main>
         )}
 
-        <footer className="app-footer">
-          <div className="footer-developer">
-            <span>تم تطوير البرنامج بواسطة:-</span>
-            <strong>سيد ضرغام العلوي</strong>
-            <a href="tel:07806539291" dir="ltr">07806539291</a>
-          </div>
-          <div className="footer-brandline" dir="ltr">
-            FAJIR ALWADI CAR TRADING 2026
-          </div>
-        </footer>
+        {activeTab !== "financial-accounts" && activeTab !== "financial-transactions" && (
+          <footer className="app-footer">
+            <div className="footer-developer">
+              <span>تم تطوير البرنامج بواسطة:-</span>
+              <strong>سيد ضرغام العلوي</strong>
+              <a href="tel:07806539291" dir="ltr">07806539291</a>
+            </div>
+            <div className="footer-brandline" dir="ltr">
+              FAJIR ALWADI CAR TRADING 2026
+            </div>
+          </footer>
+        )}
       </div>
     </div>
   );
