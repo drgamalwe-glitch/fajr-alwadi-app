@@ -3,7 +3,7 @@ import { callTauri } from "../api/tauri";
 import type { CashRegisterEntry } from "../types";
 import { PriceDisplay } from "@/components/ui";
 
-const PAGE_SIZE = 10;
+import { PAGE_SIZE } from "../constants";
 
 interface CashRegisterTabProps {
   paymentType?: string;
@@ -68,28 +68,44 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
             ) : entries.length === 0 ? (
               <tr><td colSpan={7} className="empty-cell">لا توجد معاملات بعد</td></tr>
             ) : (
-              pageEntries.map((entry) => (
-                <tr key={entry.id}>
-                  <td className="cell-num">{entry.id}</td>
-                  <td style={{ whiteSpace: "nowrap" }}>{entry.date}</td>
-                  <td style={{ whiteSpace: "nowrap", fontSize: "0.85rem", textAlign: "center" }}>{entry.time}</td>
-                  <td>
-                    <span className={`badge ${entry.amount >= 0 ? "badge--primary" : "badge--sold"}`}>
-                      {entry.type_}
-                    </span>
-                  </td>
-                  <td className="col-money" style={{ color: entry.currency === "USD" ? "#10b981" : (entry.amount >= 0 ? "#d8a85a" : "#f43f5e") }}>
-                    {formatEntry(entry, entry.amount)}
-                  </td>
-                  <td style={{ fontSize: "0.85rem", maxWidth: "280px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {entry.description}
-                    {entry.notes ? <span className="text-muted" style={{ marginRight: "0.5rem" }}>({entry.notes})</span> : null}
-                  </td>
-                  <td className="col-money" style={{ color: entry.currency === "USD" ? "#10b981" : (entry.balance >= 0 ? "#d8a85a" : "#f43f5e") }}>
-                    {formatEntry(entry, entry.balance)}
-                  </td>
-                </tr>
-              ))
+              <>
+                {pageEntries.map((entry) => (
+                  <tr key={entry.id}>
+                    <td className="cell-num">{entry.id}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>{entry.date}</td>
+                    <td style={{ whiteSpace: "nowrap", fontSize: "0.85rem", textAlign: "center" }}>{entry.time}</td>
+                    <td>
+                      <span
+                        className={`badge ${entry.amount >= 0 ? "badge--primary" : "badge--sold"}`}
+                        style={{ whiteSpace: "nowrap" }}
+                      >
+                        {entry.type_}
+                      </span>
+                    </td>
+                    <td className="col-money" style={{ color: entry.currency === "USD" ? "#10b981" : (entry.amount >= 0 ? "#d8a85a" : "#f43f5e") }}>
+                      {formatEntry(entry, entry.amount)}
+                    </td>
+                    <td style={{ fontSize: "0.85rem", maxWidth: "280px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {entry.description}
+                      {entry.notes ? <span className="text-muted" style={{ marginRight: "0.5rem" }}>({entry.notes})</span> : null}
+                    </td>
+                    <td className="col-money" style={{ color: entry.currency === "USD" ? "#10b981" : (entry.balance >= 0 ? "#d8a85a" : "#f43f5e") }}>
+                      {formatEntry(entry, entry.balance)}
+                    </td>
+                  </tr>
+                ))}
+                {Array.from({ length: PAGE_SIZE - pageEntries.length }).map((_, i) => (
+                  <tr key={`empty-${i}`} style={{ pointerEvents: "none" }}>
+                    <td className="cell-num">&nbsp;</td>
+                    <td>&nbsp;</td>
+                    <td>&nbsp;</td>
+                    <td>&nbsp;</td>
+                    <td>&nbsp;</td>
+                    <td>&nbsp;</td>
+                    <td>&nbsp;</td>
+                  </tr>
+                ))}
+              </>
             )}
           </tbody>
         </table>
@@ -100,7 +116,7 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
         alignItems: "center",
         justifyContent: "center",
         gap: "1rem",
-        padding: "0.75rem 0 0.25rem 0",
+        padding: "8px 0 0 0",
         borderTop: "1px solid rgba(255,255,255,0.06)",
         flexShrink: 0,
       }}>

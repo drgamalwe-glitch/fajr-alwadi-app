@@ -8,14 +8,14 @@ interface HeaderProps {
 }
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
-  { id: "dashboard", label: "لوحة المعلومات", icon: "✦" },
-  { id: "cars", label: "مخزن السيارات", icon: "◈" },
-  { id: "partners", label: "الشركاء", icon: "⊕" },
-  { id: "investors", label: "المستثمرين", icon: "⬢" },
-  { id: "debtors", label: "ديون العملاء", icon: "◎" },
-  { id: "expenses", label: "المصروفات", icon: "◉" },
+  { id: "dashboard", label: "لوحــــة المعلومــات", icon: "✦" },
+  { id: "cars", label: "المعــــــــــــــــــــــــــــــرض", icon: "◈" },
+  { id: "partners", label: "الشركـــــــــــــــــــــــــــــــاء", icon: "⊕" },
+  { id: "investors", label: "المستثمريـــــــــــــــــن", icon: "⬢" },
+  { id: "debtors", label: "الديون والاقسـاط", icon: "◎" },
+  { id: "expenses", label: "المصروفــــــــــــــــــات", icon: "◉" },
   { id: "financial-accounts", label: "الحسابات المالية", icon: "♢" },
-  { id: "financial-transactions", label: "الحركات المالية", icon: "⇄" },
+  { id: "financial-transactions", label: "سجــل المعاملات", icon: "⇄" },
 ];
 
 export function Header({ activeTab, onTabChange, debtorAlertCount = 0 }: HeaderProps) {

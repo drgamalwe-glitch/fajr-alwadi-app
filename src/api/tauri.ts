@@ -62,8 +62,16 @@ function recalculateMockPartnerTotal(partnerName: string, kind: string) {
   if (pIdx < 0) return;
 
   partners[pIdx].total_amount = txns.reduce((total, tx) => {
-    if (tx.type_ === "ايداع") return total + tx.amount;
-    if (tx.type_ === "سحب") return total - tx.amount;
+    if (kind === "مطلوب") {
+      if (tx.notes?.includes("دفعة أولى") || tx.notes?.includes("قسط") || tx.notes?.includes("مؤجل")) {
+        return total;
+      }
+      if (tx.type_ === "سحب") return total + tx.amount;
+      if (tx.type_ === "ايداع") return total - tx.amount;
+    } else {
+      if (tx.type_ === "ايداع") return total + tx.amount;
+      if (tx.type_ === "سحب") return total - tx.amount;
+    }
     return total;
   }, 0);
   localStorage.setItem("mock_partners", JSON.stringify(partners));
@@ -496,6 +504,43 @@ async function mockInvoke<T>(
       total_expenses: totalExpenses,
       net_capital: netCapital,
     } as T;
+  }
+
+  if (command === "get_investors_totals") {
+    const allTx: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
+    const investorsTx = allTx.filter((tx) => tx.kind === "مستثمر");
+    let iqd_total = 0;
+    let usd_total = 0;
+    for (const tx of investorsTx) {
+      const isUsd = tx.currency === "USD";
+      const amount = tx.type_ === "ايداع" ? tx.amount : tx.type_ === "سحب" ? -tx.amount : 0;
+      if (isUsd) usd_total += amount;
+      else iqd_total += amount;
+    }
+    return [iqd_total, usd_total] as unknown as T;
+  }
+
+  if (command === "get_partners_totals") {
+    const allTx: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
+    const kind = String(args.kind ?? "شريك").trim();
+    const partnerTx = allTx.filter((tx) => tx.kind === kind);
+    let iqd_total = 0;
+    let usd_total = 0;
+    for (const tx of partnerTx) {
+      const isUsd = tx.currency === "USD";
+      let amount = 0;
+      if (kind === "مطلوب") {
+        if (tx.notes?.includes("دفعة أولى") || tx.notes?.includes("قسط") || tx.notes?.includes("مؤجل")) {
+          continue;
+        }
+        amount = tx.type_ === "سحب" ? tx.amount : tx.type_ === "ايداع" ? -tx.amount : 0;
+      } else {
+        amount = tx.type_ === "ايداع" ? tx.amount : tx.type_ === "سحب" ? -tx.amount : 0;
+      }
+      if (isUsd) usd_total += amount;
+      else iqd_total += amount;
+    }
+    return [iqd_total, usd_total] as unknown as T;
   }
 
   throw new Error(`أمر غير معروف: ${command}`);

@@ -43,19 +43,19 @@ export function ConfirmDialog({
         <div className="modal-dialog__actions">
           <button
             type="button"
-            className="btn btn--ghost"
-            onClick={onCancel}
-            disabled={loading}
-          >
-            {cancelLabel}
-          </button>
-          <button
-            type="button"
             className={`btn ${danger ? "btn--danger-solid" : "btn--primary"}`}
             onClick={onConfirm}
             disabled={loading}
           >
             {loading ? "جاري التنفيذ..." : confirmLabel}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={onCancel}
+            disabled={loading}
+          >
+            {cancelLabel}
           </button>
         </div>
       </div>

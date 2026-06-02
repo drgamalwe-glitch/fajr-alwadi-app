@@ -122,20 +122,20 @@ export default function App() {
             {activeTab === "financial-transactions" && <FinancialTransactionsTab />}
           </main>
         )}
-
-        {activeTab !== "financial-accounts" && activeTab !== "financial-transactions" && (
-          <footer className="app-footer">
-            <div className="footer-developer">
-              <span>تم تطوير البرنامج بواسطة:-</span>
-              <strong>سيد ضرغام العلوي</strong>
-              <a href="tel:07806539291" dir="ltr">07806539291</a>
-            </div>
-            <div className="footer-brandline" dir="ltr">
-              FAJIR ALWADI CAR TRADING 2026
-            </div>
-          </footer>
-        )}
       </div>
+
+      <footer className="app-footer">
+        <div className="footer-dev">
+          <span className="footer-dev__label">تم تطوير البرنامج بواسطة :-</span>
+          <span className="footer-dev__name">سيد ضرغام العلوي</span>
+          <a href="tel:07806539291" className="footer-dev__phone" dir="ltr">07806539291</a>
+        </div>
+        <div className="footer-brand" dir="ltr">
+          <span className="footer-brand__dot" aria-hidden>✦</span>
+          <span className="footer-brand__text">FAJIR ALWADI CAR TRADING</span>
+          <span className="footer-brand__year">2026</span>
+        </div>
+      </footer>
     </div>
   );
 }

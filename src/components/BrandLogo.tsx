@@ -1,8 +1,6 @@
 /**
- * الشعار يُستورد مباشرة من logo.png في جذر المشروع.
- * عند استبدال الملف أثناء التطوير يتحدّث تلقائياً.
+ * الشعار SVG بحدود خضراء مفرّغ الداخل — outline style
  */
-import logoSrc from "../../logo.png";
 
 type LogoSize = "sm" | "md" | "lg";
 
@@ -20,9 +18,9 @@ const sizeClass: Record<LogoSize, string> = {
 export function BrandLogo({ size = "md", className = "" }: BrandLogoProps) {
   return (
     <img
-      src={logoSrc}
+      src="/logo-outline.svg"
       alt="شعار شركة فجر الوادي لتجارة السيارات"
-      className={`brand-logo-img ${sizeClass[size]} ${className}`.trim()}
+      className={`brand-logo-img brand-logo-outline ${sizeClass[size]} ${className}`.trim()}
       draggable={false}
     />
   );

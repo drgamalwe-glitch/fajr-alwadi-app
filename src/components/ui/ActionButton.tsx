@@ -21,15 +21,15 @@ type ActionButtonProps = Omit<HTMLMotionProps<"button">, "ref"> &
 
 const variantStyles: Record<ActionButtonVariant, string> = {
   primary:
-    "bg-gradient-to-br from-[#61030b] to-[#3d0207] text-white shadow-lg shadow-[#61030b]/20 hover:shadow-[#61030b]/40 border border-[#8b0713]/30",
+    "bg-gradient-to-br from-green-500/18 to-green-500/4 text-green-300 hover:text-white border border-green-500/40 hover:border-green-500/65 shadow-md shadow-green-500/10 hover:shadow-green-500/20",
   secondary:
-    "bg-gradient-to-br from-[#d8a85a] to-[#c4953f] text-[#100306] shadow-lg shadow-[#d8a85a]/20 hover:shadow-[#d8a85a]/40 border border-[#d8a85a]/30",
+    "bg-gradient-to-br from-amber-500/18 to-amber-500/4 text-[#fef9c3] hover:text-white border border-[#d8a85a]/40 hover:border-[#d8a85a]/65 shadow-md shadow-amber-500/10 hover:shadow-amber-500/20",
   ghost:
-    "bg-black/50 text-text-secondary backdrop-blur-xl border border-slate-800/60 hover:bg-[#10b981]/10 hover:text-white hover:border-[#10b981]/30",
+    "bg-black/40 text-text-secondary backdrop-blur-xl border border-slate-800/60 hover:bg-green-500/10 hover:text-white hover:border-green-500/30",
   danger:
-    "bg-gradient-to-br from-[#ff6b6b] to-[#cc3333] text-white shadow-lg shadow-[#ff6b6b]/20 hover:shadow-[#ff6b6b]/40 border border-[#ff6b6b]/30",
+    "bg-gradient-to-br from-red-500/18 to-red-500/4 text-red-300 hover:text-white border border-red-500/40 hover:border-red-500/65 shadow-md shadow-red-500/10 hover:shadow-red-500/20",
   success:
-    "bg-gradient-to-br from-[#55f5aa] to-[#22b573] text-[#0d0f14] shadow-lg shadow-[#55f5aa]/20 hover:shadow-[#55f5aa]/40 border border-[#55f5aa]/30",
+    "bg-gradient-to-br from-green-400/20 to-green-600/5 text-green-300 hover:text-white border border-green-400/45 hover:border-green-400/70 shadow-md shadow-green-400/10 hover:shadow-green-400/20",
 };
 
 const ActionButton = forwardRef<HTMLButtonElement, ActionButtonProps>(

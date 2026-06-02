@@ -35,8 +35,8 @@ const SORT_LABELS: Record<CarSortKey, string> = {
 
 type CarsTabId = "available" | "sold";
 const CARS_TABS: { id: CarsTabId; label: string }[] = [
-  { id: "available", label: "السيارات المتوفرة" },
-  { id: "sold", label: "السيارات المباعة" },
+  { id: "available", label: "المعروض" },
+  { id: "sold", label: "المبــــــــــــــــــاع" },
 ];
 
 const emptyForm = (): CarFormState => ({
@@ -95,6 +95,10 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
   const [toast, setToast] = useState<string | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [carToDelete, setCarToDelete] = useState<Car | null>(null);
+
+  const availableCarsList = useMemo(() => cars.filter((c) => c.status === "متوفرة"), [cars]);
+  const purchaseIqd = useMemo(() => availableCarsList.filter((c) => c.currency !== "USD").reduce((sum, c) => sum + c.purchase_price, 0), [availableCarsList]);
+  const purchaseUsd = useMemo(() => availableCarsList.filter((c) => c.currency === "USD").reduce((sum, c) => sum + c.purchase_price, 0), [availableCarsList]);
 
   const replaceForm = (next: CarFormState) => {
     formRef.current = next;
@@ -269,16 +273,18 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
           // 1. إنشاء/تحديث ديون العميل
           await callTauri("add_partner", { name: buyerName, phone, kind: "مطلوب" });
 
-          // 2. تسديد الدفعة المستلمة
+          // 2. تسديد الدفعة المستلمة (نسجل فقط الدفعة المسددة بالـ "إيداع")
           const amountPaidNum = Number(form.amountPaid);
           if (amountPaidNum > 0) {
+            // إيداع (التسديد الفعلي للدفعة)
             await callTauri("add_partner_transaction", {
               partnerName: buyerName,
               kind: "مطلوب",
               type: "ايداع",
               amount: amountPaidNum,
               date: form.saleDate || new Date().toISOString().slice(0, 10),
-              notes: `دفعة أولى - بيع ${carLabel}`,
+              notes: `دفعة أولى مستلمة - بيع ${carLabel}`,
+              currency: form.saleCurrency,
             });
           }
 
@@ -312,6 +318,7 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
                     amount,
                     date: d.toISOString().slice(0, 10),
                     notes: `قسط ${i + 1}/${months}${saleLabel}`,
+                    currency: form.saleCurrency,
                   });
                 }
               } else if (form.paymentType === "موعد") {
@@ -324,6 +331,7 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
                   amount: remaining,
                   date: dueDate,
                   notes: `مؤجل${saleLabel}`,
+                  currency: form.saleCurrency,
                 });
               }
             }
@@ -372,7 +380,6 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
       await callTauri("delete_car", { num: carToDelete.car_number });
       setShowDeleteModal(false);
       setCarToDelete(null);
-      showToast("تم حذف السيارة بنجاح");
       if (selectedId === carToDelete.car_number) {
         closePanel();
       }
@@ -408,20 +415,33 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
 
       {/* ── شريط الأدوات ── */}
       <div className="cars-page__toolbar">
-        <div className="cars-page__toolbar-start">
-          <span className="cars-page__count">{filteredCars.length} سيارة</span>
-        </div>
-        <div className="toolbar-controls">
-          <ActionButton type="button" variant="primary" onClick={startNewCar}>
-            + سيارة جديدة
+        <div className="cars-page__toolbar-right">
+          <ActionButton type="button" variant="primary" className="btn-new-car" onClick={startNewCar}>
+            + شراء سيارة جديدة
           </ActionButton>
+        </div>
+        <div className="cars-page__toolbar-center">
           <TextInput
             type="search"
-            placeholder="بحث..."
+            placeholder="بحث عن سيارة..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            containerClassName="min-w-[200px]"
+            containerClassName="min-w-[240px] w-full max-w-[320px]"
           />
+        </div>
+        <div className="cars-page__toolbar-left" style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+          {carsTab === "available" && (
+            <>
+              <div className="summary-card-premium summary-card-premium--iqd">
+                <div className="summary-card-premium__label">مجموع المعرض بالدينار</div>
+                <PriceDisplay amount={purchaseIqd} />
+              </div>
+              <div className="summary-card-premium summary-card-premium--usd">
+                <div className="summary-card-premium__label">مجموع المعرض بالدولار</div>
+                <PriceDisplay amount={purchaseUsd} currency="USD" />
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -433,9 +453,6 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
           {filteredCars.length === 0 ? (
             <div className="cars-empty">
               <p>لا توجد سيارات مطابقة</p>
-              <ActionButton type="button" variant="primary" onClick={startNewCar}>
-                إضافة أول سيارة
-              </ActionButton>
             </div>
           ) : (
             <div className="table-wrapper">

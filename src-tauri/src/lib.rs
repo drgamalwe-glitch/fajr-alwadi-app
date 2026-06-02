@@ -290,6 +290,16 @@ fn add_car(
     let old_num = old_num.unwrap_or_default();
     let old_num = old_num.trim();
 
+    // الاستعلام عن وقت الشراء ووقت البيع الحاليين لحفظهما قبل حذف أو استبدال السجل
+    let query_num = if !old_num.is_empty() { old_num } else { car_number.as_str() };
+    let (existing_purchase_time, existing_sale_time): (Option<String>, Option<String>) = db
+        .query_row(
+            "SELECT purchase_time, sale_time FROM cars WHERE car_number = ?1",
+            [query_num],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap_or((None, None));
+
     if !old_num.is_empty() && old_num != car_number {
         db.execute("DELETE FROM cars WHERE car_number = ?1", [old_num])
             .map_err(|e| e.to_string())?;
@@ -331,10 +341,32 @@ fn add_car(
     )
     .map_err(|e| e.to_string())?;
 
+    // تجهيز قيم الوقت المناسبة للكتابة
+    let mut purchase_time_to_write = existing_purchase_time;
+    if purchase_date.is_none() || purchase_date.as_deref() == Some("") {
+        purchase_time_to_write = Some("00:00".to_string());
+    }
+
+    let mut sale_time_to_write = existing_sale_time;
+    if sale_date.is_none() || sale_date.as_deref() == Some("") {
+        sale_time_to_write = Some("00:00".to_string());
+    }
+
     // UPDATE extra fields
     db.execute(
-        "UPDATE cars SET buyer_name = ?1, buyer_phone = ?2, purchase_date = ?3, sale_date = ?4, delivery_date = ?5, first_payment_date = ?6, purchase_payment_type = ?7 WHERE car_number = ?8",
-        (buyer_name, buyer_phone, purchase_date, sale_date, delivery_date, first_payment_date, purchase_payment_type, car_number.as_str()),
+        "UPDATE cars SET buyer_name = ?1, buyer_phone = ?2, purchase_date = ?3, sale_date = ?4, delivery_date = ?5, first_payment_date = ?6, purchase_payment_type = ?7, purchase_time = ?8, sale_time = ?9 WHERE car_number = ?10",
+        (
+            buyer_name,
+            buyer_phone,
+            purchase_date,
+            sale_date,
+            delivery_date,
+            first_payment_date,
+            purchase_payment_type,
+            purchase_time_to_write,
+            sale_time_to_write,
+            car_number.as_str(),
+        ),
     )
     .map_err(|e| e.to_string())?;
 
@@ -344,9 +376,9 @@ fn add_car(
         [car_number.as_str()],
     )
     .map_err(|e| e.to_string())?;
-    // تسجيل وقت البيع — يُحدَّث فقط عند وجود تاريخ البيع
+    // تسجيل وقت البيع — يُحدَّث فقط عند وجود تاريخ البيع ولم يكن مسجلاً سابقاً
     db.execute(
-        "UPDATE cars SET sale_time = strftime('%H:%M', 'now', 'localtime') WHERE car_number = ?1 AND sale_date IS NOT NULL AND sale_date != ''",
+        "UPDATE cars SET sale_time = strftime('%H:%M', 'now', 'localtime') WHERE car_number = ?1 AND sale_date IS NOT NULL AND sale_date != '' AND (sale_time IS NULL OR sale_time = '' OR sale_time = '00:00')",
         [car_number.as_str()],
     )
     .map_err(|e| e.to_string())?;
@@ -477,17 +509,27 @@ fn delete_partner(state: State<AppState>, name: String, kind: String) -> Result<
 }
 
 fn recalculate_partner_total(db: &Connection, partner_name: &str, kind: &str) -> Result<(), String> {
-    db.execute(
+    let query = if kind.trim() == "مطلوب" {
+        "UPDATE partners
+         SET total_amount = COALESCE((
+             SELECT SUM(CASE WHEN type = 'سحب' THEN amount WHEN type = 'ايداع' THEN -amount ELSE 0 END)
+             FROM partner_transactions
+             WHERE partner_name = ?1 AND kind = ?2 
+               AND (notes IS NULL OR (notes NOT LIKE '%دفعة أولى%' AND notes NOT LIKE '%قسط%' AND notes NOT LIKE '%مؤجل%'))
+         ), 0.0)
+         WHERE partner_name = ?1 AND kind = ?2"
+    } else {
         "UPDATE partners
          SET total_amount = COALESCE((
              SELECT SUM(CASE WHEN type = 'ايداع' THEN amount WHEN type = 'سحب' THEN -amount ELSE 0 END)
              FROM partner_transactions
              WHERE partner_name = ?1 AND kind = ?2
          ), 0.0)
-         WHERE partner_name = ?1 AND kind = ?2",
-        (partner_name.trim(), kind.trim()),
-    )
-    .map_err(|e| e.to_string())?;
+         WHERE partner_name = ?1 AND kind = ?2"
+    };
+
+    db.execute(query, (partner_name.trim(), kind.trim()))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1300,6 +1342,67 @@ fn get_financial_summary(
     })
 }
 
+#[tauri::command]
+fn get_investors_totals(state: State<AppState>) -> Result<(f64, f64), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    
+    // IQD Total: SUM(ايداع) - SUM(سحب) for kind = 'مستثمر' where currency is not USD
+    let iqd_total: f64 = db
+        .query_row(
+            "SELECT COALESCE(SUM(CASE WHEN type = 'ايداع' THEN amount WHEN type = 'سحب' THEN -amount ELSE 0.0 END), 0.0)
+             FROM partner_transactions
+             WHERE kind = 'مستثمر' AND (currency IS NULL OR currency = 'IQD' OR currency = '')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    // USD Total: SUM(ايداع) - SUM(سحب) for kind = 'مستثمر' where currency is USD
+    let usd_total: f64 = db
+        .query_row(
+            "SELECT COALESCE(SUM(CASE WHEN type = 'ايداع' THEN amount WHEN type = 'سحب' THEN -amount ELSE 0.0 END), 0.0)
+             FROM partner_transactions
+             WHERE kind = 'مستثمر' AND currency = 'USD'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    Ok((iqd_total, usd_total))
+}
+
+#[tauri::command]
+fn get_partners_totals(state: State<AppState>, kind: String) -> Result<(f64, f64), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    
+    let query_iqd = if kind == "مطلوب" {
+        "SELECT COALESCE(SUM(CASE WHEN type = 'سحب' THEN amount WHEN type = 'ايداع' THEN -amount ELSE 0.0 END), 0.0)
+         FROM partner_transactions
+         WHERE kind = ?1 AND (currency IS NULL OR currency = 'IQD' OR currency = '') 
+           AND (notes IS NULL OR (notes NOT LIKE '%دفعة أولى%' AND notes NOT LIKE '%قسط%' AND notes NOT LIKE '%مؤجل%'))"
+    } else {
+        "SELECT COALESCE(SUM(CASE WHEN type = 'ايداع' THEN amount WHEN type = 'سحب' THEN -amount ELSE 0.0 END), 0.0)
+         FROM partner_transactions
+         WHERE kind = ?1 AND (currency IS NULL OR currency = 'IQD' OR currency = '')"
+    };
+
+    let query_usd = if kind == "مطلوب" {
+        "SELECT COALESCE(SUM(CASE WHEN type = 'سحب' THEN amount WHEN type = 'ايداع' THEN -amount ELSE 0.0 END), 0.0)
+         FROM partner_transactions
+         WHERE kind = ?1 AND currency = 'USD' 
+           AND (notes IS NULL OR (notes NOT LIKE '%دفعة أولى%' AND notes NOT LIKE '%قسط%' AND notes NOT LIKE '%مؤجل%'))"
+    } else {
+        "SELECT COALESCE(SUM(CASE WHEN type = 'ايداع' THEN amount WHEN type = 'سحب' THEN -amount ELSE 0.0 END), 0.0)
+         FROM partner_transactions
+         WHERE kind = ?1 AND currency = 'USD'"
+    };
+
+    let iqd_total: f64 = db.query_row(query_iqd, [&kind], |row| row.get(0)).map_err(|e| e.to_string())?;
+    let usd_total: f64 = db.query_row(query_usd, [&kind], |row| row.get(0)).map_err(|e| e.to_string())?;
+
+    Ok((iqd_total, usd_total))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1349,6 +1452,8 @@ pub fn run() {
             get_expenses,
             delete_expense,
             get_financial_summary,
+            get_investors_totals,
+            get_partners_totals,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

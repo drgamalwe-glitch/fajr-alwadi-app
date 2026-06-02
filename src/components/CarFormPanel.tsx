@@ -353,28 +353,6 @@ export function CarFormPanel({
                         </div>
                       </div>
                     </div>
-
-                    {/* ── قسم الملاحظات (full width) ── */}
-                    <div className="car-dashboard__card car-dashboard__card--full car-dashboard__card--notes">
-                      <h3 className="car-dashboard__card-title">📝 الملاحظات</h3>
-                      <div className="car-dashboard__card-body--single">
-                        <div className="cf-field cf-field--notes">
-                          <textarea
-                            id="car-details"
-                            className="textarea cf-textarea"
-                            value={form.details}
-                            autoComplete="off"
-                            autoCorrect="off"
-                            autoCapitalize="off"
-                            spellCheck={false}
-                            onChange={(e) => onChange({ details: e.target.value })}
-                            placeholder="حالة السيارة، الصبغ..."
-                            rows={3}
-                            tabIndex={10}
-                          />
-                        </div>
-                      </div>
-                    </div>
                   </div>
                 )}
 
@@ -472,9 +450,9 @@ export function CarFormPanel({
                             <label className="cf-label" htmlFor="buyer-phone">رقم الهاتف</label>
                             <TextInput id="buyer-phone" value={form.phone}
                               autoComplete="new-password" dir="ltr" placeholder="07XX XXX XXXX"
-                              onInput={(e: React.FormEvent<HTMLInputElement>) => onChange({ phone: (e.target as HTMLInputElement).value })}
-                              onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ phone: e.target.value })}
-                              onBlur={(e: React.FocusEvent<HTMLInputElement>) => onChange({ phone: e.target.value })}
+                              onInput={(e: React.FormEvent<HTMLInputElement>) => onChange({ phone: toEn((e.target as HTMLInputElement).value).replace(/[^\d+\s()-]/g, "") })}
+                              onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ phone: toEn(e.target.value).replace(/[^\d+\s()-]/g, "") })}
+                              onBlur={(e: React.FocusEvent<HTMLInputElement>) => onChange({ phone: toEn(e.target.value).replace(/[^\d+\s()-]/g, "") })}
                               tabIndex={5} />
                           </div>
 
@@ -520,6 +498,28 @@ export function CarFormPanel({
                     </div>
                   </div>
                 )}
+
+                {/* ── قسم الملاحظات (full width) ── */}
+                <div className="car-dashboard__card car-dashboard__card--full car-dashboard__card--notes">
+                  <h3 className="car-dashboard__card-title">📝 الملاحظات</h3>
+                  <div className="car-dashboard__card-body--single">
+                    <div className="cf-field cf-field--notes">
+                      <textarea
+                        id="car-details"
+                        className="textarea cf-textarea"
+                        value={form.details}
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        onChange={(e) => onChange({ details: e.target.value })}
+                        placeholder="حالة السيارة، الصبغ..."
+                        rows={3}
+                        tabIndex={10}
+                      />
+                    </div>
+                  </div>
+                </div>
 
                 {/* ── أزرار الإجراءات ── */}
                 <div className="car-dashboard__actions">

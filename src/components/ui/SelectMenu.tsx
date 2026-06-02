@@ -28,14 +28,14 @@ const SelectMenuTrigger = forwardRef<
       ref={ref}
       className={cn(
         "group flex items-center gap-2 rounded-xl border px-4 py-2 text-xl font-bold",
-        "bg-black/50 backdrop-blur-xl w-full",
+        "bg-white/[0.03] backdrop-blur-xl w-full",
         "transition-all duration-300",
-        "border-slate-800/60",
+        "border-white/10",
         "data-[state=open]:border-[#d8a85a]/50 data-[state=open]:shadow-[0_0_0_3px_rgba(216,168,90,0.12),0_20px_50px_-15px_rgba(216,168,90,0.15)]",
         "focus:border-[#d8a85a]/50 focus:shadow-[0_0_0_3px_rgba(216,168,90,0.12),0_20px_50px_-15px_rgba(216,168,90,0.15)]",
         "focus-visible:outline-none",
         "disabled:opacity-48 disabled:pointer-events-none",
-        "data-[placeholder]:text-slate-600",
+        "data-[placeholder]:text-white/35",
         "text-white",
         className,
       )}

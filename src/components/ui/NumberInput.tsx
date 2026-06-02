@@ -137,9 +137,9 @@ const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(
         <div
           className={cn(
             "flex items-center gap-2 rounded-xl border px-4 py-2 number-input-wrapper",
-            "bg-black/50 backdrop-blur-xl",
+            "bg-white/[0.03] backdrop-blur-xl",
             "transition-all duration-300",
-            "border-slate-800/60",
+            "border-white/10",
             disabled && "opacity-48 pointer-events-none",
           )}
         >
@@ -179,7 +179,7 @@ const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(
             }}
             className={cn(
               "w-20 bg-transparent text-left text-xl font-bold tabular-nums text-white outline-none",
-              "placeholder:text-slate-600",
+              "placeholder:text-white/35",
               className,
             )}
             {...props}

@@ -53,7 +53,8 @@ export function ExpensesTab() {
     void load();
   };
 
-  const totalExpenses = entries.reduce((sum, e) => sum + e.amount, 0);
+  const expenseIqd = entries.filter((e) => e.currency !== "USD").reduce((sum, e) => sum + e.amount, 0);
+  const expenseUsd = entries.filter((e) => e.currency === "USD").reduce((sum, e) => sum + e.amount, 0);
 
   return (
     <div className="dashboard">
@@ -62,9 +63,16 @@ export function ExpensesTab() {
           <h2 className="page-intro__title">المصروفات</h2>
           <p className="page-intro__desc">تسجيل وإدارة المصروفات</p>
         </div>
-        <span style={{ fontWeight: 700, fontSize: "1.1rem", color: "var(--color-red)" }}>
-          إجمالي المصروفات: <PriceDisplay amount={totalExpenses} />
-        </span>
+        <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+          <div className="summary-card-premium summary-card-premium--iqd">
+            <div className="summary-card-premium__label">المصروفات بالدينار</div>
+            <PriceDisplay amount={expenseIqd} />
+          </div>
+          <div className="summary-card-premium summary-card-premium--usd">
+            <div className="summary-card-premium__label">المصروفات بالدولار</div>
+            <PriceDisplay amount={expenseUsd} currency="USD" />
+          </div>
+        </div>
       </div>
 
       <section className="panel-card" style={{ marginBottom: "1rem" }}>

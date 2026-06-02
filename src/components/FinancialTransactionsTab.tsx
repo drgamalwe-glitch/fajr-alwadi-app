@@ -3,10 +3,10 @@ import { callTauri } from "../api/tauri";
 import type { Car, CashRegisterEntry } from "../types";
 import { PriceDisplay } from "@/components/ui";
 
-const PAGE_SIZE = 15;
+import { PAGE_SIZE } from "../constants";
 
 /**
- * الحركات المالية – يعرض جميع الحركات المالية من كافة الحسابات (قاصه + ماستر + مصرف)
+ * سجل المعاملات – يعرض جميع سجل المعاملات من كافة الحسابات (قاصه + ماستر + مصرف)
  * مجمّعة في جدول واحد.
  */
 export function FinancialTransactionsTab() {
@@ -60,15 +60,16 @@ export function FinancialTransactionsTab() {
         };
       });
 
-      // ترتيب حسب التاريخ والوقت (الأحدث أولاً)
+      // ترتيب حسب التاريخ والوقت (الأقدم أولاً)
       all.sort((a, b) => {
-        const dateCompare = b.date.localeCompare(a.date);
+        const dateCompare = a.date.localeCompare(b.date);
         if (dateCompare !== 0) return dateCompare;
-        return (b.time ?? "").localeCompare(a.time ?? "");
+        return (a.time ?? "").localeCompare(b.time ?? "");
       });
 
+      const lastPage = Math.max(0, Math.ceil(all.length / PAGE_SIZE) - 1);
       setEntries(all);
-      setPage(0);
+      setPage(lastPage);
     } catch {
       setEntries([]);
       setPage(0);
@@ -94,9 +95,9 @@ export function FinancialTransactionsTab() {
       case "قاصه":
         return { background: "rgba(216,168,90,0.18)", color: "#d8a85a", border: "1px solid rgba(216,168,90,0.25)" };
       case "ماستر":
-        return { background: "rgba(99,102,241,0.18)", color: "#818cf8", border: "1px solid rgba(99,102,241,0.25)" };
+        return { background: "rgba(216,168,90,0.18)", color: "#d8a85a", border: "1px solid rgba(216,168,90,0.25)" };
       case "مصرف":
-        return { background: "rgba(16,185,129,0.18)", color: "#10b981", border: "1px solid rgba(16,185,129,0.25)" };
+        return { background: "rgba(34,197,94,0.18)", color: "#86efac", border: "1px solid rgba(34,197,94,0.25)" };
       default:
         return { background: "rgba(255,255,255,0.08)", color: "#aaa", border: "1px solid rgba(255,255,255,0.1)" };
     }
@@ -113,7 +114,7 @@ export function FinancialTransactionsTab() {
         marginBottom: "1.5rem",
         flexWrap: "wrap",
       }}>
-        <h2 className="page-intro__title" style={{ margin: 0, fontSize: "1.5rem" }}>الحركات المالية</h2>
+        <h2 className="page-intro__title" style={{ margin: 0, fontSize: "1.5rem" }}>سجل المعاملات</h2>
       </div>
 
       {/* الجدول */}
@@ -126,7 +127,7 @@ export function FinancialTransactionsTab() {
                 <th style={{ width: "90px" }}>الحساب</th>
                 <th style={{ width: "110px" }}>تاريخ العملية</th>
                 <th style={{ width: "60px" }}>الساعة</th>
-                <th style={{ width: "130px" }}>نوع العملية</th>
+                <th style={{ width: "150px" }}>نوع العملية</th>
                 <th className="col-money">المبلغ</th>
                 <th>التفاصيل</th>
               </tr>
@@ -137,56 +138,72 @@ export function FinancialTransactionsTab() {
               ) : entries.length === 0 ? (
                 <tr><td colSpan={7} className="empty-cell">لا توجد حركات مالية</td></tr>
               ) : (
-                pageEntries.map((entry, idx) => (
-                  <tr key={`${entry._source}-${entry.id}-${idx}`}>
-                    <td className="cell-num">{currentPage * PAGE_SIZE + idx + 1}</td>
-                    <td>
-                      <span
+                <>
+                  {pageEntries.map((entry, idx) => (
+                    <tr key={`${entry._source}-${entry.id}-${idx}`}>
+                      <td className="cell-num">{currentPage * PAGE_SIZE + idx + 1}</td>
+                      <td>
+                        <span
+                          style={{
+                            ...getSourceBadgeStyle(entry._source ?? "قاصه"),
+                            padding: "0.15rem 0.6rem",
+                            borderRadius: "6px",
+                            fontSize: "0.75rem",
+                            fontWeight: 600,
+                            display: "inline-block",
+                          }}
+                        >
+                          {entry._source}
+                        </span>
+                      </td>
+                      <td style={{ whiteSpace: "nowrap" }}>{entry.date}</td>
+                      <td style={{ whiteSpace: "nowrap", fontSize: "0.85rem", textAlign: "center" }}>{entry.time}</td>
+                      <td>
+                        <span
+                          className={`badge ${entry.amount >= 0 ? "badge--primary" : "badge--sold"}`}
+                          style={{ whiteSpace: "nowrap" }}
+                        >
+                          {entry.type_}
+                        </span>
+                      </td>
+                      <td
+                        className="col-money"
                         style={{
-                          ...getSourceBadgeStyle(entry._source ?? "قاصه"),
-                          padding: "0.15rem 0.6rem",
-                          borderRadius: "6px",
-                          fontSize: "0.75rem",
-                          fontWeight: 600,
-                          display: "inline-block",
+                          color: entry.currency === "USD"
+                            ? "#10b981"
+                            : entry.amount >= 0
+                              ? "#d8a85a"
+                              : "#f43f5e",
                         }}
                       >
-                        {entry._source}
-                      </span>
-                    </td>
-                    <td style={{ whiteSpace: "nowrap" }}>{entry.date}</td>
-                    <td style={{ whiteSpace: "nowrap", fontSize: "0.85rem", textAlign: "center" }}>{entry.time}</td>
-                    <td>
-                      <span className={`badge ${entry.amount >= 0 ? "badge--primary" : "badge--sold"}`}>
-                        {entry.type_}
-                      </span>
-                    </td>
-                    <td
-                      className="col-money"
-                      style={{
-                        color: entry.currency === "USD"
-                          ? "#10b981"
-                          : entry.amount >= 0
-                            ? "#d8a85a"
-                            : "#f43f5e",
-                      }}
-                    >
-                      <PriceDisplay amount={entry.amount} currency={entry.currency} />
-                    </td>
-                    <td style={{
-                      fontSize: "0.85rem",
-                      maxWidth: "280px",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}>
-                      {entry.description}
-                      {entry.notes ? (
-                        <span className="text-muted" style={{ marginRight: "0.5rem" }}>({entry.notes})</span>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))
+                        <PriceDisplay amount={entry.amount} currency={entry.currency} />
+                      </td>
+                      <td style={{
+                        fontSize: "0.85rem",
+                        maxWidth: "280px",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}>
+                        {entry.description}
+                        {entry.notes ? (
+                          <span className="text-muted" style={{ marginRight: "0.5rem" }}>({entry.notes})</span>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                  {Array.from({ length: PAGE_SIZE - pageEntries.length }).map((_, i) => (
+                    <tr key={`empty-${i}`} style={{ pointerEvents: "none" }}>
+                      <td className="cell-num">&nbsp;</td>
+                      <td>&nbsp;</td>
+                      <td>&nbsp;</td>
+                      <td>&nbsp;</td>
+                      <td>&nbsp;</td>
+                      <td>&nbsp;</td>
+                      <td>&nbsp;</td>
+                    </tr>
+                  ))}
+                </>
               )}
             </tbody>
           </table>
@@ -198,7 +215,7 @@ export function FinancialTransactionsTab() {
           alignItems: "center",
           justifyContent: "center",
           gap: "1rem",
-          padding: "0.75rem 0 0.25rem 0",
+          padding: "8px 0 0 0",
           borderTop: "1px solid rgba(255,255,255,0.06)",
           flexShrink: 0,
         }}>

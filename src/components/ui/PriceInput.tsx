@@ -166,9 +166,9 @@ export function PriceInput({
         <div
           className={cn(
             "relative flex items-stretch w-full rounded-xl border overflow-hidden",
-            "bg-black/50 backdrop-blur-xl",
+            "bg-white/[0.03] backdrop-blur-xl",
             "transition-all duration-300",
-            "border-slate-800/60",
+            "border-white/10",
             disabled && "opacity-48 pointer-events-none",
             className,
           )}
@@ -178,7 +178,7 @@ export function PriceInput({
             type="button"
             onClick={toggleCurrency}
             disabled={disabled}
-            className="relative flex items-center justify-center w-12 h-auto min-h-[40px] cursor-pointer select-none border-l border-slate-800/60 shrink-0 bg-transparent outline-none transition-colors"
+            className="relative flex items-center justify-center w-12 h-auto min-h-[40px] cursor-pointer select-none border-l border-white/10 shrink-0 bg-transparent outline-none transition-colors"
             title={currency === "USD" ? "دولار أمريكي" : "دينار عراقي"}
           >
             <AnimatePresence mode="wait" initial={false}>
@@ -219,7 +219,7 @@ export function PriceInput({
             tabIndex={tabIndex}
             onKeyDown={handleKeyDown}
             onClick={handleInputClick}
-            className="w-full min-w-0 bg-transparent text-xl font-bold text-white placeholder-slate-600 outline-none py-2 px-4 text-right flex-1"
+            className="w-full min-w-0 bg-transparent text-xl font-bold text-white placeholder:text-white/35 outline-none py-2 px-4 text-right flex-1"
             dir="ltr"
           />
         </div>

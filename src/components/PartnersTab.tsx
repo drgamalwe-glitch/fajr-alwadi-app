@@ -25,18 +25,50 @@ type TransactionType = "ايداع" | "سحب";
 type TransactionSortKey = "sequence" | "date" | "type";
 type SortDirection = "asc" | "desc";
 
+const isInstallmentWithdrawal = (tx: PartnerTransaction) =>
+  tx.type_ === "سحب" && !!tx.notes?.includes("قسط");
+
+const isSameCurrency = (tx: PartnerTransaction, currency: Currency) =>
+  (tx.currency || "IQD") === currency;
+
+function splitAmountEvenly(total: number, parts: number) {
+  if (parts <= 0) return [];
+  const roundedTotal = Math.max(0, Math.round(total));
+  const base = Math.floor(roundedTotal / parts);
+  const remainder = roundedTotal - base * parts;
+  return Array.from({ length: parts }, (_, index) =>
+    index === parts - 1 ? base + remainder : base,
+  );
+}
+
 
 export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
   const [form, setForm] = useState(createEmptyForm(kind));
   const formRef = useRef(createEmptyForm(kind));
   const myPartners = useMemo(() => partners.filter((p) => (p.kind || kind) === kind), [partners, kind]);
   const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [originalPartnerData, setOriginalPartnerData] = useState<{ name: string; phone: string } | null>(null);
   const [modalMode, setModalMode] = useState<"view" | "new" | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTxConfirm, setDeleteTxConfirm] = useState<PartnerTransaction | null>(null);
   const [transactions, setTransactions] = useState<PartnerTransaction[]>([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
+  const [currencyTotals, setCurrencyTotals] = useState<[number, number]>([0, 0]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchTotals = async () => {
+      try {
+        const data = await callTauri<[number, number]>("get_partners_totals", { kind });
+        if (!cancelled) setCurrencyTotals(data ?? [0, 0]);
+      } catch {
+        if (!cancelled) setCurrencyTotals([0, 0]);
+      }
+    };
+    fetchTotals();
+    return () => { cancelled = true; };
+  }, [kind, myPartners]);
 
   const [txCurrency, setTxCurrency] = useState<Currency>("IQD");
   const [txForm, setTxForm] = useState({
@@ -55,12 +87,17 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
   const transactionListRef = useRef<HTMLDivElement | null>(null);
   const shouldScrollTransactionsRef = useRef(false);
   const [partnerFinances, setPartnerFinances] = useState<Map<string, {
-    totalDebt: number;
-    totalPaid: number;
-    remaining: number;
+    totalDebtIqd: number;
+    totalPaidIqd: number;
+    remainingIqd: number;
+    totalDebtUsd: number;
+    totalPaidUsd: number;
+    remainingUsd: number;
     installmentAmount: number;
+    installmentCurrency: string | null;
     nextDueDate: string | null;
   }>>(new Map());
+  const [debtsSubTab, setDebtsSubTab] = useState<"us" | "them">("us");
   const [financesLoading, setFinancesLoading] = useState(false);
 
   // ترتيب المديونين حسب أقرب دفعة قادمة (الأقرب أولاً)
@@ -75,6 +112,34 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
       return aDate.localeCompare(bDate);
     });
   }, [myPartners, partnerFinances, kind]);
+
+  const visibleDebtors = useMemo(() => {
+    if (kind !== "مطلوب") return sortedDebtors;
+    return sortedDebtors.filter((p) => {
+      const fin = partnerFinances.get(p.partner_name);
+      if (debtsSubTab === "us") {
+        return fin ? !(fin.remainingIqd < 0 || fin.remainingUsd < 0) : true;
+      } else {
+        return fin ? (fin.remainingIqd < 0 || fin.remainingUsd < 0) : false;
+      }
+    });
+  }, [sortedDebtors, kind, partnerFinances, debtsSubTab]);
+
+  const activeCurrencyTotals = useMemo(() => {
+    if (kind !== "مطلوب") return currencyTotals;
+    let iqdSum = 0;
+    let usdSum = 0;
+    for (const [, fin] of partnerFinances) {
+      if (debtsSubTab === "us") {
+        if (fin.remainingIqd > 0) iqdSum += fin.remainingIqd;
+        if (fin.remainingUsd > 0) usdSum += fin.remainingUsd;
+      } else {
+        if (fin.remainingIqd < 0) iqdSum += Math.abs(fin.remainingIqd);
+        if (fin.remainingUsd < 0) usdSum += Math.abs(fin.remainingUsd);
+      }
+    }
+    return [iqdSum, usdSum] as [number, number];
+  }, [kind, currencyTotals, partnerFinances, debtsSubTab]);
 
   const [showTxModal, setShowTxModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -93,6 +158,7 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
 
   const loadPartner = async (partner: Partner, preserveType?: boolean) => {
     setEditingKey(partner.partner_name);
+    setOriginalPartnerData({ name: partner.partner_name, phone: partner.phone });
     replaceForm({ name: partner.partner_name, phone: partner.phone, kind: partner.kind });
     setModalMode("view");
     setEditingTransactionId(null);
@@ -116,11 +182,19 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
 
   const resetForm = () => {
     setEditingKey(null);
+    setOriginalPartnerData(null);
     replaceForm(createEmptyForm(kind));
     setModalMode(null);
     setDeleteDialogOpen(false);
     setTransactions([]);
     setEditingTransactionId(null);
+  };
+
+  const handleClose = async () => {
+    if (modalMode === "view") {
+      await handleAutoSave();
+    }
+    resetForm();
   };
 
   const startNew = () => {
@@ -130,7 +204,9 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
   };
 
   const patchPhone = (value: string) => {
-    patchForm({ phone: value });
+    const normalized = toEnglishDigits(value);
+    const cleaned = normalized.replace(/[^\d+\s()-]/g, "");
+    patchForm({ phone: cleaned });
   };
 
   const patchName = (value: string) => {
@@ -190,9 +266,95 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
     });
   }, [transactions, transactionSort]);
 
+  const visibleSortedTransactions = useMemo(
+    () => sortedTransactions.filter((tx) => !(isInstallmentWithdrawal(tx) && tx.amount <= 0)),
+    [sortedTransactions],
+  );
+
   const sequenceByTransactionId = useMemo(() => {
-    return new Map(transactions.map((tx, index) => [tx.id, index + 1]));
-  }, [transactions]);
+    return new Map(visibleSortedTransactions.map((tx, index) => [tx.id, index + 1]));
+  }, [visibleSortedTransactions]);
+
+  const rebalanceInstallmentsAfterPayment = async (
+    partnerName: string,
+    paymentDelta: number,
+    paymentDate: string,
+    currency: Currency,
+  ) => {
+    const roundedDelta = Math.round(paymentDelta);
+    if (roundedDelta === 0) return;
+
+    const installmentRows = transactions
+      .filter((tx) => isInstallmentWithdrawal(tx) && isSameCurrency(tx, currency))
+      .sort((a, b) => {
+        const dateDiff = new Date(a.date).getTime() - new Date(b.date).getTime();
+        return dateDiff !== 0 ? dateDiff : a.id - b.id;
+      });
+
+    if (installmentRows.length === 0) return;
+
+    const activeRows = installmentRows.filter((tx) => tx.amount > 0);
+    if (activeRows.length === 0) return;
+
+    const paymentTime = new Date(paymentDate).getTime();
+    const target = activeRows.find((tx) => new Date(tx.date).getTime() >= paymentTime) ?? activeRows[0];
+    const targetIndex = installmentRows.findIndex((tx) => tx.id === target.id);
+    if (targetIndex < 0) return;
+
+    const affectedRows = installmentRows.slice(targetIndex).filter((tx) => tx.amount > 0);
+    const affectedTotal = affectedRows.reduce((sum, tx) => sum + tx.amount, 0);
+    const remainingAfterPayment = Math.max(0, affectedTotal - roundedDelta);
+    const futureRows = installmentRows.slice(targetIndex + 1);
+    const rowsToDistribute = futureRows.length > 0 ? futureRows : [target];
+    const distributedAmounts = splitAmountEvenly(remainingAfterPayment, rowsToDistribute.length);
+    const targetAmount = futureRows.length > 0 ? 0 : distributedAmounts[0] ?? 0;
+
+    if (targetAmount <= 0) {
+      await callTauri("delete_partner_transaction", {
+        id: target.id,
+        partnerName,
+        kind: form.kind,
+      });
+    } else {
+      await callTauri("update_partner_transaction", {
+        id: target.id,
+        partnerName,
+        kind: form.kind,
+        type: "سحب",
+        amount: targetAmount,
+        date: target.date,
+        notes: target.notes,
+        currency,
+        paymentType: target.payment_type || target.paymentType || "قاصه",
+      });
+    }
+
+    if (futureRows.length > 0) {
+      await Promise.all(
+        futureRows.map((tx, index) => {
+          const nextAmount = distributedAmounts[index] ?? 0;
+          if (nextAmount <= 0) {
+            return callTauri("delete_partner_transaction", {
+              id: tx.id,
+              partnerName,
+              kind: form.kind,
+            });
+          }
+          return callTauri("update_partner_transaction", {
+            id: tx.id,
+            partnerName,
+            kind: form.kind,
+            type: "سحب",
+            amount: nextAmount,
+            date: tx.date,
+            notes: tx.notes,
+            currency,
+            paymentType: tx.payment_type || tx.paymentType || "قاصه",
+          });
+        }),
+      );
+    }
+  };
 
   useEffect(() => {
     if (!shouldScrollTransactionsRef.current || transactionsLoading || transactions.length === 0) {
@@ -218,10 +380,14 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
     let cancelled = false;
     const loadAll = async () => {
       const entries: [string, {
-        totalDebt: number;
-        totalPaid: number;
-        remaining: number;
+        totalDebtIqd: number;
+        totalPaidIqd: number;
+        remainingIqd: number;
+        totalDebtUsd: number;
+        totalPaidUsd: number;
+        remainingUsd: number;
         installmentAmount: number;
+        installmentCurrency: string | null;
         nextDueDate: string | null;
       }][] = await Promise.all(
         myPartners.map(async (p) => {
@@ -232,9 +398,25 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
           const list = txs ?? [];
           const withdrawals = list.filter((t) => t.type_ === "سحب");
           const deposits = list.filter((t) => t.type_ === "ايداع");
-          const totalDebt = withdrawals.reduce((s, t) => s + t.amount, 0);
-          const totalPaid = deposits.reduce((s, t) => s + t.amount, 0);
-          const sortedDebts = [...withdrawals].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+          
+          const withdrawalsIqd = withdrawals.filter((t) => t.currency !== "USD");
+          const withdrawalsUsd = withdrawals.filter((t) => t.currency === "USD");
+          const depositsIqd = deposits.filter((t) => t.currency !== "USD" && !t.notes?.includes("دفعة أولى") && !t.notes?.includes("قسط") && !t.notes?.includes("مؤجل"));
+          const depositsUsd = deposits.filter((t) => t.currency === "USD" && !t.notes?.includes("دفعة أولى") && !t.notes?.includes("قسط") && !t.notes?.includes("مؤجل"));
+          const hasInstallmentIqd = withdrawalsIqd.some(isInstallmentWithdrawal);
+          const hasInstallmentUsd = withdrawalsUsd.some(isInstallmentWithdrawal);
+          
+          const totalDebtIqd = withdrawalsIqd.reduce((s, t) => s + t.amount, 0);
+          const totalDebtUsd = withdrawalsUsd.reduce((s, t) => s + t.amount, 0);
+          const totalPaidIqd = depositsIqd.reduce((s, t) => s + t.amount, 0);
+          const totalPaidUsd = depositsUsd.reduce((s, t) => s + t.amount, 0);
+          
+          const remainingIqd = hasInstallmentIqd ? totalDebtIqd : totalDebtIqd - totalPaidIqd;
+          const remainingUsd = hasInstallmentUsd ? totalDebtUsd : totalDebtUsd - totalPaidUsd;
+          
+          const sortedDebts = [...withdrawals]
+            .filter((t) => t.amount > 0)
+            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
           const today = new Date();
           today.setHours(0, 0, 0, 0);
           const todayTime = today.getTime();
@@ -252,6 +434,8 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
             nextInstallment = sortedDebts[sortedDebts.length - 1]; // آخر دفعة إذا كانت كلها متأخرة
           }
           const installmentAmount = nextInstallment ? nextInstallment.amount : 0;
+          const installmentCurrency = nextInstallment ? (nextInstallment.currency || "IQD") : "IQD";
+          
           // أقرب تاريخ استحقاق إجمالاً
           let closest: typeof sortedDebts[0] | null = null;
           let closestDiff = Infinity;
@@ -262,7 +446,17 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
             if (diff < closestDiff) { closestDiff = diff; closest = d; }
           }
           const nextDueDate = closest ? closest.date : null;
-          return [p.partner_name, { totalDebt, totalPaid, remaining: totalDebt, installmentAmount, nextDueDate }];
+          return [p.partner_name, {
+            totalDebtIqd,
+            totalPaidIqd,
+            remainingIqd,
+            totalDebtUsd,
+            totalPaidUsd,
+            remainingUsd,
+            installmentAmount,
+            installmentCurrency,
+            nextDueDate
+          }];
         }),
       );
       if (!cancelled) setPartnerFinances(new Map(entries));
@@ -277,15 +471,18 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setShowDeleteModal(false);
+        setPartnerToDelete(null);
         setDeleteTxConfirm(null);
+        setDeleteDialogOpen(false);
+        setShowTxModal(false);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!form.name.trim()) {
       alert(`الرجاء كتابة اسم ${form.kind}`);
       return;
@@ -297,13 +494,14 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
       const phoneClean = toEnglishDigits(form.phone.trim());
       if (editingKey) {
         await callTauri("update_partner", {
-          old_name: editingKey,
-          old_kind: form.kind,
+          oldName: editingKey,
+          oldKind: form.kind,
           name: nextName,
           phone: phoneClean,
           kind: form.kind,
         });
         setEditingKey(nextName);
+        setOriginalPartnerData({ name: nextName, phone: phoneClean });
         await loadPartner({ partner_name: nextName, phone: phoneClean, total_amount: 0, kind: form.kind });
         await onRefresh();
       } else {
@@ -320,6 +518,41 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
       alert(`تعذر حفظ بيانات ${form.kind}.`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleAutoSave = async () => {
+    const currentForm = formRef.current;
+    const nextName = currentForm.name.trim();
+    const phoneClean = toEnglishDigits(currentForm.phone.trim());
+    if (!nextName) {
+      if (originalPartnerData) {
+        patchForm({ name: originalPartnerData.name });
+      }
+      return;
+    }
+    if (originalPartnerData && (nextName !== originalPartnerData.name || phoneClean !== originalPartnerData.phone)) {
+      setSaving(true);
+      try {
+        if (editingKey) {
+          await callTauri("update_partner", {
+            oldName: editingKey,
+            oldKind: currentForm.kind,
+            name: nextName,
+            phone: phoneClean,
+            kind: currentForm.kind,
+          });
+          setEditingKey(nextName);
+          setOriginalPartnerData({ name: nextName, phone: phoneClean });
+          await loadPartner({ partner_name: nextName, phone: phoneClean, total_amount: 0, kind: currentForm.kind }, true);
+          await onRefresh();
+        }
+      } catch (err) {
+        console.error(err);
+        alert(`تعذر تحديث البيانات تلقائياً.`);
+      } finally {
+        setSaving(false);
+      }
     }
   };
 
@@ -382,14 +615,36 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
 
     setSaving(true);
     try {
+      const originalEditingTransaction = editingTransactionId
+        ? transactions.find((tx) => tx.id === editingTransactionId) ?? null
+        : null;
       const installments = txForm.type === "سحب" && !editingTransactionId
         ? Math.max(1, Math.floor(Number(txForm.installments)) || 1)
         : 1;
       const periodAmount = Number.isFinite(txForm.amount) ? txForm.amount : 0;
       const installmentAmount = Math.floor(periodAmount / installments);
       const remainder = periodAmount - installmentAmount * installments;
+      const convertsInstallmentToPayment =
+        kind === "مطلوب" &&
+        txForm.type === "ايداع" &&
+        !!editingTransactionId &&
+        !!originalEditingTransaction &&
+        isInstallmentWithdrawal(originalEditingTransaction);
 
-      for (let i = 0; i < installments; i++) {
+      if (convertsInstallmentToPayment) {
+        await callTauri("add_partner_transaction", {
+          partnerName: editingKey,
+          kind: form.kind,
+          type: "ايداع",
+          amount: periodAmount,
+          date: dateStr,
+          notes: txForm.notes || `تسديد ${originalEditingTransaction.notes ?? "قسط"}`,
+          currency: txCurrency,
+          paymentType: txForm.paymentType,
+        });
+        await rebalanceInstallmentsAfterPayment(editingKey, periodAmount, dateStr, txCurrency);
+      } else {
+        for (let i = 0; i < installments; i++) {
         const date = new Date(dateStr);
         date.setMonth(date.getMonth() + i);
         const dateStr_i = date.toISOString().slice(0, 10);
@@ -417,7 +672,36 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
         } else {
           await callTauri("add_partner_transaction", transactionPayload);
         }
+        }
+
+        if (kind === "مطلوب" && txForm.type === "ايداع") {
+          const originalCurrency = originalEditingTransaction?.currency === "USD" ? "USD" : "IQD";
+          const originalAmount = originalEditingTransaction?.type_ === "ايداع"
+            ? originalEditingTransaction.amount
+            : 0;
+          if (!editingTransactionId) {
+            await rebalanceInstallmentsAfterPayment(editingKey, periodAmount, dateStr, txCurrency);
+          } else if (originalEditingTransaction?.type_ === "ايداع") {
+            if (originalCurrency === txCurrency) {
+              await rebalanceInstallmentsAfterPayment(
+                editingKey,
+                periodAmount - originalAmount,
+                dateStr,
+                txCurrency,
+              );
+            } else {
+              await rebalanceInstallmentsAfterPayment(
+                editingKey,
+                -originalAmount,
+                originalEditingTransaction.date?.split(" ")[0] || dateStr,
+                originalCurrency,
+              );
+              await rebalanceInstallmentsAfterPayment(editingKey, periodAmount, dateStr, txCurrency);
+            }
+          }
+        }
       }
+
       resetTransactionForm(txForm.type);
       shouldScrollTransactionsRef.current = !editingTransactionId;
       await loadPartner({ partner_name: editingKey, phone: form.phone, total_amount: 0, kind: form.kind }, true);
@@ -437,23 +721,89 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
   const totalWithdrawals = transactions
     .filter((t) => t.type_ === "سحب")
     .reduce((sum, t) => sum + t.amount, 0);
+  const hasInstallmentSchedule = transactions.some(isInstallmentWithdrawal);
+  const displayTotalDebt = hasInstallmentSchedule
+    ? totalWithdrawals + totalDeposits
+    : totalWithdrawals;
+  const displayRemainingDebt = hasInstallmentSchedule
+    ? totalWithdrawals
+    : Math.max(0, totalWithdrawals - totalDeposits);
   const currentInstallment = (() => {
-    const withdrawals = transactions.filter((t) => t.type_ === "سحب");
-    return withdrawals.length > 0 ? withdrawals[withdrawals.length - 1].amount : 0;
+    const withdrawals = transactions
+      .filter((t) => t.type_ === "سحب" && t.amount > 0)
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    if (withdrawals.length === 0) return 0;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const next = withdrawals.find((tx) => {
+      const due = new Date(tx.date);
+      due.setHours(0, 0, 0, 0);
+      return due.getTime() >= today.getTime();
+    });
+    return (next ?? withdrawals[withdrawals.length - 1]).amount;
   })();
 
   return (
     <div className="customers-page">
+      {kind === "مطلوب" && (
+        <div className="cars-tabs" style={{ marginBottom: "1.2rem" }}>
+          <button
+            type="button"
+            className={`cars-tab cars-tab--available ${debtsSubTab === "us" ? "cars-tab--active" : ""}`}
+            onClick={() => setDebtsSubTab("us")}
+          >
+            لنا
+            <span className="cars-tab__count">
+              {myPartners.filter((p) => {
+                const fin = partnerFinances.get(p.partner_name);
+                return fin ? !(fin.remainingIqd < 0 || fin.remainingUsd < 0) : true;
+              }).length}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={`cars-tab cars-tab--sold ${debtsSubTab === "them" ? "cars-tab--active" : ""}`}
+            onClick={() => setDebtsSubTab("them")}
+          >
+            علينا
+            <span className="cars-tab__count">
+              {myPartners.filter((p) => {
+                const fin = partnerFinances.get(p.partner_name);
+                return fin ? (fin.remainingIqd < 0 || fin.remainingUsd < 0) : false;
+              }).length}
+            </span>
+          </button>
+        </div>
+      )}
       <section className="main-card customers-main-card">
-        <div className="card-toolbar customers-toolbar partners-toolbar">
+        <div className="card-toolbar customers-toolbar partners-toolbar" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3 className="card-header card-header--inline customers-title partners-title" style={{ margin: 0 }}>
+            {kind === "مطلوب" ? "الديون" : kind === "مستثمر" ? "المستثمرون" : "الشركاء"} ({kind === "مطلوب" ? visibleDebtors.length : myPartners.length})
+          </h3>
           <div className="partners-toolbar-buttons">
             <ActionButton type="button" variant="primary" onClick={startNew}>
-              + إضافة {kind}
+              + إضافة {kind === "مطلوب" ? "دين" : kind}
             </ActionButton>
           </div>
-          <h3 className="card-header card-header--inline customers-title partners-title">
-            {kind === "مطلوب" ? "ديون العملاء" : kind === "مستثمر" ? "المستثمرون" : "الشركاء"} ({myPartners.length})
-          </h3>
+          
+          <div className="partners-toolbar-cards">
+            <div className="summary-card-premium summary-card-premium--iqd">
+              <div className="summary-card-premium__label">
+                {kind === "مطلوب"
+                  ? (debtsSubTab === "us" ? "إجمالي لنا بالدينار" : "إجمالي علينا بالدينار")
+                  : kind === "مستثمر" ? "إجمالي الاستثمار بالدينار" : "إجمالي الشركاء بالدينار"}
+              </div>
+              <PriceDisplay amount={activeCurrencyTotals[0]} />
+            </div>
+            <div className="summary-card-premium summary-card-premium--usd">
+              <div className="summary-card-premium__label">
+                {kind === "مطلوب"
+                  ? (debtsSubTab === "us" ? "إجمالي لنا بالدولار" : "إجمالي علينا بالدولار")
+                  : kind === "مستثمر" ? "إجمالي الاستثمار بالدولار" : "إجمالي الشركاء بالدولار"}
+              </div>
+              <PriceDisplay amount={activeCurrencyTotals[1]} currency="USD" />
+            </div>
+          </div>
         </div>
 
         <div className="table-wrapper partner-debtors-scroll">
@@ -471,7 +821,7 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                 </tr>
               </thead>
               <tbody>
-                {sortedDebtors.map((partner, idx) => {
+                {visibleDebtors.map((partner, idx) => {
                   const fin = partnerFinances.get(partner.partner_name);
                   let countdown = null;
                   let badgeClass = "";
@@ -502,11 +852,32 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                       <td className="cell-num">{idx + 1}</td>
                       <td className="col-name cell-bold">{partner.partner_name}</td>
                       <td className="col-phone">{partner.phone || "—"}</td>
-                      <td className={`col-money cell-bold ${fin && fin.remaining > 0 ? "text-red" : "text-green"}`}>
-                        {financesLoading ? "—" : <PriceDisplay amount={fin ? fin.remaining : 0} />}
+                      <td className="col-money cell-bold">
+                        {financesLoading ? "—" : (
+                          <div style={{ display: "inline-flex", flexDirection: "column", gap: "2px", alignItems: "flex-end", width: "100%" }}>
+                            {fin && fin.remainingIqd !== 0 && (
+                              <span className={fin.remainingIqd > 0 ? "text-red" : "text-green"}>
+                                <PriceDisplay amount={Math.abs(fin.remainingIqd)} />
+                              </span>
+                            )}
+                            {fin && fin.remainingUsd !== 0 && (
+                              <span className={fin.remainingUsd > 0 ? "text-red" : "text-green"}>
+                                <PriceDisplay amount={Math.abs(fin.remainingUsd)} currency="USD" />
+                              </span>
+                            )}
+                            {fin && fin.remainingIqd === 0 && fin.remainingUsd === 0 && (
+                              <span className="text-green">0</span>
+                            )}
+                          </div>
+                        )}
                       </td>
                       <td className="col-money cell-bold" style={{ color: "#60a5fa" }}>
-                        {financesLoading ? "—" : <PriceDisplay amount={fin ? fin.installmentAmount : 0} />}
+                        {financesLoading ? "—" : (
+                          <PriceDisplay
+                            amount={fin ? fin.installmentAmount : 0}
+                            currency={fin && fin.installmentCurrency === "USD" ? "USD" : "IQD"}
+                          />
+                        )}
                       </td>
                       <td className="col-due">
                         {financesLoading ? (
@@ -536,10 +907,10 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                     </tr>
                   );
                 })}
-                {sortedDebtors.length === 0 && (
+                {visibleDebtors.length === 0 && (
                   <tr>
                     <td colSpan={7} className="empty-cell">
-                      لا يوجد ديون العملاء
+                      {debtsSubTab === "us" ? "لا توجد ديون لنا" : "لا توجد ديون علينا"}
                     </td>
                   </tr>
                 )}
@@ -612,14 +983,89 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
       </section>
 
       {modalMode !== null && (
-        <div className="modal-overlay modal-overlay--soft" role="presentation" onClick={resetForm}>
+        <div className="modal-overlay modal-overlay--soft" role="presentation" onClick={handleClose}>
           <div
-            className="modal-dialog modal-dialog--car modal-dialog--wide modal-dialog--partner"
+            className={`modal-dialog ${
+              modalMode === "view" ? "modal-dialog--partner modal-dialog--car modal-dialog--wide" : "modal-dialog--slim"
+            }`}
             role="dialog"
             aria-modal="true"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="customer-form-panel partner-form-panel">
+            <div className={`customer-form-panel ${modalMode === "view" ? "partner-form-panel" : "partner-form-panel--slim"}`}>
+              {modalMode === "view" && (
+                <div className="partner-summary-sidebar">
+                  <div className="partner-summary-field">
+                    <span className="partner-summary-field__label">👤 الاسم</span>
+                    <input
+                      type="text"
+                      className="partner-sidebar-input"
+                      value={form.name}
+                      onInput={(e) => patchName((e.target as HTMLInputElement).value)}
+                      onChange={(e) => patchName(e.target.value)}
+                      onBlur={() => void handleAutoSave()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          (e.target as HTMLInputElement).blur();
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="partner-summary-field">
+                    <span className="partner-summary-field__label">📞 رقم الهاتف</span>
+                    <input
+                      type="text"
+                      className="partner-sidebar-input"
+                      dir="ltr"
+                      value={form.phone}
+                      onInput={(e) => patchPhone((e.target as HTMLInputElement).value)}
+                      onChange={(e) => patchPhone(e.target.value)}
+                      onBlur={() => void handleAutoSave()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          (e.target as HTMLInputElement).blur();
+                        }
+                      }}
+                    />
+                  </div>
+                  {(kind === "مطلوب") ? (
+                    <>
+                      <div className="partner-summary-field">
+                        <span className="partner-summary-field__label">📊 المبلغ الكلي</span>
+                        <span className="partner-summary-field__value partner-summary-field__value--total">
+                          <PriceDisplay amount={displayTotalDebt} />
+                        </span>
+                      </div>
+                      <div className="partner-summary-field">
+                        <span className="partner-summary-field__label">🟢 تم تسديد</span>
+                        <span className="partner-summary-field__value partner-summary-field__value--paid">
+                          <PriceDisplay amount={totalDeposits} />
+                        </span>
+                      </div>
+                      <div className="partner-summary-field">
+                        <span className="partner-summary-field__label">🔴 المتبقي</span>
+                        <span className="partner-summary-field__value partner-summary-field__value--remaining">
+                          <PriceDisplay amount={displayRemainingDebt} />
+                        </span>
+                      </div>
+                      <div className="partner-summary-field">
+                        <span className="partner-summary-field__label">📅 القسط الشهري</span>
+                        <span className="partner-summary-field__value partner-summary-field__value--installment">
+                          <PriceDisplay amount={currentInstallment} />
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="partner-summary-field">
+                      <span className="partner-summary-field__label">💼 صافي المبلغ</span>
+                        <span className="partner-summary-field__value">
+                          <PriceDisplay amount={totalDeposits - totalWithdrawals} />
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="partner-main-content">
                 <div className="car-form-panel__header">
                   <h3 className="car-form-panel__title">
@@ -667,12 +1113,9 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                 {modalMode === "view" && (
                   <>
                     <div className="partner-transactions-panel">
-                      <h4 className="partner-section-title">
-                        سجل المعاملات
-                      </h4>
                       {transactionsLoading ? (
                         <p className="text-muted partner-empty-state">جاري التحميل...</p>
-                      ) : transactions.length === 0 ? (
+                      ) : visibleSortedTransactions.length === 0 ? (
                         <p className="text-muted partner-empty-state">لا توجد معاملات بعد</p>
                       ) : (
                         <div className="table-wrapper partner-tx-wrapper" ref={transactionListRef}>
@@ -689,6 +1132,7 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                                     التاريخ {transactionSort.key === "date" ? (transactionSort.direction === "asc" ? "▲" : "▼") : ""}
                                   </button>
                                 </th>
+                                <th className="col-type">العملية</th>
                                 <th className="col-account">الحساب</th>
                                 <th className="col-amount">المبلغ</th>
                                 <th className="col-notes">ملاحظة</th>
@@ -696,7 +1140,7 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                               </tr>
                             </thead>
                             <tbody>
-                              {sortedTransactions.map((tx) => {
+                              {visibleSortedTransactions.map((tx) => {
                                 const rawPaymentType = tx.payment_type || tx.paymentType || "قاصه";
                                 const paymentTypeLabel = (rawPaymentType === "ماستر" || rawPaymentType === "مصرف") ? rawPaymentType : "قاصه";
                                 const badgeClass = paymentTypeLabel === "ماستر" ? "account-badge--master" : paymentTypeLabel === "مصرف" ? "account-badge--bank" : "account-badge--qasa";
@@ -709,13 +1153,18 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                                   >
                                     <td className="cell-num col-seq">{sequenceByTransactionId.get(tx.id) ?? tx.id}</td>
                                     <td className="col-date">{tx.date}</td>
+                                    <td className="col-type">
+                                      <span className={tx.type_ === "سحب" ? "tx-type-withdraw" : "tx-type-deposit"}>
+                                        {tx.type_ === "سحب" ? "سحب" : "إيداع"}
+                                      </span>
+                                    </td>
                                     <td className="col-account">
                                       <span className={`account-badge ${badgeClass}`}>
                                         {paymentTypeLabel}
                                       </span>
                                     </td>
-                      <td className="col-amount" style={{ color: tx.currency === "USD" ? "#10b981" : "#d8a85a" }}>
-                                      <PriceDisplay amount={tx.amount} currency={tx.currency} />
+                                    <td className="col-amount">
+                                      <PriceDisplay amount={tx.type_ === "سحب" ? -tx.amount : tx.amount} currency={tx.currency} />
                                     </td>
                                     <td className="text-muted col-notes">{tx.notes || "—"}</td>
                                     <td className="col-actions">
@@ -750,7 +1199,7 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                     </ActionButton>
                     <ActionButton
                       type="button"
-                      variant="primary"
+                      variant={kind === "مطلوب" ? "primary" : "secondary"}
                       onClick={openWithdrawForm}
                     >
                       {kind === "مطلوب" ? "إضافة دين" : "سحب"}
@@ -758,58 +1207,10 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                     </div>
                   </>
                 )}
-              </div>
-
-              {modalMode === "view" && (
-                <div className="partner-summary-sidebar">
-                  <div className="partner-summary-field">
-                    <span className="partner-summary-field__label">👤 الاسم</span>
-                    <span className="partner-summary-field__value">{form.name || "—"}</span>
-                  </div>
-                  <div className="partner-summary-field">
-                    <span className="partner-summary-field__label">📞 رقم الهاتف</span>
-                    <span className="partner-summary-field__value" dir="ltr">{form.phone || "—"}</span>
-                  </div>
-                  {(kind === "مطلوب") ? (
-                    <>
-                      <div className="partner-summary-field">
-                        <span className="partner-summary-field__label">📊 المبلغ الكلي</span>
-                        <span className="partner-summary-field__value partner-summary-field__value--total">
-                          <PriceDisplay amount={totalWithdrawals + totalDeposits} />
-                        </span>
-                      </div>
-                      <div className="partner-summary-field">
-                        <span className="partner-summary-field__label">🟢 تم تسديد</span>
-                        <span className="partner-summary-field__value partner-summary-field__value--paid">
-                          <PriceDisplay amount={totalDeposits} />
-                        </span>
-                      </div>
-                      <div className="partner-summary-field">
-                        <span className="partner-summary-field__label">🔴 المتبقي</span>
-                        <span className="partner-summary-field__value partner-summary-field__value--remaining">
-                          <PriceDisplay amount={totalWithdrawals} />
-                        </span>
-                      </div>
-                      <div className="partner-summary-field">
-                        <span className="partner-summary-field__label">📅 القسط الشهري</span>
-                        <span className="partner-summary-field__value partner-summary-field__value--installment">
-                          <PriceDisplay amount={currentInstallment} />
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="partner-summary-field">
-                      <span className="partner-summary-field__label">💼 صافي المبلغ</span>
-                        <span className="partner-summary-field__value">
-                          <PriceDisplay amount={totalDeposits - totalWithdrawals} />
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           </div>
         </div>
+      </div>
       )}
 
       <ConfirmDialog
@@ -933,7 +1334,7 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                 </ActionButton>
                 <ActionButton
                   type="submit"
-                  variant={txForm.type === "ايداع" ? "success" : "primary"}
+                  variant={txForm.type === "ايداع" ? "success" : "secondary"}
                   disabled={saving}
                 >
                   {saving ? "جاري الحفظ..." : editingTransactionId ? "تحديث" : "إضافة"}
@@ -960,14 +1361,6 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
             <div className="modal-dialog__actions">
               <ActionButton
                 type="button"
-                variant="ghost"
-                onClick={() => { setShowDeleteModal(false); setPartnerToDelete(null); }}
-                disabled={saving}
-              >
-                إلغاء
-              </ActionButton>
-              <ActionButton
-                type="button"
                 variant="danger"
                 onClick={() => {
                   const p = partnerToDelete;
@@ -977,7 +1370,15 @@ export function PartnersTab({ partners, onRefresh, kind }: PartnersTabProps) {
                 }}
                 disabled={saving}
               >
-                {saving ? "جاري الحذف..." : "تأكيد الحذف النهائي"}
+                {saving ? "جاري الحذف..." : "تأكيد"}
+              </ActionButton>
+              <ActionButton
+                type="button"
+                variant="ghost"
+                onClick={() => { setShowDeleteModal(false); setPartnerToDelete(null); }}
+                disabled={saving}
+              >
+                إلغاء
               </ActionButton>
             </div>
           </div>
