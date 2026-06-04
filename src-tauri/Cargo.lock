@@ -946,6 +946,7 @@ dependencies = [
 name = "fajir-alwadi"
 version = "0.1.0"
 dependencies = [
+ "open",
  "rusqlite",
  "serde",
  "serde_json",

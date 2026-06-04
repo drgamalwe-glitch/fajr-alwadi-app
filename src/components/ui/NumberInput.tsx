@@ -136,7 +136,7 @@ const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(
 
         <div
           className={cn(
-            "flex items-center gap-2 rounded-xl border px-4 py-2 number-input-wrapper",
+            "app-input-wrapper flex items-center gap-2 rounded-xl border px-4 py-2 number-input-wrapper",
             "bg-white/[0.03] backdrop-blur-xl",
             "transition-all duration-300",
             "border-white/10",
@@ -178,7 +178,7 @@ const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(
               props.onBlur?.(e);
             }}
             className={cn(
-              "w-20 bg-transparent text-left text-xl font-bold tabular-nums text-white outline-none",
+              "app-input-field w-20 bg-transparent text-left text-xl font-bold tabular-nums text-white outline-none",
               "placeholder:text-white/35",
               className,
             )}

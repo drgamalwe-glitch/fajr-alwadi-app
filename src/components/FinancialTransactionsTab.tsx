@@ -114,7 +114,7 @@ export function FinancialTransactionsTab() {
         marginBottom: "1.5rem",
         flexWrap: "wrap",
       }}>
-        <h2 className="page-intro__title" style={{ margin: 0, fontSize: "1.5rem" }}>سجل المعاملات</h2>
+        <h2 className="page-intro__title" style={{ margin: 0, fontSize: "var(--fs-xl)" }}>سجل المعاملات</h2>
       </div>
 
       {/* الجدول */}
@@ -148,7 +148,7 @@ export function FinancialTransactionsTab() {
                             ...getSourceBadgeStyle(entry._source ?? "قاصه"),
                             padding: "0.15rem 0.6rem",
                             borderRadius: "6px",
-                            fontSize: "0.75rem",
+                            fontSize: "var(--fs-xs)",
                             fontWeight: 600,
                             display: "inline-block",
                           }}
@@ -157,7 +157,7 @@ export function FinancialTransactionsTab() {
                         </span>
                       </td>
                       <td style={{ whiteSpace: "nowrap" }}>{entry.date}</td>
-                      <td style={{ whiteSpace: "nowrap", fontSize: "0.85rem", textAlign: "center" }}>{entry.time}</td>
+                      <td style={{ whiteSpace: "nowrap", fontSize: "var(--fs-sm)", textAlign: "center" }}>{entry.time}</td>
                       <td>
                         <span
                           className={`badge ${entry.amount >= 0 ? "badge--primary" : "badge--sold"}`}
@@ -179,7 +179,7 @@ export function FinancialTransactionsTab() {
                         <PriceDisplay amount={entry.amount} currency={entry.currency} />
                       </td>
                       <td style={{
-                        fontSize: "0.85rem",
+                        fontSize: "var(--fs-sm)",
                         maxWidth: "280px",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
@@ -230,7 +230,7 @@ export function FinancialTransactionsTab() {
               borderRadius: "8px",
               padding: "6px 16px",
               color: currentPage === 0 ? "rgba(255,255,255,0.2)" : "#d8a85a",
-              fontSize: "0.85rem",
+              fontSize: "var(--fs-sm)",
               fontWeight: 600,
               cursor: currentPage === 0 ? "default" : "pointer",
               transition: "all 0.2s",
@@ -238,7 +238,7 @@ export function FinancialTransactionsTab() {
           >
             → السابق
           </button>
-          <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.85rem", fontWeight: 500 }}>
+          <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "var(--fs-sm)", fontWeight: 500 }}>
             {currentPage + 1} / {totalPages}
           </span>
           <button
@@ -252,7 +252,7 @@ export function FinancialTransactionsTab() {
               borderRadius: "8px",
               padding: "6px 16px",
               color: currentPage >= totalPages - 1 ? "rgba(255,255,255,0.2)" : "#d8a85a",
-              fontSize: "0.85rem",
+              fontSize: "var(--fs-sm)",
               fontWeight: 600,
               cursor: currentPage >= totalPages - 1 ? "default" : "pointer",
               transition: "all 0.2s",

@@ -1,0 +1,89 @@
+Created At: 2026-06-04T08:17:52Z
+Completed At: 2026-06-04T08:17:52Z
+File Path: `file:///Users/alsyd/Documents/coding/fajir%20alwadi/fajir%20alwadi/src-tauri/src/lib.rs`
+Total Lines: 2390
+Total Bytes: 95961
+Showing lines 1441 to 2240
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1441:                 type_: "بيع سيارة".to_string(),
+1442:                 amount: amount_paid.unwrap_or(0.0),
+1443:                 description: format!("{} - {}", car_name, car_number),
+1444:                 notes: None,
+1445:                 balance: 0.0,
+1446:                 currency,
+1447:             });
+1448:         }
+1449:     }
+1450: 
+1451:     let filter_pt_sql = match &payment_type {
+1452:         Some(pt) => {
+1453:             if pt == "قاصه" || pt == "قاصة" {
+1454:                 " AND (pt.payment_type = 'قاصه' OR pt.payment_type = 'قاصة' OR pt.payment_type IS NULL OR pt.payment_type = '')".to_string()
+1455:             } else if pt == "ممول" {
+1456:                 " AND pt.kind = 'ممول'".to_string()
+1457:             } else {
+1458:                 format!(" AND pt.payment_type = '{}'", pt.replace('\'', "''"))
+1459:             }
+1460:         }
+1461:         None => String::new(),
+1462:     };
+1463: 
+1464:     // 5. معاملات الشركاء والمستثمرين والمديونيات (المدفوعات فقط)
+1465:     {
+1466:         let sql = format!(
+1467:             "SELECT pt.date, COALESCE(pt.time, '00:00'), pt.kind, pt.type, pt.amount, pt.partner_name, pt.notes, COALESCE(pt.currency, 'IQD')
+1468:              FROM partner_transactions pt
+1469:              WHERE NOT (pt.kind = 'مطلوب' AND pt.type LIKE 'سحب%'){}
+1470:              ORDER BY pt.date ASC, pt.id ASC",
+1471:             filter_pt_sql
+1472:         );
+1473:         let mut stmt = db.prepare(&sql).map_err(|e| e.t
+<truncated 33718 bytes>
+س مال الشركاء
+2195:     let total_partner_capital: f64 = db
+2196:         .query_row(
+2197:             "SELECT COALESCE(SUM(total_amount), 0) FROM partners WHERE kind = 'شريك'",
+2198:             [],
+2199:             |row| row.get(0),
+2200:         )
+2201:         .map_err(|e| e.to_string())?;
+2202: 
+2203:     // 5. إجمالي ديون العملاء
+2204:     let total_debtors: f64 = db
+2205:         .query_row(
+2206:             "SELECT COALESCE(SUM(total_amount), 0) FROM partners WHERE kind = 'مطلوب' AND total_amount > 0",
+2207:             [],
+2208:             |row| row.get(0),
+2209:         )
+2210:         .map_err(|e| e.to_string())?;
+2211: 
+2212:     // 6. إجمالي المصروفات
+2213:     let total_expenses: f64 = db
+2214:         .query_row(
+2215:             "SELECT COALESCE(SUM(amount), 0) FROM expenses",
+2216:             [],
+2217:             |row| row.get(0),
+2218:         )
+2219:         .map_err(|e| e.to_string())?;
+2220: 
+2221:     // 7. صافي رأس المال (النقد + المخزون + ديون العملاء - استثمارات المستثمرين - ديون المقترضين)
+2222:     let total_borrowers: f64 = db
+2223:         .query_row(
+2224:             "SELECT COALESCE(SUM(total_amount), 0) FROM partners WHERE kind = 'مقترض' AND total_amount < 0",
+2225:             [],
+2226:             |row| row.get(0),
+2227:         )
+2228:         .map_err(|e| e.to_string())?;
+2229: 
+2230:     let net_capital = iqd_balance + inventory_value + total_debtors - total_investments - total_borrowers;
+2231: 
+2232:     Ok(FinancialSummary {
+2233:         iqd_balance,
+2234:         usd_balance,
+2235:         inventory_value,
+2236:         total_investments,
+2237:         total_partner_capital,
+2238:         total_debtors,
+2239:         total_expenses,
+2240:         net_capital,
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

@@ -1,6 +1,14 @@
 export type CarStatus = "متوفرة" | "مبيوعة";
 export type PaymentType = "كاش" | "موعد" | "اقساط";
 
+export interface CarPartner {
+  car_number: string;
+  partner_name: string;
+  amount: number;
+  currency: string;
+  kind?: string | null;
+}
+
 export interface Car {
   car_number: string;
   car_plate_num: string;
@@ -26,16 +34,33 @@ export interface Car {
   sale_date?: string | null;
   delivery_date?: string | null;
   first_payment_date?: string | null;
+  purchase_time?: string | null;
+  sale_time?: string | null;
+  expenses_sum?: number | null;
   currency?: string | null;
   sale_currency?: string | null;
   purchase_payment_type?: string | null;
   sale_payment_type?: string | null;
+  purchase_type?: string | null;
+  financer_name?: string | null;
+  commission_type?: string | null;
+  commission_value?: number | null;
+  car_partners?: CarPartner[] | null;
 }
 
 export interface Partner {
   partner_name: string;
   phone: string;
   total_amount: number;
+  kind: string;
+  total_withdrawals: number;
+}
+
+export interface UnifiedAccount {
+  partner_name: string;
+  phone: string | null;
+  iqd_balance: number;
+  usd_balance: number;
   kind: string;
 }
 
@@ -50,6 +75,7 @@ export interface PartnerTransaction {
   currency?: string | null;
   paymentType?: string | null;
   payment_type?: string | null;
+  time?: string | null;
 }
 
 export interface ExpenseEntry {
@@ -59,6 +85,16 @@ export interface ExpenseEntry {
   date: string;
   time: string;
   notes: string | null;
+  currency?: string | null;
+  car_number?: string | null;
+}
+
+export interface CarExpenseRecord {
+  id: number;
+  car_number: string;
+  description: string;
+  amount: number;
+  date: string;
   currency?: string | null;
 }
 
@@ -74,7 +110,7 @@ export interface CashRegisterEntry {
   currency?: string | null;
 }
 
-export type TabId = "dashboard" | "cars" | "partners" | "investors" | "debtors" | "cashregister" | "expenses" | "financial-accounts" | "financial-transactions";
+export type TabId = "dashboard" | "cars" | "partners" | "partners-financial" | "debtors" | "cashregister" | "expenses" | "financial-accounts" | "financial-transactions";
 
 export interface FinancialSummary {
   iqd_balance: number;
@@ -111,6 +147,11 @@ export interface CarFormState {
   firstPaymentDate: string;
   currency: "IQD" | "USD";
   saleCurrency: "IQD" | "USD";
-  purchasePaymentType: "قاصه" | "ماستر" | "مصرف";
-  salePaymentType: "قاصه" | "ماستر" | "مصرف";
+  purchasePaymentType: "قاصه" | "ماستر";
+  salePaymentType: "قاصه" | "ماستر";
+  purchaseType: "كاش" | "شراكه" | "تمويل";
+  financerName: string;
+  commissionType: "نسبة" | "مقطوع" | "لا يوجد";
+  commissionValue: string;
+  carPartners: { partner_name: string; amount: string; currency: "IQD" | "USD"; kind?: string }[];
 }

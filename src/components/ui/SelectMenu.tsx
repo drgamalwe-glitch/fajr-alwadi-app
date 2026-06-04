@@ -27,7 +27,7 @@ const SelectMenuTrigger = forwardRef<
     <SelectPrimitive.Trigger
       ref={ref}
       className={cn(
-        "group flex items-center gap-2 rounded-xl border px-4 py-2 text-xl font-bold",
+        "app-input-wrapper app-input-field group flex items-center gap-2 rounded-xl border px-4 py-2 text-xl font-bold",
         "bg-white/[0.03] backdrop-blur-xl w-full",
         "transition-all duration-300",
         "border-white/10",
@@ -66,9 +66,9 @@ const SelectMenuContent = forwardRef<
         ref={ref}
         position={position}
         className={cn(
-          "z-50 min-w-[8rem] overflow-hidden rounded-sm",
-          "bg-[#0d0f14] border border-white/10 backdrop-blur-xl",
-          "shadow-glow",
+          "z-50 min-w-[8rem] overflow-hidden rounded-xl",
+          "bg-[#0d0f14]/50 border border-white/10 backdrop-blur-2xl",
+          "shadow-glow max-h-[350px] overflow-y-auto",
           className,
         )}
         {...props}
@@ -86,7 +86,7 @@ const SelectMenuContent = forwardRef<
             className={cn(
               "p-1",
               position === "popper" &&
-                "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]",
+                "w-full min-w-[var(--radix-select-trigger-width)]",
             )}
           >
             {children}
@@ -110,7 +110,7 @@ const SelectMenuItem = forwardRef<
     <SelectPrimitive.Item
       ref={ref}
       className={cn(
-        "relative flex cursor-default select-none items-center rounded-sm py-2 pl-8 pr-2 text-sm",
+        "relative flex cursor-default select-none items-center rounded-sm py-2 pl-8 pr-4 text-[1.1rem] font-bold text-right justify-end w-full",
         "text-text-secondary transition-colors duration-150",
         "data-[highlighted]:bg-gold/10 data-[highlighted]:text-text-primary",
         "data-[disabled]:opacity-48 data-[disabled]:pointer-events-none",
@@ -119,14 +119,14 @@ const SelectMenuItem = forwardRef<
       )}
       {...props}
     >
-      <span className="absolute right-2 flex h-3.5 w-3.5 items-center justify-center">
+      <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
         <SelectPrimitive.ItemIndicator>
           <Check className="h-3.5 w-3.5 text-gold" />
         </SelectPrimitive.ItemIndicator>
       </span>
 
       <SelectPrimitive.ItemText asChild>
-        <span>{children}</span>
+        <span className="w-full text-right">{children}</span>
       </SelectPrimitive.ItemText>
     </SelectPrimitive.Item>
   );

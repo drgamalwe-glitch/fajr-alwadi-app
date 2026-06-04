@@ -10,6 +10,7 @@ interface TextInputCustomProps {
   suffix?: string;
   label?: string;
   containerClassName?: string;
+  inputSize?: "sm" | "lg";
 }
 
 type TextInputProps = InputHTMLAttributes<HTMLInputElement> & TextInputCustomProps;
@@ -27,6 +28,7 @@ const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
       placeholder,
       containerClassName,
       value,
+      inputSize = "lg",
       ...props
     },
     ref,
@@ -40,7 +42,7 @@ const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
         {label && (
           <label
             htmlFor={id}
-            className="text-xs font-bold tracking-wide text-text-muted"
+            className="app-input-label text-xs font-bold tracking-wide text-text-muted"
           >
             {label}
           </label>
@@ -59,16 +61,14 @@ const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
 
           <div
             className={cn(
-              "relative flex items-center gap-2 rounded-xl border px-4 py-2 w-full",
-              "bg-white/[0.03] backdrop-blur-xl",
-              "transition-all duration-300",
-              "border-white/10",
+              "relative flex items-center gap-2 border px-4 py-2 w-full transition-all duration-300 border-white/10 bg-white/[0.03] backdrop-blur-xl",
+              inputSize === "sm" ? "app-input-wrapper-sm px-3 py-1.5 rounded-xl" : "app-input-wrapper px-4 py-2.5 rounded-xl",
               props.disabled && "opacity-48 pointer-events-none",
             )}
           >
             {LeadingIcon && (
               <LeadingIcon
-                className="h-5 w-5 shrink-0 text-text-muted"
+                className={cn("shrink-0 text-text-muted", inputSize === "sm" ? "h-4 w-4" : "h-5 w-5")}
                 aria-hidden="true"
               />
             )}
@@ -93,9 +93,9 @@ const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
                 props.onBlur?.(e);
               }}
               className={cn(
-                "w-full bg-transparent text-xl font-bold text-white outline-none",
-                "placeholder:text-white/35",
+                "w-full bg-transparent text-white outline-none placeholder:text-white/35",
                 "file:mr-2 file:rounded-pill file:border-0 file:bg-white/10 file:px-3 file:py-1 file:text-xs file:font-bold file:text-text-secondary file:transition-colors hover:file:bg-white/20",
+                inputSize === "sm" ? "app-input-field-sm text-sm font-semibold" : "app-input-field text-xl font-bold",
                 className,
               )}
               {...props}
@@ -109,7 +109,7 @@ const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
 
             {TrailingIcon && (
               <TrailingIcon
-                className="h-5 w-5 shrink-0 text-text-muted"
+                className={cn("shrink-0 text-text-muted", inputSize === "sm" ? "h-4 w-4" : "h-5 w-5")}
                 aria-hidden="true"
               />
             )}

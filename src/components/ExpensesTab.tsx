@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { callTauri } from "../api/tauri";
 import { todayIsoDate } from "../utils/dateSegments";
 import { UnifiedDateField } from "./UnifiedDateField";
-import type { ExpenseEntry } from "../types";
+import type { ExpenseEntry, Partner } from "../types";
 import { ActionButton, TextInput, PriceInput, PriceDisplay } from "@/components/ui";
 import type { Currency } from "@/components/ui";
 
@@ -41,6 +41,54 @@ export function ExpensesTab() {
       notes: notes.trim() || null,
       currency,
     });
+
+    // ═══════════════════════════════════════════════
+    //  توزيع المصروف تلقائياً على الشركاء كـ سحب مصروف
+    // ═══════════════════════════════════════════════
+    const expenseAmount = Number(amount) || 0;
+    if (expenseAmount > 0) {
+      try {
+        const allPartners = await callTauri<Partner[]>("get_partners");
+        const kindPartners = allPartners.filter((p) => p.kind === "شريك");
+        const totalPartnerCapital = kindPartners.reduce((sum, p) => sum + p.total_amount, 0);
+
+        if (kindPartners.length > 0) {
+          for (const partner of kindPartners) {
+            let partnerShare = 0;
+            if (totalPartnerCapital > 0) {
+              partnerShare = (partner.total_amount / totalPartnerCapital) * expenseAmount;
+            } else {
+              partnerShare = expenseAmount / kindPartners.length;
+            }
+
+            partnerShare = Math.round(partnerShare);
+
+            if (partnerShare > 0) {
+              const formattedShare = currency === "USD"
+                ? `${partnerShare.toLocaleString("en-US")} USD`
+                : `${partnerShare.toLocaleString("en-US")} IQ`;
+
+              const note = `سحب مصروف بقيمة ${formattedShare} لـ ${description.trim()}`;
+
+              await callTauri("add_partner_transaction", {
+                partnerName: partner.partner_name,
+                kind: "شريك",
+                type: "سحب مصروف",
+                amount: partnerShare,
+                date: date,
+                notes: note,
+                currency: currency,
+                paymentType: "قاصه",
+                payment_type: "قاصه",
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error("فشل توزيع المصروف على الشركاء:", err);
+      }
+    }
+
     setDescription("");
     setAmount("");
     setNotes("");
@@ -133,10 +181,10 @@ export function ExpensesTab() {
                   <tr key={entry.id}>
                     <td className="cell-num">{entry.id}</td>
                     <td style={{ whiteSpace: "nowrap" }}>{entry.date}</td>
-                    <td style={{ whiteSpace: "nowrap", fontSize: "0.85rem", textAlign: "center" }}>{entry.time}</td>
+                    <td style={{ whiteSpace: "nowrap", fontSize: "var(--fs-sm)", textAlign: "center" }}>{entry.time}</td>
                     <td>{entry.description}</td>
                     <td className="col-money"><PriceDisplay amount={entry.amount} currency={entry.currency} /></td>
-                    <td style={{ fontSize: "0.85rem" }}>{entry.notes || ""}</td>
+                    <td style={{ fontSize: "var(--fs-sm)" }}>{entry.notes || ""}</td>
                     <td>
                       <ActionButton
                         type="button"

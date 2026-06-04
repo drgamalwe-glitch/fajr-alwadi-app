@@ -1,26 +1,35 @@
+import { useRef } from "react";
 import type { TabId } from "../types";
 import { BrandLogo } from "./BrandLogo";
 
 interface HeaderProps {
   activeTab: TabId;
   onTabChange: (tab: TabId) => void;
-  debtorAlertCount?: number;
+  onSidebarScroll?: (deltaY: number) => void;
 }
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
-  { id: "dashboard", label: "لوحــــة المعلومــات", icon: "✦" },
+  { id: "dashboard", label: "لوحــــــــة التحكــــــــــم", icon: "✦" },
   { id: "cars", label: "المعــــــــــــــــــــــــــــــرض", icon: "◈" },
-  { id: "partners", label: "الشركـــــــــــــــــــــــــــــــاء", icon: "⊕" },
-  { id: "investors", label: "المستثمريـــــــــــــــــن", icon: "⬢" },
-  { id: "debtors", label: "الديون والاقسـاط", icon: "◎" },
+  { id: "partners-financial", label: "حسابات العمــلاء", icon: "❖" },
   { id: "expenses", label: "المصروفــــــــــــــــــات", icon: "◉" },
-  { id: "financial-accounts", label: "الحسابات المالية", icon: "♢" },
+  { id: "financial-accounts", label: "القاصــــــــــــــــــــــــــــــــة", icon: "♢" },
   { id: "financial-transactions", label: "سجــل المعاملات", icon: "⇄" },
 ];
 
-export function Header({ activeTab, onTabChange, debtorAlertCount = 0 }: HeaderProps) {
+export function Header({ activeTab, onTabChange, onSidebarScroll }: HeaderProps) {
+  // throttle: prevent multiple tab jumps per single scroll gesture
+  const lastScrollAt = useRef(0);
+
+  const handleWheel = (e: React.WheelEvent<HTMLElement>) => {
+    const now = Date.now();
+    if (now - lastScrollAt.current < 650) return; // 650ms cooldown
+    lastScrollAt.current = now;
+    onSidebarScroll?.(e.deltaY);
+  };
+
   return (
-    <aside className="app-sidebar">
+    <aside className="app-sidebar" onWheel={handleWheel}>
       <div className="sidebar-glow" aria-hidden />
 
       <div className="sidebar-header">
@@ -41,23 +50,6 @@ export function Header({ activeTab, onTabChange, debtorAlertCount = 0 }: HeaderP
             </span>
             <span className="nav-btn__label">
               {tab.label}
-              {tab.id === "debtors" && debtorAlertCount > 0 && (
-                <span
-                  className="badge badge--pulse"
-                  style={{
-                    marginRight: "0.35rem",
-                    background: "var(--danger, #dc3545)",
-                    color: "#fff",
-                    fontSize: "0.65rem",
-                    padding: "0.1rem 0.4rem",
-                    borderRadius: "8px",
-                    fontWeight: 700,
-                    animation: "pulse 2s infinite",
-                  }}
-                >
-                  {debtorAlertCount}
-                </span>
-              )}
             </span>
           </button>
         ))}

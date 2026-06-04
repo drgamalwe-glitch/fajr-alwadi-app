@@ -5,6 +5,9 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-create",
+    "core:window:allow-center",
+    "core:webview:allow-create-webview-window",
     "opener:default"
   ]
 }

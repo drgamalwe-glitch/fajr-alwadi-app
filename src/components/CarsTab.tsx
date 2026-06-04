@@ -10,6 +10,8 @@ import { ActionButton, PriceDisplay, TextInput } from "@/components/ui";
 interface CarsTabProps {
   cars: Car[];
   onRefresh: () => Promise<void>;
+  carFormTrigger: { mode: "new" | "edit"; car?: Car } | null;
+  onClearCarFormTrigger: () => void;
 }
 
 /** وضع اللوحة الجانبية */
@@ -51,6 +53,11 @@ const emptyForm = (): CarFormState => ({
   saleCurrency: "IQD",
   purchasePaymentType: "قاصه",
   salePaymentType: "قاصه",
+  purchaseType: "كاش",
+  financerName: "",
+  commissionType: "لا يوجد",
+  commissionValue: "",
+  carPartners: [],
 });
 
 function carToForm(car: Car): CarFormState {
@@ -78,12 +85,27 @@ function carToForm(car: Car): CarFormState {
     firstPaymentDate: car.first_payment_date ?? "",
     currency: (car.currency as "IQD" | "USD") ?? "IQD",
     saleCurrency: (car.sale_currency as "IQD" | "USD") ?? "IQD",
-    purchasePaymentType: (car.purchase_payment_type as "قاصه" | "ماستر" | "مصرف") ?? "قاصه",
-    salePaymentType: (car.sale_payment_type as "قاصه" | "ماستر" | "مصرف") ?? "قاصه",
+    purchasePaymentType: (car.purchase_payment_type === "ماستر" ? "ماستر" : "قاصه"),
+    salePaymentType: (car.sale_payment_type === "ماستر" ? "ماستر" : "قاصه"),
+    purchaseType: car.purchase_type === "دين" ? "تمويل" : ((car.purchase_type as any) ?? "كاش"),
+    financerName: car.financer_name ?? "",
+    commissionType: (car.commission_type as any) ?? "لا يوجد",
+    commissionValue: String(car.commission_value ?? 0),
+    carPartners: (car.car_partners ?? []).map((p) => ({
+      partner_name: p.partner_name,
+      amount: String(p.amount),
+      currency: (p.currency as "IQD" | "USD") ?? "IQD",
+      kind: p.kind ?? "شريك",
+    })),
   };
 }
 
-export function CarsTab({ cars, onRefresh }: CarsTabProps) {
+export function CarsTab({
+  cars,
+  onRefresh,
+  carFormTrigger,
+  onClearCarFormTrigger,
+}: CarsTabProps) {
   const [form, setForm] = useState<CarFormState>(emptyForm);
   const formRef = useRef<CarFormState>(emptyForm());
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -177,6 +199,16 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
     setPanelMode(null);
   };
 
+  useEffect(() => {
+    if (!carFormTrigger) return;
+    if (carFormTrigger.mode === "new") {
+      startNewCar();
+    } else if (carFormTrigger.mode === "edit" && carFormTrigger.car) {
+      handleSingleClick(carFormTrigger.car);
+    }
+    onClearCarFormTrigger();
+  }, [carFormTrigger]);
+
   const patchForm = (patch: Partial<CarFormState>) => {
     const normalized: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(patch)) {
@@ -186,8 +218,14 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
     if ("model" in patch || "year" in patch) {
       next.name = [next.model, next.year].filter(Boolean).join(" ");
     }
-    if ("selling" in patch || "amountPaid" in patch) {
-      next.amountRemaining = String(Math.max(0, Number(next.selling) - Number(next.amountPaid)));
+    if (next.paymentType === "كاش") {
+      next.amountPaid = next.selling;
+      next.amountRemaining = "0";
+      next.installmentMonths = "1";
+    } else {
+      if ("selling" in patch || "amountPaid" in patch || "paymentType" in patch) {
+        next.amountRemaining = String(Math.max(0, Number(next.selling) - Number(next.amountPaid)));
+      }
     }
     formRef.current = next;
     setForm(next);
@@ -222,14 +260,16 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
     }
     if (form.status === "مبيوعة") {
       const sellingNum = Number(form.selling);
-      const amountPaidNum = Number(form.amountPaid);
       if (!sellingNum) {
         showToast("يرجى إدخال سعر بيع صحيح");
         return;
       }
-      if (!amountPaidNum) {
-        showToast("يرجى إدخال المبلغ المستلم صحيح");
-        return;
+      if (form.paymentType !== "كاش") {
+        const amountPaidNum = Number(form.amountPaid);
+        if (isNaN(amountPaidNum) || amountPaidNum < 0) {
+          showToast("يرجى إدخال المقدمة المستلمة بشكل صحيح");
+          return;
+        }
       }
     }
 
@@ -259,6 +299,8 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
 
       await callTauri("add_car", carArgs);
 
+      // تَمَّتْ مَنَاقَلَةُ عَمَلِيَّةِ تَوْزِيعِ الأَرْبَاحِ إِلَى خَلْفِيَّةِ الرُّسْتِ لِتَكُونَ تِلْقَائِيَّةً وَآَمِنَةً.
+
       // ═══════════════════════════════════════════════
       //  Automation Pipeline — يُشتغل مرة واحدة فقط عند
       //  أول مرة تُباع فيها السيارة (status transition)
@@ -271,7 +313,8 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
 
         if (buyerName) {
           // 1. إنشاء/تحديث ديون العميل
-          await callTauri("add_partner", { name: buyerName, phone, kind: "مطلوب" });
+          const partnerKind = "مقترض";
+          await callTauri("add_partner", { name: buyerName, phone, kind: partnerKind });
 
           // 2. تسديد الدفعة المستلمة (نسجل فقط الدفعة المسددة بالـ "إيداع")
           const amountPaidNum = Number(form.amountPaid);
@@ -279,7 +322,7 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
             // إيداع (التسديد الفعلي للدفعة)
             await callTauri("add_partner_transaction", {
               partnerName: buyerName,
-              kind: "مطلوب",
+              kind: partnerKind,
               type: "ايداع",
               amount: amountPaidNum,
               date: form.saleDate || new Date().toISOString().slice(0, 10),
@@ -294,7 +337,7 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
             // 🛡️ التحقق الأمني: نتأكد من عدم وجود معاملات سابقة لهذه البيعة
             const existingTxns = await callTauri<PartnerTransaction[]>(
               "get_partner_transactions",
-              { partnerName: buyerName, kind: "مطلوب" },
+              { partnerName: buyerName, kind: partnerKind },
             );
             const saleLabel = `- ${carLabel}`;
             const alreadyLinked = existingTxns?.some((tx) => tx.notes?.includes(saleLabel));
@@ -313,7 +356,7 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
 
                   await callTauri("add_partner_transaction", {
                     partnerName: buyerName,
-                    kind: "مطلوب",
+                    kind: partnerKind,
                     type: "سحب",
                     amount,
                     date: d.toISOString().slice(0, 10),
@@ -326,11 +369,11 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
                 const dueDate = form.deliveryDate || form.saleDate || new Date().toISOString().slice(0, 10);
                 await callTauri("add_partner_transaction", {
                   partnerName: buyerName,
-                  kind: "مطلوب",
+                  kind: partnerKind,
                   type: "سحب",
                   amount: remaining,
                   date: dueDate,
-                  notes: `مؤجل${saleLabel}`,
+                  notes: `موعد تسليم${saleLabel}`,
                   currency: form.saleCurrency,
                 });
               }
@@ -393,29 +436,34 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
   };
 
   return (
-    <div className="cars-page">
+    <div className="cars-page" style={{ position: "relative", display: "flex", flexDirection: "column", gap: "1.25rem", flex: 1, minHeight: 0, height: "100%", overflow: "hidden" }}>
       {toast && <div className="toast" role="status">{toast}</div>}
 
-      {/* ── تبويبات الحالة ── */}
-      <div className="cars-tabs">
-        {CARS_TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={`cars-tab cars-tab--${tab.id} ${carsTab === tab.id ? "cars-tab--active" : ""}`}
-            onClick={() => setCarsTab(tab.id)}
-          >
-            {tab.label}
-            <span className="cars-tab__count">
-              {cars.filter((c) => tab.id === "available" ? c.status === "متوفرة" : c.status === "مبيوعة").length}
-            </span>
-          </button>
-        ))}
-      </div>
-
-      {/* ── شريط الأدوات ── */}
+      {/* ── شريط الأدوات (دائماً ظاهر) ── */}
       <div className="cars-page__toolbar">
-        <div className="cars-page__toolbar-right">
+        <div className="cars-page__toolbar-right" style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+          {/* تبويبات الحالة */}
+          <div className="cars-tabs">
+            {CARS_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`cars-tab cars-tab--${tab.id} ${carsTab === tab.id ? "cars-tab--active" : ""}`}
+                onClick={() => {
+                  if (panelMode !== null) {
+                    closePanel();
+                  }
+                  setCarsTab(tab.id);
+                }}
+              >
+                {tab.label}
+                <span className="cars-tab__count">
+                  {cars.filter((c) => tab.id === "available" ? c.status === "متوفرة" : c.status === "مبيوعة").length}
+                </span>
+              </button>
+            ))}
+          </div>
+
           <ActionButton type="button" variant="primary" className="btn-new-car" onClick={startNewCar}>
             + شراء سيارة جديدة
           </ActionButton>
@@ -425,12 +473,23 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
             type="search"
             placeholder="بحث عن سيارة..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            containerClassName="min-w-[240px] w-full max-w-[320px]"
+            inputSize="sm"
+            onFocus={() => {
+              if (panelMode !== null) {
+                closePanel();
+              }
+            }}
+            onChange={(e) => {
+              if (panelMode !== null) {
+                closePanel();
+              }
+              setSearch(e.target.value);
+            }}
+            containerClassName="min-w-[300px] w-full max-w-[420px]"
           />
         </div>
         <div className="cars-page__toolbar-left" style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
-          {carsTab === "available" && (
+          {carsTab === "available" && panelMode === null && (
             <>
               <div className="summary-card-premium summary-card-premium--iqd">
                 <div className="summary-card-premium__label">مجموع المعرض بالدينار</div>
@@ -445,103 +504,122 @@ export function CarsTab({ cars, onRefresh }: CarsTabProps) {
         </div>
       </div>
 
-      {/* ── التخطيط الرئيسي ── */}
-      <div className="cars-layout">
-
-        {/* جدول السيارات */}
-        <div className="cars-list-panel">
-          {filteredCars.length === 0 ? (
-            <div className="cars-empty">
-              <p>لا توجد سيارات مطابقة</p>
-            </div>
-          ) : (
-            <div className="table-wrapper">
-              <table className="data-table cars-data-table">
-                <thead>
-                  <tr>
-                    <th className="ct-model">{renderSortHeader("model")}</th>
-                    <th className="ct-year">{renderSortHeader("year")}</th>
-                    <th className="ct-color">{renderSortHeader("color")}</th>
-                    <th className="ct-num">{renderSortHeader("number")}</th>
-                    <th className="ct-chassis">{renderSortHeader("chassis")}</th>
-                    <th className="ct-price">{renderSortHeader("purchase")}</th>
-                    <th className="ct-price">{renderSortHeader("selling")}</th>
-                    <th className="ct-profit" colSpan={2}>الأرباح</th>
-                    <th className="ct-delete">حذف</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredCars.map((car) => {
-                    const profit = carNetProfit(car);
-                    const isSold = car.status === "مبيوعة";
-                    const isSelected = selectedId === car.car_number;
-
-                    return (
-                      <tr
-                        key={car.car_number}
-                        className={`cars-tr${isSelected ? " cars-tr--selected" : ""}`}
-                        onClick={() => handleSingleClick(car)}
-                        title="اضغط لعرض التفاصيل"
-                      >
-                        <td className="ct-model cell-bold">
-                          {car.car_model || car.car_name || "—"}
-                        </td>
-                        <td className="ct-year">{car.car_year || "—"}</td>
-                        <td className="ct-color">{car.color || "—"}</td>
-                        <td className="ct-num cell-bold">
-                          <span className="ct-plate">{car.car_plate_num ?? car.car_number}</span>
-                          {car.car_province && (
-                            <span className="ct-province">{car.car_province}</span>
-                          )}
-                        </td>
-                        <td className="ct-chassis">{car.chassis_number || "—"}</td>
-                        <td className="ct-price" style={{ color: car.currency === "USD" ? "#10b981" : "#d8a85a" }}>
-                          <PriceDisplay amount={car.purchase_price} currency={car.currency} />
-                        </td>
-                        <td className="ct-price" style={{ color: car.sale_currency === "USD" ? "#10b981" : "#d8a85a" }}>
-                          {isSold ? (
-                            <div><PriceDisplay amount={car.selling_price} currency={car.sale_currency} /></div>
-                          ) : (
-                            <span className="text-muted">—</span>
-                          )}
-                        </td>
-                        <td className="ct-profit">
-                          {isSold ? <span><PriceDisplay amount={profit} currency={car.sale_currency} /></span> : <span className="text-muted">—</span>}
-                        </td>
-                        <td className="ct-profit-pct">
-                          {isSold ? <span className="text-green">({carProfitPercentage(car)}%)</span> : <span className="text-muted">—</span>}
-                        </td>
-                        <td className="ct-delete" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            className="partner-inline-delete-btn"
-                            title="حذف السيارة"
-                            onClick={() => {
-                              setCarToDelete(car);
-                              setShowDeleteModal(true);
-                            }}
-                          >
-                            ✕
-                          </button>
-                        </td>
+      {/* ── المحتوى الرئيسي (جدول أو نموذج) ── */}
+      {panelMode === null ? (
+        <div
+          key="list-view"
+          style={{ 
+            position: "relative"
+          }}
+        >
+          {/* ── التخطيط الرئيسي ── */}
+          <div className="cars-layout">
+            {/* جدول السيارات */}
+            <div className="cars-list-panel">
+              {filteredCars.length === 0 ? (
+                <div className="cars-empty">
+                  <p>لا توجد سيارات مطابقة</p>
+                </div>
+              ) : (
+                <div className="table-wrapper">
+                  <table className="data-table cars-data-table">
+                    <thead>
+                      <tr>
+                        <th className="ct-model">{renderSortHeader("model")}</th>
+                        <th className="ct-year">{renderSortHeader("year")}</th>
+                        <th className="ct-color">{renderSortHeader("color")}</th>
+                        <th className="ct-num">{renderSortHeader("number")}</th>
+                        <th className="ct-chassis">{renderSortHeader("chassis")}</th>
+                        <th className="ct-price">{renderSortHeader("purchase")}</th>
+                        <th className="ct-price">{renderSortHeader("selling")}</th>
+                        <th className="ct-profit" colSpan={2}>الأرباح</th>
+                        <th className="ct-delete">حذف</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
+                    </thead>
+                    <tbody>
+                      {filteredCars.map((car) => {
+                        const profit = carNetProfit(car);
+                        const isSold = car.status === "مبيوعة";
+                        const isSelected = selectedId === car.car_number;
 
-      {panelMode !== null && (
-        <CarFormPanel
-          form={form}
-          isEditing={isEditing}
-          saving={saving}
-          onChange={patchForm}
-          onSubmit={handleSubmit}
-          onClose={handleClosePanel}
-        />
+                        return (
+                          <tr
+                            key={car.car_number}
+                            className={`cars-tr${isSelected ? " cars-tr--selected" : ""}`}
+                            onClick={() => handleSingleClick(car)}
+                            title="اضغط لعرض التفاصيل"
+                          >
+                            <td className="ct-model cell-bold">
+                              {car.car_model || car.car_name || "—"}
+                            </td>
+                            <td className="ct-year">{car.car_year || "—"}</td>
+                            <td className="ct-color">{car.color || "—"}</td>
+                            <td className="ct-num cell-bold">
+                              <span className="ct-plate">{car.car_plate_num ?? car.car_number}</span>
+                              {car.car_province && (
+                                <span className="ct-province">{car.car_province}</span>
+                              )}
+                            </td>
+                            <td className="ct-chassis">{car.chassis_number || "—"}</td>
+                            <td className="ct-price" style={{ color: car.currency === "USD" ? "#10b981" : "#d8a85a" }}>
+                              <PriceDisplay amount={car.purchase_price} currency={car.currency} />
+                            </td>
+                            <td className="ct-price" style={{ color: car.sale_currency === "USD" ? "#10b981" : "#d8a85a" }}>
+                              {isSold ? (
+                                <div><PriceDisplay amount={car.selling_price} currency={car.sale_currency} /></div>
+                              ) : (
+                                <span className="text-muted">—</span>
+                              )}
+                            </td>
+                            <td className="ct-profit">
+                              {isSold ? <span><PriceDisplay amount={profit} currency={car.sale_currency} /></span> : <span className="text-muted">—</span>}
+                            </td>
+                            <td className="ct-profit-pct">
+                              {isSold ? <span className="text-green">({carProfitPercentage(car)}%)</span> : <span className="text-muted">—</span>}
+                            </td>
+                            <td className="ct-delete" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                className="partner-inline-delete-btn"
+                                title="حذف السيارة"
+                                onClick={() => {
+                                  setCarToDelete(car);
+                                  setShowDeleteModal(true);
+                                }}
+                              >
+                                ✕
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div
+          key="form-view"
+          style={{ 
+            position: "relative",
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+            flex: 1
+          }}
+        >
+          <CarFormPanel
+            embedMode={true}
+            form={form}
+            isEditing={isEditing}
+            saving={saving}
+            onChange={patchForm}
+            onSubmit={handleSubmit}
+            onClose={handleClosePanel}
+          />
+        </div>
       )}
 
       {/* نافذة تأكيد الحذف من الجدول */}

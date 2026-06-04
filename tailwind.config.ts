@@ -13,6 +13,14 @@ export default {
           "system-ui",
           "sans-serif",
         ],
+        arabic: [
+          "Cairo",
+          "Tajawal",
+          "IBM Plex Sans Arabic",
+          "Segoe UI",
+          "system-ui",
+          "sans-serif",
+        ],
       },
       colors: {
         page: "#0d0f14",

@@ -85,7 +85,7 @@ export function YearScrollField({
 
       <div
         className={cn(
-          "relative flex items-center w-full rounded-xl border px-3 py-2",
+          "app-input-wrapper relative flex items-center w-full rounded-xl border px-3 py-2",
           "bg-white/[0.03] backdrop-blur-xl",
           "transition-all duration-300",
           "border-white/10",
@@ -95,7 +95,7 @@ export function YearScrollField({
         <input
           ref={inputRef}
           id={id}
-          className="w-full min-w-0 bg-transparent text-xl font-bold text-white placeholder:text-white/35 outline-none text-center flex-1 year-scroll-field"
+          className="app-input-field w-full min-w-0 bg-transparent text-xl font-bold text-white placeholder:text-white/35 outline-none text-center flex-1 year-scroll-field"
           type="text"
           inputMode="decimal"
           dir="ltr"

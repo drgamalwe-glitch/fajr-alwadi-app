@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { callTauri } from "./api/tauri";
 import { BrandLogo } from "./components/BrandLogo";
 import { CarsTab } from "./components/CarsTab";
@@ -11,13 +11,55 @@ import { PartnersTab } from "./components/PartnersTab";
 import type { Car, Partner, TabId } from "./types";
 import "./App.css";
 
+// Ordered list of tabs — matches sidebar order top → bottom
+const TAB_IDS: TabId[] = [
+  "dashboard",
+  "cars",
+  "partners-financial",
+  "expenses",
+  "financial-accounts",
+  "financial-transactions",
+];
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
+
+  const [carFormTrigger, setCarFormTrigger] = useState<{ mode: "new" | "edit"; car?: Car } | null>(null);
   const [cars, setCars] = useState<Car[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [debtorAlertCount, setDebtorAlertCount] = useState(0);
+
+
+  // Keep a ref of activeTab so the scroll handler always sees the latest value
+  const activeTabRef = useRef(activeTab);
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+
+  // Navigate to a tab
+  const navigateTo = useCallback((nextTab: TabId) => {
+    setActiveTab(nextTab);
+  }, []);
+
+  // Called from Header onWheel: deltaY > 0 = scroll down → go lower in sidebar
+  const handleSidebarScroll = useCallback((deltaY: number) => {
+    const currentIndex = TAB_IDS.indexOf(activeTabRef.current);
+    if (deltaY > 0) {
+      // Scroll down → next tab (lower in sidebar)
+      if (currentIndex < TAB_IDS.length - 1) {
+        navigateTo(TAB_IDS[currentIndex + 1]);
+      }
+    } else {
+      // Scroll up → previous tab (higher in sidebar)
+      if (currentIndex > 0) {
+        navigateTo(TAB_IDS[currentIndex - 1]);
+      }
+    }
+  }, [navigateTo]);
+
+  // Manual tab click: decide direction by comparing indices
+  const handleTabChange = useCallback((nextTab: TabId) => {
+    navigateTo(nextTab);
+  }, [navigateTo]);
 
   const refreshData = useCallback(async () => {
     setError(null);
@@ -35,28 +77,7 @@ export default function App() {
         const loadedPartners = partnersResult.value ?? [];
         setPartners(loadedPartners);
 
-        // عد المديونيات المتأخرة والمستحقة اليوم
-        const debtors = loadedPartners.filter((p) => p.kind === "مطلوب");
-        let count = 0;
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
 
-        await Promise.allSettled(
-          debtors.map(async (debtor) => {
-            const txs = await callTauri<{ type_: string; date: string }[]>(
-              "get_partner_transactions",
-              { partnerName: debtor.partner_name, kind: "مطلوب" },
-            );
-            for (const tx of (txs ?? [])) {
-              if (tx.type_ !== "سحب") continue;
-              const due = new Date(tx.date);
-              due.setHours(0, 0, 0, 0);
-              const diff = Math.round((due.getTime() - today.getTime()) / 86400000);
-              if (diff <= 0) count++;
-            }
-          }),
-        );
-        setDebtorAlertCount(count);
       }
 
       if (carsResult.status === "rejected" && partnersResult.status === "rejected") {
@@ -90,8 +111,8 @@ export default function App() {
 
       <Header
         activeTab={activeTab}
-        onTabChange={setActiveTab}
-        debtorAlertCount={debtorAlertCount}
+        onTabChange={handleTabChange}
+        onSidebarScroll={handleSidebarScroll}
       />
 
       <div className="app-content">
@@ -112,14 +133,36 @@ export default function App() {
           </div>
         ) : (
           <main className="app-main">
-            {activeTab === "dashboard" && <Dashboard cars={cars} partners={partners} />}
-            {activeTab === "cars" && <CarsTab cars={cars} onRefresh={refreshData} />}
-            {activeTab === "partners" && <PartnersTab partners={partners} onRefresh={refreshData} kind="شريك" />}
-            {activeTab === "investors" && <PartnersTab partners={partners} onRefresh={refreshData} kind="مستثمر" />}
-            {activeTab === "debtors" && <PartnersTab partners={partners} onRefresh={refreshData} kind="مطلوب" />}
-            {activeTab === "expenses" && <ExpensesTab />}
-            {activeTab === "financial-accounts" && <FinancialAccountsTab />}
-            {activeTab === "financial-transactions" && <FinancialTransactionsTab />}
+            <div
+              key={activeTab}
+              className="origin-nano-weave"
+            >
+              {activeTab === "dashboard" && (
+                <Dashboard
+                  cars={cars}
+                  partners={partners}
+                  onRefresh={refreshData}
+                  onOpenCarForm={(mode, car) => {
+                    handleTabChange("cars");
+                    setCarFormTrigger({ mode, car });
+                  }}
+                />
+              )}
+              {activeTab === "cars" && (
+                <CarsTab
+                  cars={cars}
+                  onRefresh={refreshData}
+                  carFormTrigger={carFormTrigger}
+                  onClearCarFormTrigger={() => setCarFormTrigger(null)}
+                />
+              )}
+              {activeTab === "partners" && <PartnersTab partners={partners} onRefresh={refreshData} kind="شريك" />}
+              {activeTab === "partners-financial" && <PartnersTab partners={partners} onRefresh={refreshData} kind="partners-financial" />}
+              {activeTab === "debtors" && <PartnersTab partners={partners} onRefresh={refreshData} kind="مطلوب" />}
+              {activeTab === "expenses" && <ExpensesTab />}
+              {activeTab === "financial-accounts" && <FinancialAccountsTab />}
+              {activeTab === "financial-transactions" && <FinancialTransactionsTab />}
+            </div>
           </main>
         )}
       </div>

@@ -4,12 +4,12 @@ import type { CashRegisterEntry } from "../types";
 import { CashRegisterTab } from "./CashRegisterTab";
 import { PriceDisplay } from "@/components/ui";
 
-type PaymentTab = "قاصه" | "ماستر" | "مصرف";
+type PaymentTab = "قاصه" | "ماستر" | "ممول";
 
 const PAYMENT_TABS: { id: PaymentTab; label: string }[] = [
   { id: "قاصه", label: "قاصه" },
   { id: "ماستر", label: "ماستر" },
-  { id: "مصرف", label: "مصرف" },
+  { id: "ممول", label: "الممولون" },
 ];
 
 const TAB_THEMES: Record<PaymentTab, {
@@ -27,10 +27,10 @@ const TAB_THEMES: Record<PaymentTab, {
     activeColor: "#d8a85a",
     activeShadow: "0 0 20px rgba(216,168,90,0.15), inset 0 1px 0 rgba(216,168,90,0.15)",
   },
-  مصرف: {
-    activeBg: "linear-gradient(135deg, rgba(34,197,94,0.25), rgba(34,197,94,0.08))",
-    activeColor: "#86efac",
-    activeShadow: "0 0 20px rgba(34,197,94,0.15), inset 0 1px 0 rgba(34,197,94,0.15)",
+  ممول: {
+    activeBg: "linear-gradient(135deg, rgba(139,92,246,0.25), rgba(139,92,246,0.08))",
+    activeColor: "#a78bfa",
+    activeShadow: "0 0 20px rgba(139,92,246,0.15), inset 0 1px 0 rgba(139,92,246,0.15)",
   },
 };
 
@@ -76,7 +76,7 @@ export function FinancialAccountsTab() {
         marginBottom: "1.5rem",
         flexWrap: "wrap",
       }}>
-        <h2 className="page-intro__title" style={{ margin: 0, fontSize: "1.5rem" }}>الحسابات المالية</h2>
+        <h2 className="page-intro__title" style={{ margin: 0, fontSize: "1.5rem" }}>القاصة</h2>
 
         {loadingBalance ? (
           <span style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.85rem" }}>جاري التحميل...</span>
@@ -110,11 +110,15 @@ export function FinancialAccountsTab() {
               alignItems: "center",
             }}>
               <div className="summary-card-premium summary-card-premium--iqd">
-                <div className="summary-card-premium__label">الدينار العراقي</div>
+                <div className="summary-card-premium__label">
+                  {activeTab === "ممول" ? "صافي الممولين بالدينار" : "الدينار العراقي"}
+                </div>
                 <PriceDisplay amount={iqdBalance} />
               </div>
               <div className="summary-card-premium summary-card-premium--usd">
-                <div className="summary-card-premium__label">الدولار الامريكي</div>
+                <div className="summary-card-premium__label">
+                  {activeTab === "ممول" ? "صافي الممولين بالدولار" : "الدولار الامريكي"}
+                </div>
                 <PriceDisplay amount={usdBalance} currency="USD" />
               </div>
             </div>
@@ -124,7 +128,7 @@ export function FinancialAccountsTab() {
 
       {activeTab === "قاصه" && <CashRegisterTab paymentType="قاصه" />}
       {activeTab === "ماستر" && <CashRegisterTab paymentType="ماستر" />}
-      {activeTab === "مصرف" && <CashRegisterTab paymentType="مصرف" />}
+      {activeTab === "ممول" && <CashRegisterTab paymentType="ممول" />}
     </div>
   );
 }

@@ -171,7 +171,7 @@ export function UnifiedDateField({ value, onChange, disabled, id, tabIndex }: Un
 
       <div
         className={cn(
-          "relative flex items-center w-full rounded-xl border px-3 py-2 unified-date-field-wrapper",
+          "app-input-wrapper relative flex items-center w-full rounded-xl border px-3 py-2 unified-date-field-wrapper",
           "bg-white/[0.03] backdrop-blur-xl",
           "transition-all duration-300",
           "border-white/10",
@@ -182,7 +182,7 @@ export function UnifiedDateField({ value, onChange, disabled, id, tabIndex }: Un
           ref={inputRef}
           id={id}
           type="text"
-          className="w-full min-w-0 bg-transparent text-xl font-bold text-white placeholder:text-white/35 outline-none text-center flex-1 unified-date-field"
+          className="app-input-field w-full min-w-0 bg-transparent text-xl font-bold text-white placeholder:text-white/35 outline-none text-center flex-1 unified-date-field"
           dir="ltr"
           disabled={disabled}
           tabIndex={tabIndex}

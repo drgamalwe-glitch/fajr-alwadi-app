@@ -92,7 +92,7 @@ export function InstallmentsTab({ alerts: resolvedAlerts }: InstallmentsTabProps
       style={{ background: "none", border: "none", color: "inherit", font: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.25rem" }}
     >
       <span>{label}</span>
-      <span className="th-sort-indicator" style={{ fontSize: "0.75rem", opacity: sortKey === key ? 1 : 0.4 }} aria-hidden>
+      <span className="th-sort-indicator" style={{ fontSize: "var(--fs-xs)", opacity: sortKey === key ? 1 : 0.4 }} aria-hidden>
         {sortKey === key ? (sortDirection === "asc" ? "↑" : "↓") : "↕"}
       </span>
     </button>
@@ -113,20 +113,20 @@ export function InstallmentsTab({ alerts: resolvedAlerts }: InstallmentsTabProps
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1rem", marginBottom: "1.5rem" }}>
         <div className="stat-card" style={{ borderRight: "4px solid #6b7280" }}>
-          <div style={{ fontSize: "0.8rem", opacity: 0.7 }}>إجمالي قيمة الأقساط المستحقة</div>
-          <div style={{ fontSize: "1.4rem", fontWeight: 700, color: "var(--gold)", marginTop: "0.25rem" }}>
+          <div style={{ fontSize: "var(--fs-xs)", opacity: 0.7 }}>إجمالي قيمة الأقساط المستحقة</div>
+          <div style={{ fontSize: "var(--fs-lg)", fontWeight: 700, color: "var(--gold)", marginTop: "0.25rem" }}>
             <PriceDisplay amount={stats.totalAmount} />
           </div>
         </div>
         <div className="stat-card" style={{ borderRight: "4px solid var(--danger, #dc3545)" }}>
-          <div style={{ fontSize: "0.8rem", opacity: 0.7 }}>الأقساط المتأخرة</div>
-          <div style={{ fontSize: "1.4rem", fontWeight: 700, color: "var(--danger, #dc3545)", marginTop: "0.25rem" }}>
+          <div style={{ fontSize: "var(--fs-xs)", opacity: 0.7 }}>الأقساط المتأخرة</div>
+          <div style={{ fontSize: "var(--fs-lg)", fontWeight: 700, color: "var(--danger, #dc3545)", marginTop: "0.25rem" }}>
             {stats.overdueCount} {stats.overdueCount === 1 ? "قسط" : "أقساط"}
           </div>
         </div>
         <div className="stat-card" style={{ borderRight: "4px solid #f97316" }}>
-          <div style={{ fontSize: "0.8rem", opacity: 0.7 }}>الأقساط المستحقة اليوم</div>
-          <div style={{ fontSize: "1.4rem", fontWeight: 700, color: "#f97316", marginTop: "0.25rem" }}>
+          <div style={{ fontSize: "var(--fs-xs)", opacity: 0.7 }}>الأقساط المستحقة اليوم</div>
+          <div style={{ fontSize: "var(--fs-lg)", fontWeight: 700, color: "#f97316", marginTop: "0.25rem" }}>
             {stats.dueTodayCount} {stats.dueTodayCount === 1 ? "قسط" : "أقساط"}
           </div>
         </div>
@@ -148,7 +148,7 @@ export function InstallmentsTab({ alerts: resolvedAlerts }: InstallmentsTabProps
 
       {filteredAndSortedAlerts.length === 0 ? (
         <div className="cars-empty" style={{ padding: "3rem", textAlign: "center" }}>
-          <p style={{ fontSize: "1.1rem", opacity: 0.8 }}>لا توجد أقساط متأخرة أو مستحقة اليوم</p>
+          <p style={{ fontSize: "var(--fs-base)", opacity: 0.8 }}>لا توجد أقساط متأخرة أو مستحقة اليوم</p>
         </div>
       ) : (
         <div className="table-container" style={{ marginTop: "1rem", overflowX: "auto" }}>
@@ -185,7 +185,7 @@ export function InstallmentsTab({ alerts: resolvedAlerts }: InstallmentsTabProps
                           color: pill.color,
                           padding: "0.25rem 0.75rem",
                           borderRadius: "4px",
-                          fontSize: "0.75rem",
+                          fontSize: "var(--fs-xs)",
                           fontWeight: 700,
                           boxShadow: `0 2px 8px ${pill.bg}30`,
                         }}
