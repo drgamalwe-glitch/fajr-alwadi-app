@@ -9,7 +9,6 @@ import { FinancialAccountsTab } from "./components/FinancialAccountsTab";
 import { FinancialTransactionsTab } from "./components/FinancialTransactionsTab";
 import { PartnersTab } from "./components/PartnersTab";
 import { AgenciesTab } from "./components/AgenciesTab";
-import { ActionButton } from "@/components/ui";
 import type { Car, Partner, TabId } from "./types";
 import "./styles/App.css";
 import "./styles/buttons.css";
@@ -17,15 +16,6 @@ import "./styles/tables.css";
 import "./styles/inputfieal.css";
 
 // Ordered list of tabs — matches sidebar order top → bottom
-const TAB_IDS: TabId[] = [
-  "dashboard",
-  "cars",
-  "partners-financial",
-  "agencies",
-  "expenses",
-  "financial-accounts",
-  "financial-transactions",
-];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");

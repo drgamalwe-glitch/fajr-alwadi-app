@@ -36,8 +36,6 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   const [agenciesSearchHighlightIdx, setAgenciesSearchHighlightIdx] = useState(0);
   const agenciesSearchInputRef = useRef<HTMLInputElement>(null);
   const [selectedAgency, setSelectedAgency] = useState<Agency | null>(null);
-  const [transactions, setTransactions] = useState<AgencyTransaction[]>([]);
-  const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showTxModal, setShowTxModal] = useState(false);
 
@@ -47,7 +45,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   const [deleteTxConfirm, setDeleteTxConfirm] = useState<AgencyTransaction | null>(null);
   const [deleteAgencyConfirm, setDeleteAgencyConfirm] = useState<Agency | null>(null);
 
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchAgencies = useCallback(async () => {
     setLoading(true);
@@ -91,7 +89,6 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
       };
       setSelectedAgency(newAgency);
       setAgenciesTab("details");
-      setTransactions([]);
       await fetchAgencies();
     } catch (err) {
       console.error("Failed to create agency:", err);
@@ -156,15 +153,6 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   const loadAgency = useCallback(async (agency: Agency) => {
     setSelectedAgency(agency);
     setAgenciesTab("details");
-    setTransactionsLoading(true);
-    try {
-      const txs = await callTauri<AgencyTransaction[]>("get_agency_transactions", { agencyId: agency.id });
-      setTransactions(txs ?? []);
-    } catch {
-      setTransactions([]);
-    } finally {
-      setTransactionsLoading(false);
-    }
   }, []);
 
   const handleDeleteAgency = async () => {
@@ -174,7 +162,6 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
       await callTauri("delete_agency", { id: deleteAgencyConfirm.id });
       if (selectedAgency?.id === deleteAgencyConfirm.id) {
         setSelectedAgency(null);
-        setTransactions([]);
         setAgenciesTab("list");
       }
       setDeleteAgencyConfirm(null);
@@ -210,8 +197,6 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
         currency: txCurrency,
       });
       resetTxForm(txForm.type);
-      const txs = await callTauri<AgencyTransaction[]>("get_agency_transactions", { agencyId: selectedAgency.id });
-      setTransactions(txs ?? []);
       setShowTxModal(false);
       await onRefresh();
     } catch {
@@ -226,8 +211,6 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
     try {
       await callTauri("delete_agency_transaction", { id: deleteTxConfirm.id });
       setDeleteTxConfirm(null);
-      const txs = await callTauri<AgencyTransaction[]>("get_agency_transactions", { agencyId: deleteTxConfirm.agency_id });
-      setTransactions(txs ?? []);
       await onRefresh();
     } catch {
       alert("تعذر حذف المعاملة");
@@ -520,18 +503,16 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
               <div className="agency-field agency-field--lg">
                 <label className="agency-label">المبلغ (دينار عراقي)</label>
                 <PriceInput
-                  value={selectedAgency.amount_iqd}
-                  onChange={(val) => { const next = { ...selectedAgency, amount_iqd: val }; setSelectedAgency(next); handleAutoSave(next); }}
-                  hideCurrency
+                  value={String(selectedAgency.amount_iqd)}
+                  onChange={(val) => { const next = { ...selectedAgency, amount_iqd: Number(val) || 0 }; setSelectedAgency(next); handleAutoSave(next); }}
                 />
               </div>
               <div className="agency-field agency-field--lg">
                 <label className="agency-label">المبلغ (دولار أمريكي)</label>
                 <PriceInput
-                  value={selectedAgency.amount_usd}
-                  onChange={(val) => { const next = { ...selectedAgency, amount_usd: val }; setSelectedAgency(next); handleAutoSave(next); }}
+                  value={String(selectedAgency.amount_usd)}
+                  onChange={(val) => { const next = { ...selectedAgency, amount_usd: Number(val) || 0 }; setSelectedAgency(next); handleAutoSave(next); }}
                   currency="USD"
-                  hideCurrency
                 />
               </div>
             </div>

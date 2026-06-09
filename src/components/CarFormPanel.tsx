@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { CarFormState, Partner, UnifiedAccount, CarExpenseRecord } from "../types";
+import type { CarFormState, Partner, CarExpenseRecord } from "../types";
 import { callTauri } from "../api/tauri";
 import "../styles/monsadilah.css";
 import { SearchableCombobox } from "./SearchableCombobox";
@@ -10,7 +10,6 @@ import { todayIsoDate } from "../utils/dateSegments";
 import { UnifiedDateField } from "./UnifiedDateField";
 import { YearScrollField } from "./YearScrollField";
 import {
-  ActionButton,
   TextInput,
   NumberInput,
   PriceInput,
@@ -22,7 +21,6 @@ function toEn(v: string) { return toEnglishDigits(v); }
 interface CarFormPanelProps {
   form: CarFormState;
   isEditing: boolean;
-  saving: boolean;
   onChange: (patch: Partial<CarFormState>) => void;
   onSubmit: (e: React.FormEvent) => void;
   onClose?: () => void;
@@ -30,12 +28,11 @@ interface CarFormPanelProps {
 }
 
 export function CarFormPanel({
-  form, isEditing, saving,
+  form, isEditing,
   onChange, onSubmit, onClose,
   embedMode = false,
 }: CarFormPanelProps) {
   const [allPartners, setAllPartners] = useState<Partner[]>([]);
-  const [unifiedAccounts, setUnifiedAccounts] = useState<UnifiedAccount[]>([]);
   const [carExpenses, setCarExpenses] = useState<CarExpenseRecord[]>([]);
   const [expenseDesc, setExpenseDesc] = useState("");
   const [expenseAmt, setExpenseAmt] = useState("");
@@ -47,9 +44,6 @@ export function CarFormPanel({
   useEffect(() => {
     callTauri<Partner[]>("get_partners")
       .then((res) => setAllPartners(res || []))
-      .catch(console.error);
-    callTauri<UnifiedAccount[]>("get_unified_accounts")
-      .then((res) => setUnifiedAccounts(res || []))
       .catch(console.error);
   }, []);
 

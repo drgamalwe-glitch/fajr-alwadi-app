@@ -12,6 +12,7 @@ import {
   SelectMenuTrigger,
   SelectMenuValue,
   StatCard,
+  ActionButton,
 } from "@/components/ui";
 
 import { todayIsoDate } from "../utils/dateSegments";
@@ -625,31 +626,6 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
   };
 
   const monthName = new Date().toLocaleDateString("ar-IQ", { month: "long", year: "numeric" });
-
-  // ── أنماط زر مشتركة (مُعاد استخدامها) ──
-  const btnPrimary: React.CSSProperties = {
-    flex: 1,
-    padding: "0.8rem",
-    background: "linear-gradient(135deg, var(--gold), #b08800)",
-    border: "none",
-    borderRadius: "10px",
-    color: "var(--black)",
-    fontWeight: "var(--fw-extrabold)",
-    fontSize: "var(--fs-base)",
-    cursor: "pointer",
-    fontFamily: "inherit",
-    transition: "opacity 0.15s",
-  };
-  const btnSecondary: React.CSSProperties = {
-    padding: "0.8rem 1.25rem",
-    background: "rgba(122,122,122,0.08)",
-    border: "1px solid rgba(122,122,122,0.2)",
-    borderRadius: "10px",
-    color: "var(--gray)",
-    fontWeight: "var(--fw-medium)",
-    cursor: "pointer",
-    fontFamily: "inherit",
-  };
 
   return (
     <div

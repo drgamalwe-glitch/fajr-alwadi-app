@@ -96,9 +96,9 @@ function carToForm(car: Car): CarFormState {
     saleCurrency: (car.sale_currency as "IQD" | "USD") ?? "IQD",
     purchasePaymentType: (car.purchase_payment_type === "ماستر" ? "ماستر" : "قاصه"),
     salePaymentType: (car.sale_payment_type === "ماستر" ? "ماستر" : "قاصه"),
-    purchaseType: car.purchase_type === "دين" ? "تمويل" : (car.purchase_type ?? "كاش"),
+    purchaseType: car.purchase_type === "دين" ? "تمويل" : (car.purchase_type as any ?? "كاش"),
     financerName: car.financer_name ?? "",
-    commissionType: car.commission_type ?? "لا يوجد",
+    commissionType: (car.commission_type as any) ?? "لا يوجد",
     commissionValue: String(car.commission_value ?? 0),
     carPartners: (car.car_partners ?? []).map((p) => ({
       partner_name: p.partner_name,
@@ -127,7 +127,7 @@ export function CarsTab({
   const [carsTab, setCarsTab] = useState<CarsTabId>("available");
   const [sortConfig, setSortConfig] = useState<{ key: CarSortKey; direction: "asc" | "desc" } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [autoSaveTimer, setAutoSaveTimer] = useState<NodeJS.Timeout | null>(null);
+  const [autoSaveTimer, setAutoSaveTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [carToDelete, setCarToDelete] = useState<Car | null>(null);
@@ -839,7 +839,6 @@ export function CarsTab({
             embedMode={true}
             form={form}
             isEditing={isEditing}
-            saving={saving}
             onChange={patchForm}
             onSubmit={handleSubmit}
             onClose={handleClosePanel}
