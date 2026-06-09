@@ -22,3 +22,4 @@ export {
 } from "./SelectMenu";
 
 export { PriceDisplay } from "./PriceDisplay";
+export { StatCard } from "./StatCard";

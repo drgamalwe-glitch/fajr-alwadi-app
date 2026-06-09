@@ -1,0 +1,55 @@
+:root {
+
+  /* MASTER COLORS */
+
+  --red: #680000;
+  --gold: #d7a800;
+  --gray: #7a7a7a;
+  --black: #0e0e0e;
+  --white: #ffffff;
+
+  --backkground: linear-gradient(rgba(0, 0, 0, 0.458)), url("/bg.jpg") center center / cover no-repeat;
+  --backkground-secondary: rgba(84, 84, 84, 0.344);
+  --backkground-secondary-blur: 10px;
+  --backkground-secondary-saturate: 60%;
+  --text-input: rgba(48, 48, 48, 0);
+  --hidod: 1px solid rgba(255, 255, 255, 0.302);
+  --jadawil-hidod: 1px solid rgba(255, 255, 255, 0.077);
+  --all-radius: 10px;
+  --font-color: #ffffff;    /* لون النص داخل المربعات */
+  --font-size: 1.3rem;        /* حجم النص داخل المربعات */
+  --font-lable-color: #ffffff8e;    /* لون نص التسميات (الليبل) */
+
+  --card-one-bg: #643e3e5a;
+  --card-two-bg: #4d000a;
+  --smiles: #ffffff;
+  --smiles-bg: #ffffff25;
+  --usd-text-color: #00ff73; /* Same as smiles green for consistency */
+  --iq-text-color: #d8a85a; /* Traditional gold for IQD */
+
+  /* SEMANTIC TOKENS */
+
+  --bg-primary: var(--backkground);
+  --bg-secondary: var(--gray);
+
+  --text-primary: var(--gold);
+  --text-secondary: var(--gray);
+
+  --border-color: var(--gray);
+
+  --button-primary-bg: var(--red);
+  --button-primary-text: var(--gold);
+
+  --button-secondary-bg: var(--gray);
+  --button-secondary-text: var(--gold);
+
+  --card-bg: var(--black);
+
+  --table-header-bg: var(--red);
+  --table-header-text: var(--gold);
+
+  --header-bg: var(--black);
+
+  --hover-color: var(--gold);
+  --active-color: var(--red);
+}

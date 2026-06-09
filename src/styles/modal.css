@@ -1,0 +1,344 @@
+/* ==========================================================================
+   🪟 القوائم المنبثقة الموحدة — Unified Modal System
+   ==========================================================================
+   🔧 خصّص كل شيء من متغيرات :root أدناه فقط
+   ========================================================================== */
+
+:root {
+  /* ── الـ Overlay ── */
+  --modal-overlay-bg:        rgba(0, 0, 0, 0.65);
+  --modal-overlay-blur:      14px;
+  --modal-overlay-z:         2000;
+
+  /* ── الحوار ── */
+  --modal-bg:                rgba(14, 16, 26, 0.82);
+  --modal-bg-shimmer-1:      rgba(212, 175, 55, 0.06);  /* ذهبي خفيف */
+  --modal-bg-shimmer-2:      rgba(129, 140, 248, 0.04); /* بنفسجي خفيف */
+  --modal-border:            1px solid rgba(255, 255, 255, 0.1);
+  --modal-border-top:        rgba(212, 175, 55, 0.25);   /* خط ذهبي علوي */
+  --modal-radius:            var(--all-radius, 18px);
+  --modal-padding:           28px 32px;
+  --modal-shadow:
+    0 32px 80px rgba(0, 0, 0, 0.55),
+    0 0 60px rgba(212, 175, 55, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --modal-blur:              24px;
+  --modal-max-width:         460px;
+  --modal-anim-duration:     0.28s;
+
+  /* ── العنوان ── */
+  --modal-title-color:       #ffffff;
+  --modal-title-size:        var(--fs-modal-title, 1.15rem);
+  --modal-title-weight:      800;
+  --modal-title-glow:        0 0 20px rgba(212, 175, 55, 0.2);
+
+  /* ── التسميات (Labels) ── */
+  --modal-label-color:       #ffffff;
+  --modal-label-size:        var(--fs-sm, 0.85rem);
+  --modal-label-weight:      600;
+  --modal-label-opacity:     0.88;
+
+  /* ── الفاصل ── */
+  --modal-divider:           rgba(255, 255, 255, 0.07);
+
+  /* ── الانيميشن ── */
+  --modal-ease:              cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ══════════════════════════════════════════════════════
+   الطبقة الخلفية
+══════════════════════════════════════════════════════ */
+.modal-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: var(--modal-overlay-z) !important;
+  background: var(--modal-overlay-bg) !important;
+  backdrop-filter: blur(var(--modal-overlay-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--modal-overlay-blur)) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 20px !important;
+  animation: modal-overlay-in var(--modal-anim-duration) ease-out !important;
+}
+
+@keyframes modal-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ══════════════════════════════════════════════════════
+   نافذة الحوار
+══════════════════════════════════════════════════════ */
+.modal-dialog {
+  position: relative !important;
+  width: 100% !important;
+  max-width: var(--modal-max-width) !important;
+  background: var(--modal-bg) !important;
+  border: var(--modal-border) !important;
+  border-radius: var(--modal-radius) !important;
+  padding: var(--modal-padding) !important;
+  box-shadow: var(--modal-shadow) !important;
+  backdrop-filter: blur(var(--modal-blur)) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(var(--modal-blur)) saturate(160%) !important;
+  overflow: hidden !important;
+  animation: modal-dialog-in var(--modal-anim-duration) var(--modal-ease) !important;
+}
+
+@keyframes modal-dialog-in {
+  from { opacity: 0; transform: translateY(18px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+
+/* ── تدرج خلفي داخلي ── */
+.modal-dialog::before {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  background:
+    radial-gradient(ellipse at 20% -10%, var(--modal-bg-shimmer-1) 0%, transparent 55%),
+    radial-gradient(ellipse at 80% 110%, var(--modal-bg-shimmer-2) 0%, transparent 55%) !important;
+  pointer-events: none !important;
+}
+
+/* ── خط ذهبي رفيع في الأعلى ── */
+.modal-dialog::after {
+  content: "" !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 12% !important;
+  right: 12% !important;
+  height: 1px !important;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--modal-border-top),
+    transparent
+  ) !important;
+  pointer-events: none !important;
+}
+
+/* ══════════════════════════════════════════════════════
+   عنوان النافذة
+══════════════════════════════════════════════════════ */
+.modal-dialog__title {
+  position: relative !important;
+  margin: 0 0 20px !important;
+  font-size: var(--modal-title-size) !important;
+  font-weight: var(--modal-title-weight) !important;
+  color: var(--modal-title-color) !important;
+  text-shadow: var(--modal-title-glow) !important;
+  padding-bottom: 14px !important;
+  border-bottom: 1px solid var(--modal-divider) !important;
+  z-index: 1 !important;
+}
+
+/* ══════════════════════════════════════════════════════
+   مجموعة الحقل (form-group)
+══════════════════════════════════════════════════════ */
+.modal-dialog .form-group,
+.modal-dialog .form > div {
+  position: relative;
+  z-index: 1;
+}
+
+/* ══════════════════════════════════════════════════════
+   التسميات داخل النافذة — أبيض موحد
+══════════════════════════════════════════════════════ */
+.modal-dialog .label,
+.modal-dialog .cf-label,
+.modal-dialog label,
+.modal-dialog .app-input-label {
+  color: var(--modal-label-color) !important;
+  font-size: var(--modal-label-size) !important;
+  font-weight: var(--modal-label-weight) !important;
+  opacity: var(--modal-label-opacity) !important;
+  font-family: inherit !important;
+  display: block !important;
+  margin-bottom: 6px !important;
+}
+
+/* ══════════════════════════════════════════════════════
+   أزرار الإجراءات
+══════════════════════════════════════════════════════ */
+.modal-dialog__actions {
+  display: flex !important;
+  gap: 10px !important;
+  justify-content: flex-end !important;
+  flex-wrap: wrap !important;
+  padding-top: 16px !important;
+  border-top: 1px solid var(--modal-divider) !important;
+  margin-top: 8px !important;
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+/* ══════════════════════════════════════════════════════
+   نماذج داخل النافذة
+══════════════════════════════════════════════════════ */
+.modal-dialog .form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: relative;
+  z-index: 1;
+}
+
+/* textarea داخل modal */
+.modal-dialog textarea.input {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 10px !important;
+  color: #fff !important;
+  padding: 10px 14px !important;
+  font-family: inherit !important;
+  font-size: var(--fs-base) !important;
+  resize: none !important;
+  width: 100% !important;
+  outline: none !important;
+  transition: border-color 0.2s !important;
+}
+
+.modal-dialog textarea.input:focus {
+  border-color: rgba(212, 175, 55, 0.4) !important;
+}
+
+/* ══════════════════════════════════════════════════════
+   نافذة التأكيد (Confirm Dialog)
+══════════════════════════════════════════════════════ */
+.modal-dialog__message {
+  margin: 0 0 20px !important;
+  line-height: 1.75 !important;
+  color: rgba(255, 255, 255, 0.75) !important;
+  font-size: var(--fs-base) !important;
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+/* ══════════════════════════════════════════════════════
+   رأس النافذة (Modal Header)
+══════════════════════════════════════════════════════ */
+.modal-dialog__header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 18px 24px !important;
+  background: linear-gradient(
+    135deg,
+    rgba(212, 175, 55, 0.08) 0%,
+    rgba(212, 175, 55, 0.02) 100%
+  ) !important;
+  border-bottom: 1px solid rgba(212, 175, 55, 0.12) !important;
+  position: relative !important;
+  z-index: 1 !important;
+  border-radius: var(--modal-radius) var(--modal-radius) 0 0 !important;
+}
+
+.modal-dialog__header-title {
+  font-size: var(--fs-base) !important;
+  font-weight: 800 !important;
+  color: #fff !important;
+  margin: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  background: none !important;
+}
+
+.modal-dialog__header-title span,
+.modal-dialog__header-title > * {
+  background: none !important;
+  -webkit-text-fill-color: unset !important;
+}
+
+.modal-dialog__close {
+  width: 30px !important;
+  height: 30px !important;
+  border-radius: 50% !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  color: rgba(255, 255, 255, 0.55) !important;
+  font-size: 1.1rem !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-family: inherit !important;
+  transition: background 0.18s, color 0.18s !important;
+  flex-shrink: 0 !important;
+}
+
+.modal-dialog__close:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+  color: #fff !important;
+}
+
+/* ── نافذة بها header: أزل padding العلوي واضبط الـ border-radius ── */
+.modal-dialog--has-header {
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+.modal-dialog--has-header .modal-dialog__body {
+  padding: var(--modal-padding) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 16px !important;
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+.modal-dialog--has-header .modal-dialog__body--scroll {
+  max-height: 60vh !important;
+  overflow-y: auto !important;
+}
+
+.modal-dialog--has-header .modal-dialog__body--scroll::-webkit-scrollbar { width: 4px; }
+.modal-dialog--has-header .modal-dialog__body--scroll::-webkit-scrollbar-track { background: transparent; }
+.modal-dialog--has-header .modal-dialog__body--scroll::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.1);
+  border-radius: 10px;
+}
+
+/* ── بطاقة معلومات داخل نافذة ── */
+.modal-info-card {
+  background: rgba(212, 175, 55, 0.04) !important;
+  border: 1px solid rgba(212, 175, 55, 0.12) !important;
+  border-radius: 12px !important;
+  padding: 1rem !important;
+}
+
+/* ── عنصر قابل للاختيار (selectable item) داخل modal ── */
+.modal-select-item {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 10px 14px !important;
+  background: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+  border-radius: 10px !important;
+  cursor: pointer !important;
+  color: #fff !important;
+  font-family: inherit !important;
+  transition: background 0.15s, border-color 0.15s !important;
+  width: 100% !important;
+  text-align: right !important;
+}
+
+.modal-select-item:hover {
+  background: rgba(212, 175, 55, 0.07) !important;
+  border-color: rgba(212, 175, 55, 0.2) !important;
+}
+
+.modal-select-item--active {
+  background: rgba(212, 175, 55, 0.1) !important;
+  border-color: rgba(212, 175, 55, 0.35) !important;
+}
+
+.modal-select-item--active::after {
+  content: "✓" !important;
+  color: #d4af37 !important;
+  font-weight: 700 !important;
+  margin-right: auto !important;
+  padding-right: 8px !important;
+}

@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { callTauri } from "../api/tauri";
 import type { Car, CashRegisterEntry } from "../types";
 import { PriceDisplay } from "@/components/ui";
+import "../styles/transactions.css";
 
 import { PAGE_SIZE } from "../constants";
+import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
 
 /**
  * سجل المعاملات – يعرض جميع سجل المعاملات من كافة الحسابات (قاصه + ماستر + مصرف)
@@ -13,6 +15,7 @@ export function FinancialTransactionsTab() {
   const [entries, setEntries] = useState<(CashRegisterEntry & { _source?: "قاصه" | "ماستر" | "مصرف" })[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -82,54 +85,82 @@ export function FinancialTransactionsTab() {
     void load();
   }, []);
 
+  const handleSort = (key: string) => {
+    setSortConfig((prev) => ({
+      key,
+      direction: prev?.key === key && prev.direction === "asc" ? "desc" : "asc",
+    }));
+  };
+
+  const sortedEntries = useMemo(() => {
+    if (!sortConfig) return entries;
+    const { key, direction } = sortConfig;
+    const sign = direction === "asc" ? 1 : -1;
+    return [...entries].sort((a, b) => {
+      let valA: any = a[key as keyof typeof a] ?? "";
+      let valB: any = b[key as keyof typeof b] ?? "";
+
+      if (key === "amount" || key === "id") {
+        return (Number(valA) - Number(valB)) * sign;
+      }
+      if (key === "date") {
+        const dtA = `${a.date}T${a.time || "00:00"}`;
+        const dtB = `${b.date}T${b.time || "00:00"}`;
+        return dtA.localeCompare(dtB) * sign;
+      }
+      return String(valA).localeCompare(String(valB), "ar", { numeric: true }) * sign;
+    });
+  }, [entries, sortConfig]);
+
   const totalPages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages - 1);
 
   const pageEntries = useMemo(
-    () => entries.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE),
-    [entries, currentPage],
+    () => sortedEntries.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE),
+    [sortedEntries, currentPage],
   );
 
-  const getSourceBadgeStyle = (source: string) => {
-    switch (source) {
-      case "قاصه":
-        return { background: "rgba(216,168,90,0.18)", color: "#d8a85a", border: "1px solid rgba(216,168,90,0.25)" };
-      case "ماستر":
-        return { background: "rgba(216,168,90,0.18)", color: "#d8a85a", border: "1px solid rgba(216,168,90,0.25)" };
-      case "مصرف":
-        return { background: "rgba(34,197,94,0.18)", color: "#86efac", border: "1px solid rgba(34,197,94,0.25)" };
-      default:
-        return { background: "rgba(255,255,255,0.08)", color: "#aaa", border: "1px solid rgba(255,255,255,0.1)" };
-    }
-  };
-
   return (
-    <div className="dashboard">
-      {/* العنوان فقط بدون أدوات تصفية أو تبويبات */}
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: "1rem",
-        marginBottom: "1.5rem",
-        flexWrap: "wrap",
-      }}>
-        <h2 className="page-intro__title" style={{ margin: 0, fontSize: "var(--fs-xl)" }}>سجل المعاملات</h2>
+    <div
+      className="dashboard"
+      onWheel={(e) => handlePaginationWheel(e, currentPage, totalPages, setPage)}
+      onKeyDown={(e) => handlePaginationKeyDown(e, currentPage, totalPages, setPage)}
+      tabIndex={0}
+    >
+      {/* شريط الأدوات الموحد في الأعلى */}
+      <div className="cars-page__toolbar unified-toolbar">
+        <div className="unified-toolbar__right"></div>
+        <div className="unified-toolbar__center"></div>
+        <div className="unified-toolbar__left"></div>
       </div>
 
+      {totalPages >= 1 && (
+        <div className="table-page-dots" aria-label="تنقل بين الصفحات">
+          {Array.from({ length: totalPages }, (_, idx) => (
+            <button
+              key={idx}
+              type="button"
+              className={`table-page-dot ${idx === currentPage ? "is-active" : ""}`}
+              onClick={() => setPage(idx)}
+              aria-label={`الصفحة ${idx + 1}`}
+            />
+          ))}
+        </div>
+      )}
+
       {/* الجدول */}
-      <section className="panel-card cash-register-section">
-        <div className="table-wrapper" style={{ flex: "1 1 auto", overflowY: "auto", minHeight: 0 }}>
+      <section className="table-card-container">
+        <div className="table-wrapper" style={{ flex: 1, minHeight: 0 }}>
           <table className="data-table">
             <thead>
               <tr>
-                <th className="cell-num" style={{ width: "40px" }}>ت</th>
-                <th style={{ width: "90px" }}>الحساب</th>
-                <th style={{ width: "110px" }}>تاريخ العملية</th>
-                <th style={{ width: "60px" }}>الساعة</th>
-                <th style={{ width: "150px" }}>نوع العملية</th>
-                <th className="col-money">المبلغ</th>
-                <th>التفاصيل</th>
+                <th className={`cell-num ${sortConfig?.key === "id" ? "th--sorted" : ""}`} onClick={() => handleSort("id")} style={{ width: "40px", cursor: "pointer" }}>ت</th>
+                <th className={sortConfig?.key === "_source" ? "th--sorted" : ""} onClick={() => handleSort("_source")} style={{ width: "90px", cursor: "pointer" }}>الحساب</th>
+                <th className={sortConfig?.key === "date" ? "th--sorted" : ""} onClick={() => handleSort("date")} style={{ width: "110px", cursor: "pointer" }}>التاريخ</th>
+                <th className={sortConfig?.key === "time" ? "th--sorted" : ""} onClick={() => handleSort("time")} style={{ width: "60px", cursor: "pointer" }}>الساعة</th>
+                <th className={sortConfig?.key === "type_" ? "th--sorted" : ""} onClick={() => handleSort("type_")} style={{ width: "200px", cursor: "pointer" }}>نوع العملية</th>
+                <th className={`col-money ${sortConfig?.key === "amount" ? "th--sorted" : ""}`} onClick={() => handleSort("amount")} style={{ width: "200px", cursor: "pointer" }}>المبلغ</th>
+                <th className={sortConfig?.key === "description" ? "th--sorted" : ""} onClick={() => handleSort("description")} style={{ cursor: "pointer" }}>التفاصيل</th>
               </tr>
             </thead>
             <tbody>
@@ -142,39 +173,22 @@ export function FinancialTransactionsTab() {
                   {pageEntries.map((entry, idx) => (
                     <tr key={`${entry._source}-${entry.id}-${idx}`}>
                       <td className="cell-num">{currentPage * PAGE_SIZE + idx + 1}</td>
-                      <td>
-                        <span
-                          style={{
-                            ...getSourceBadgeStyle(entry._source ?? "قاصه"),
-                            padding: "0.15rem 0.6rem",
-                            borderRadius: "6px",
-                            fontSize: "var(--fs-xs)",
-                            fontWeight: 600,
-                            display: "inline-block",
-                          }}
-                        >
-                          {entry._source}
-                        </span>
+                      <td style={{ whiteSpace: "nowrap", color: "#fff" }}>
+                        {entry._source}
                       </td>
                       <td style={{ whiteSpace: "nowrap" }}>{entry.date}</td>
                       <td style={{ whiteSpace: "nowrap", fontSize: "var(--fs-sm)", textAlign: "center" }}>{entry.time}</td>
-                      <td>
-                        <span
-                          className={`badge ${entry.amount >= 0 ? "badge--primary" : "badge--sold"}`}
-                          style={{ whiteSpace: "nowrap" }}
-                        >
-                          {entry.type_}
-                        </span>
+                      <td style={{ whiteSpace: "nowrap", color: "#fff" }}>
+                        {entry.type_}
                       </td>
                       <td
-                        className="col-money"
-                        style={{
-                          color: entry.currency === "USD"
-                            ? "#10b981"
+                        className={`col-money ${
+                          entry.currency === "USD"
+                            ? "tx-amount-usd"
                             : entry.amount >= 0
-                              ? "#d8a85a"
-                              : "#f43f5e",
-                        }}
+                            ? "tx-amount-iqd-pos"
+                            : "tx-amount-iqd-neg"
+                        }`}
                       >
                         <PriceDisplay amount={entry.amount} currency={entry.currency} />
                       </td>
@@ -207,59 +221,6 @@ export function FinancialTransactionsTab() {
               )}
             </tbody>
           </table>
-        </div>
-
-        {/* ترقيم الصفحات */}
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: "1rem",
-          padding: "8px 0 0 0",
-          borderTop: "1px solid rgba(255,255,255,0.06)",
-          flexShrink: 0,
-        }}>
-          <button
-            type="button"
-            className="pagination-btn"
-            disabled={currentPage === 0}
-            onClick={() => setPage(p => Math.max(0, p - 1))}
-            style={{
-              background: currentPage === 0 ? "transparent" : "rgba(216,168,90,0.15)",
-              border: "1px solid rgba(216,168,90,0.2)",
-              borderRadius: "8px",
-              padding: "6px 16px",
-              color: currentPage === 0 ? "rgba(255,255,255,0.2)" : "#d8a85a",
-              fontSize: "var(--fs-sm)",
-              fontWeight: 600,
-              cursor: currentPage === 0 ? "default" : "pointer",
-              transition: "all 0.2s",
-            }}
-          >
-            → السابق
-          </button>
-          <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "var(--fs-sm)", fontWeight: 500 }}>
-            {currentPage + 1} / {totalPages}
-          </span>
-          <button
-            type="button"
-            className="pagination-btn"
-            disabled={currentPage >= totalPages - 1}
-            onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-            style={{
-              background: currentPage >= totalPages - 1 ? "transparent" : "rgba(216,168,90,0.15)",
-              border: "1px solid rgba(216,168,90,0.2)",
-              borderRadius: "8px",
-              padding: "6px 16px",
-              color: currentPage >= totalPages - 1 ? "rgba(255,255,255,0.2)" : "#d8a85a",
-              fontSize: "var(--fs-sm)",
-              fontWeight: 600,
-              cursor: currentPage >= totalPages - 1 ? "default" : "pointer",
-              transition: "all 0.2s",
-            }}
-          >
-            التالي ←
-          </button>
         </div>
       </section>
     </div>

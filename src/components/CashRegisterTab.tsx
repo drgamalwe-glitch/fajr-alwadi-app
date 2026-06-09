@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { callTauri } from "../api/tauri";
 import type { CashRegisterEntry } from "../types";
 import { PriceDisplay } from "@/components/ui";
+import "../styles/qasa.css";
 
 import { PAGE_SIZE } from "../constants";
+import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
 
 const parseCommissionText = (notes: string | null | undefined, currency?: string | null, amount?: number): string => {
   const curr = currency || "IQD";
@@ -41,6 +43,7 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
   const [entries, setEntries] = useState<CashRegisterEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -63,12 +66,44 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
     void load();
   }, [paymentType]);
 
+  const handleSort = (key: string) => {
+    setSortConfig((prev) => ({
+      key,
+      direction: prev?.key === key && prev.direction === "asc" ? "desc" : "asc",
+    }));
+  };
+
+  const sortedEntries = useMemo(() => {
+    if (!sortConfig) return entries;
+    const { key, direction } = sortConfig;
+    const sign = direction === "asc" ? 1 : -1;
+    return [...entries].sort((a, b) => {
+      let valA: any = a[key as keyof CashRegisterEntry] ?? "";
+      let valB: any = b[key as keyof CashRegisterEntry] ?? "";
+
+      if (key === "commission") {
+        valA = parseCommissionText(a.notes, a.currency, a.amount);
+        valB = parseCommissionText(b.notes, b.currency, b.amount);
+      }
+
+      if (key === "amount" || key === "balance" || key === "id") {
+        return (Number(valA) - Number(valB)) * sign;
+      }
+      if (key === "date") {
+        const dtA = `${a.date}T${a.time || "00:00"}`;
+        const dtB = `${b.date}T${b.time || "00:00"}`;
+        return dtA.localeCompare(dtB) * sign;
+      }
+      return String(valA).localeCompare(String(valB), "ar", { numeric: true }) * sign;
+    });
+  }, [entries, sortConfig]);
+
   const totalPages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages - 1);
 
   const pageEntries = useMemo(
-    () => entries.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE),
-    [entries, currentPage],
+    () => sortedEntries.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE),
+    [sortedEntries, currentPage],
   );
 
   const formatEntry = (entry: CashRegisterEntry, value: number) => {
@@ -76,19 +111,39 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
   };
 
   return (
-    <section className="panel-card cash-register-section">
-      <div className="table-wrapper" style={{ flex: "1 1 auto", overflowY: "auto", minHeight: 0 }}>
+    <>
+      {totalPages >= 1 && (
+        <div className="table-page-dots" aria-label="تنقل بين الصفحات">
+          {Array.from({ length: totalPages }, (_, idx) => (
+            <button
+              key={idx}
+              type="button"
+              className={`table-page-dot ${idx === currentPage ? "is-active" : ""}`}
+              onClick={() => setPage(idx)}
+              aria-label={`الصفحة ${idx + 1}`}
+            />
+          ))}
+        </div>
+      )}
+
+    <section
+      className="table-card-container"
+      onWheel={(e) => handlePaginationWheel(e, currentPage, totalPages, setPage)}
+      onKeyDown={(e) => handlePaginationKeyDown(e, currentPage, totalPages, setPage)}
+      tabIndex={0}
+    >
+      <div className="table-wrapper" style={{ flex: 1, minHeight: 0 }}>
          <table className="data-table">
           <thead>
             <tr>
-              <th className="cell-num" style={{ width: "40px" }}>ت</th>
-              <th style={{ width: "110px" }}>تاريخ العملية</th>
-              <th style={{ width: "60px" }}>الساعة</th>
-              <th style={{ width: "150px" }}>نوع العملية</th>
-              <th className="col-money">المبلغ</th>
-              {paymentType === "ممول" && <th style={{ width: "80px", textAlign: "center" }}>العمولة</th>}
-              <th>التفاصيل</th>
-              <th className="col-money">الرصيد</th>
+              <th className={`cell-num ${sortConfig?.key === "id" ? "th--sorted" : ""}`} onClick={() => handleSort("id")} style={{ width: "40px", cursor: "pointer" }}>ت</th>
+              <th className={sortConfig?.key === "date" ? "th--sorted" : ""} onClick={() => handleSort("date")} style={{ width: "110px", cursor: "pointer" }}>التاريخ</th>
+              <th className={sortConfig?.key === "time" ? "th--sorted" : ""} onClick={() => handleSort("time")} style={{ width: "60px", cursor: "pointer" }}>الساعة</th>
+              <th className={sortConfig?.key === "type_" ? "th--sorted" : ""} onClick={() => handleSort("type_")} style={{ width: "200px", cursor: "pointer" }}>نوع العملية</th>
+              <th className={`col-money ${sortConfig?.key === "amount" ? "th--sorted" : ""}`} onClick={() => handleSort("amount")} style={{width: "200px", cursor: "pointer" }}>المبلغ</th>
+              {paymentType === "ممول" && <th className={sortConfig?.key === "commission" ? "th--sorted" : ""} onClick={() => handleSort("commission")} style={{ width: "80px", textAlign: "center", cursor: "pointer" }}>العمولة</th>}
+              <th className={sortConfig?.key === "description" ? "th--sorted" : ""} onClick={() => handleSort("description")} style={{ cursor: "pointer" }}>التفاصيل</th>
+              <th className={`col-money ${sortConfig?.key === "balance" ? "th--sorted" : ""}`} onClick={() => handleSort("balance")} style={{ cursor: "pointer" }}>الرصيد</th>
             </tr>
           </thead>
           <tbody>
@@ -103,19 +158,14 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
                     <td className="cell-num">{entry.id}</td>
                     <td style={{ whiteSpace: "nowrap" }}>{entry.date}</td>
                     <td style={{ whiteSpace: "nowrap", fontSize: "var(--fs-sm)", textAlign: "center" }}>{entry.time}</td>
-                    <td>
-                      <span
-                        className={`badge ${entry.amount >= 0 ? "badge--primary" : "badge--sold"}`}
-                        style={{ whiteSpace: "nowrap" }}
-                      >
-                        {entry.type_}
-                      </span>
+                    <td style={{ whiteSpace: "nowrap", color: "#fff" }}>
+                      {entry.type_}
                     </td>
-                    <td className="col-money" style={{ color: entry.currency === "USD" ? "#10b981" : (entry.amount >= 0 ? "#d8a85a" : "#f43f5e") }}>
+                    <td className={`col-money ${entry.currency === "USD" ? "qasa-amount-usd" : (entry.amount >= 0 ? "qasa-amount-iqd-pos" : "qasa-amount-iqd-neg")}`}>
                       {formatEntry(entry, entry.amount)}
                     </td>
                     {paymentType === "ممول" && (
-                      <td style={{ textAlign: "center", fontWeight: "bold", color: "#a78bfa", fontSize: "var(--fs-sm)" }}>
+                      <td className="qasa-commission-text">
                         {parseCommissionText(entry.notes, entry.currency, entry.amount)}
                       </td>
                     )}
@@ -133,7 +183,7 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
                         </>
                       )}
                     </td>
-                    <td className="col-money" style={{ color: entry.currency === "USD" ? "#10b981" : (entry.balance >= 0 ? "#d8a85a" : "#f43f5e") }}>
+                    <td className={`col-money ${entry.currency === "USD" ? "qasa-amount-usd" : (entry.balance >= 0 ? "qasa-amount-iqd-pos" : "qasa-amount-iqd-neg")}`}>
                       {formatEntry(entry, entry.balance)}
                     </td>
                   </tr>
@@ -155,58 +205,7 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
           </tbody>
         </table>
       </div>
-
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "1rem",
-        padding: "8px 0 0 0",
-        borderTop: "1px solid rgba(255,255,255,0.06)",
-        flexShrink: 0,
-      }}>
-        <button
-          type="button"
-          className="pagination-btn"
-          disabled={currentPage === 0}
-          onClick={() => setPage(p => Math.max(0, p - 1))}
-          style={{
-            background: currentPage === 0 ? "transparent" : "rgba(216,168,90,0.15)",
-            border: "1px solid rgba(216,168,90,0.2)",
-            borderRadius: "8px",
-            padding: "6px 16px",
-            color: currentPage === 0 ? "rgba(255,255,255,0.2)" : "#d8a85a",
-            fontSize: "var(--fs-sm)",
-            fontWeight: 600,
-            cursor: currentPage === 0 ? "default" : "pointer",
-            transition: "all 0.2s",
-          }}
-          >
-            → السابق
-          </button>
-        <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "var(--fs-sm)", fontWeight: 500 }}>
-          {currentPage + 1} / {totalPages}
-        </span>
-        <button
-          type="button"
-          className="pagination-btn"
-          disabled={currentPage >= totalPages - 1}
-          onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-          style={{
-            background: currentPage >= totalPages - 1 ? "transparent" : "rgba(216,168,90,0.15)",
-            border: "1px solid rgba(216,168,90,0.2)",
-            borderRadius: "8px",
-            padding: "6px 16px",
-            color: currentPage >= totalPages - 1 ? "rgba(255,255,255,0.2)" : "#d8a85a",
-            fontSize: "var(--fs-sm)",
-            fontWeight: 600,
-            cursor: currentPage >= totalPages - 1 ? "default" : "pointer",
-            transition: "all 0.2s",
-          }}
-        >
-          التالي ←
-        </button>
-      </div>
     </section>
+    </>
   );
 }

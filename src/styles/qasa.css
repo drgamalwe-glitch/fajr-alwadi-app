@@ -1,0 +1,57 @@
+/* ==========================================================================
+   💰 ملف أنماط القاصة (Qasa & Cash Register Stylesheet)
+   ==========================================================================
+   يحتوي هذا الملف على جميع الخصائص والمتغيرات الخاصة بتبويبات القاصة والماستر.
+   يمكنك تعديل أي قيمة من المتغيرات أدناه لتغيير المظهر والخطوط والألوان فوراً.
+   ========================================================================== */
+
+.dashboard {
+  /* ─── ⚙️ متغيرات القاصة (Qasa CSS Variables) ─── */
+
+  /* حجم خط العناوين وتفاصيل المعاملات في جدول القاصة */
+  --qasa-font-size: var(--fs-md);
+
+  /* سمات أزرار تبويب القاصة والماستر (Active Tab Themes) */
+  --qasa-tab-active-bg: linear-gradient(135deg, rgba(216, 168, 90, 0.25), rgba(216, 168, 90, 0.08));
+  --qasa-tab-active-color: #d8a85a;
+  --qasa-tab-active-shadow: 0 0 20px rgba(216, 168, 90, 0.15), inset 0 1px 0 rgba(216, 168, 90, 0.15);
+
+  --master-tab-active-bg: linear-gradient(135deg, rgba(34, 197, 94, 0.18), rgba(34, 197, 94, 0.06));
+  --master-tab-active-color: #86efac;
+  --master-tab-active-shadow: 0 0 18px rgba(34, 197, 94, 0.18), inset 0 1px 0 rgba(134, 239, 172, 0.14);
+
+  /* ألوان المبالغ والعملات */
+  --qasa-usd-background: var(--red);
+  --qasa-iqd-pos-color: #d8a85a;
+  --qasa-iqd-neg-color: #f43f5e;
+
+  /* لون حدود الخلايا والجدول */
+  --qasa-border-color: rgba(255, 255, 255, 0.05);
+}
+
+/* ─── 📐 تنسيقات تبويب القاصة ─── */
+
+/* تنسيق شريط التبويبات الفرعية في القاصة */
+
+
+/* ─── 📊 تنسيقات جداول المعاملات المالية (Qasa Table Customizations) ─── */
+
+/* حجم الخط ومحاذاة النصوص داخل جدول القاصة */
+.data-table th,
+.data-table td {
+  font-size: var(--qasa-font-size) !important;
+}
+
+/* ألوان المبالغ حسب العملة ونوع العملية */
+.qasa-amount-usd {
+  color: var(--qasa-usd-color) !important;
+}
+
+.qasa-amount-iqd-pos {
+  color: var(--qasa-iqd-pos-color) !important;
+}
+
+.qasa-amount-iqd-neg {
+  color: var(--qasa-iqd-neg-color) !important;
+}
+

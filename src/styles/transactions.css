@@ -1,0 +1,94 @@
+/* ==========================================================================
+   📜 ملف أنماط سجل المعاملات (Transactions Log Stylesheet)
+   ==========================================================================
+   يحتوي هذا الملف على جميع الخصائص والمتغيرات الخاصة بتبويب سجل المعاملات.
+   يمكنك تعديل أي قيمة من المتغيرات أدناه لتغيير المظهر والخطوط والألوان فوراً.
+   ========================================================================== */
+
+.dashboard {
+  /* ─── ⚙️ متغيرات سجل المعاملات (Transactions CSS Variables) ─── */
+
+  /* حجم خط العناوين وتفاصيل المعاملات في جدول سجل المعاملات */
+  --tx-font-size: var(--fs-sm);
+
+  /* سمات وتنسيقات شارات مصادر الحركات المالية (Source Badges) */
+  /* شارة القاصة */
+  --tx-source-qasa-bg: rgba(216, 168, 90, 0.18);
+  --tx-source-qasa-color: #d8a85a;
+  --tx-source-qasa-border: 1px solid rgba(216, 168, 90, 0.25);
+
+  /* شارة الماستر */
+  --tx-source-master-bg: rgba(216, 168, 90, 0.18);
+  --tx-source-master-color: #d8a85a;
+  --tx-source-master-border: 1px solid rgba(216, 168, 90, 0.25);
+
+  /* شارة المصرف */
+  --tx-source-bank-bg: rgba(34, 197, 94, 0.18);
+  --tx-source-bank-color: #86efac;
+  --tx-source-bank-border: 1px solid rgba(34, 197, 94, 0.25);
+
+  /* شارة المصادر الأخرى المجهولة */
+  --tx-source-default-bg: rgba(255, 255, 255, 0.08);
+  --tx-source-default-color: #aaa;
+  --tx-source-default-border: 1px solid rgba(255, 255, 255, 0.1);
+
+  /* ألوان المبالغ حسب العملة ونوع العملية */
+  --tx-amount-usd-background: var(--red);
+  --tx-amount-iqd-pos-color: #d8a85a;
+  --tx-amount-iqd-neg-color: #f43f5e;
+}
+
+/* ─── 📊 تنسيقات سجل المعاملات (Transactions Table Customizations) ─── */
+
+/* حجم الخط ومحاذاة الخلايا في جدول سجل المعاملات */
+.data-table th, 
+.data-table td {
+  font-size: var(--tx-font-size) !important;
+}
+
+/* فئات شارات مصادر الحركة المالية */
+.tx-badge {
+  padding: 0.15rem 0.6rem;
+  border-radius: 6px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.tx-badge-qasa {
+  background: var(--tx-source-qasa-bg) !important;
+  color: var(--tx-source-qasa-color) !important;
+  border: var(--tx-source-qasa-border) !important;
+}
+
+.tx-badge-master {
+  background: var(--tx-source-master-bg) !important;
+  color: var(--tx-source-master-color) !important;
+  border: var(--tx-source-master-border) !important;
+}
+
+.tx-badge-bank {
+  background: var(--tx-source-bank-bg) !important;
+  color: var(--tx-source-bank-color) !important;
+  border: var(--tx-source-bank-border) !important;
+}
+
+.tx-badge-default {
+  background: var(--tx-source-default-bg) !important;
+  color: var(--tx-source-default-color) !important;
+  border: var(--tx-source-default-border) !important;
+}
+
+/* ألوان المبالغ في جدول سجل المعاملات */
+.tx-amount-usd {
+  color: var(--tx-amount-usd-color) !important;
+}
+
+.tx-amount-iqd-pos {
+  color: var(--tx-amount-iqd-pos-color) !important;
+}
+
+.tx-amount-iqd-neg {
+  color: var(--tx-amount-iqd-neg-color) !important;
+}

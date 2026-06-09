@@ -1,0 +1,108 @@
+/* ==========================================================================
+   🏅 بطاقة الدينار العراقي الفاخرة — IQD Balanced Premium Card
+   ========================================================================== */
+
+:root {
+  /* ── الأبعاد ── */
+  --iqd-width:           240px;
+  --iqd-height:          60px;
+  --iqd-radius:          var(--all-radius, 14px);
+  --iqd-padding:         0 18px;
+
+  /* ── ألوان ذهبية ملكية خافتة ── */
+  --iqd-gold-1:          #92400e;   
+  --iqd-gold-2:          #d97706;   
+  --iqd-gold-3:          #fbbf24;   
+  --iqd-gold-4:          #fde68a;   
+
+  /* ── الخلفية: تم جعلها أقل عتمة (أفتح من الكود الأول وأكثر دفئاً) ── */
+  --iqd-bg: linear-gradient(
+    135deg,
+    rgba(43, 27, 12, 0.85) 0%,     /* بني دافئ مخفف بدلاً من الأسود المعتم */
+    rgba(65, 43, 21, 0.75) 50%,    
+    rgba(146, 64, 14, 0.3) 100%
+  );
+
+  /* ── الحدود والظلال ── */
+  --iqd-border:          1px solid rgba(251, 191, 36, 0.25);
+  --iqd-border-shine:    rgba(253, 230, 138, 0.4);
+  --iqd-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.3),
+    0 1px 4px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(251, 191, 36, 0.15);
+
+  /* ── النص ── */
+  --iqd-text-color:      #fde68a;
+  --iqd-hover-lift:      -2px;
+}
+
+/* ══════════════════════════════════════════════
+   البطاقة الرئيسية
+══════════════════════════════════════════════ */
+.currency-card--iqd {
+  position: relative !important;
+  width: var(--iqd-width) !important;
+  height: var(--iqd-height) !important;
+  padding: var(--iqd-padding) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: var(--iqd-bg) !important;
+  border: var(--iqd-border) !important;
+  border-radius: var(--iqd-radius) !important;
+  box-shadow: var(--iqd-shadow) !important;
+  
+  /* تأثير زجاجي ناعم */
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  
+  overflow: hidden !important;
+  cursor: default !important;
+  
+  /* معالجة مرونة الحركة لمنع أي تعليق في المتصفحات */
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease !important;
+}
+
+/* خط علوي مضيء ثابت ومميز */
+.currency-card--iqd::after {
+  content: "" !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 15% !important;
+  right: 15% !important;
+  height: 1px !important;
+  background: linear-gradient(90deg, transparent, var(--iqd-border-shine), transparent) !important;
+  pointer-events: none !important;
+}
+
+/* نجمة كلاسيكية هادئة بدون دوران */
+.currency-card--iqd .iqd-star {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  font-size: 8px;
+  color: rgba(253, 230, 138, 0.4);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* تأثير الـ Hover */
+.currency-card--iqd:hover {
+  transform: translateY(var(--iqd-hover-lift)) !important;
+  border-color: rgba(251, 191, 36, 0.45) !important;
+  box-shadow:
+    0 12px 35px rgba(0, 0, 0, 0.4),
+    0 3px 8px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(251, 191, 36, 0.25) !important;
+}
+
+/* النص */
+.currency-card--iqd span {
+  color: var(--iqd-text-color) !important;
+  font-weight: 700 !important;
+  font-size: var(--fs-base, 1.05rem) !important;
+  letter-spacing: 0.02em !important;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5) !important;
+  position: relative !important;
+  z-index: 1 !important;
+}

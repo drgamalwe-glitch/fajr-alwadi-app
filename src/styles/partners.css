@@ -1,0 +1,160 @@
+/* ==========================================================================
+   👥 ملف أنماط حسابات العملاء والشركاء (Partners & Clients Stylesheet)
+   ==========================================================================
+   يحتوي هذا الملف على جميع الخصائص والمتغيرات الخاصة بتبويب حسابات العملاء.
+   يمكنك تعديل أي قيمة من المتغيرات أدناه لتغيير المظهر فوراً.
+   ========================================================================== */
+
+/* ─── 🎨 ألوان أنواع الحسابات (Account Kind Colors) ─── */
+/* غيّر أي لون أدناه وسيتغير تلقائياً في جميع جداول وقوائم التطبيق */
+:root {
+  --account-shareek: #D4AF37;
+  --account-mostathmir: #00B8D9;
+  --account-mumawil: #4169E1;
+  --account-moqtarid: #FF8C00;
+  --account-sharika: #8A2BE2;
+
+  --partner-sharik-color: var(--account-shareek);
+  --partner-mustathmir-color: var(--account-mostathmir);
+  --partner-mumuol-color: var(--account-mumawil);
+  --partner-moqtarid-color: var(--account-moqtarid);
+  --partner-sharika-color: var(--account-sharika);
+
+  --partner-sharik-bg: color-mix(in srgb, var(--account-shareek) 12%, transparent);
+  --partner-mustathmir-bg: color-mix(in srgb, var(--account-mostathmir) 12%, transparent);
+  --partner-mumuol-bg: color-mix(in srgb, var(--account-mumawil) 12%, transparent);
+  --partner-moqtarid-bg: color-mix(in srgb, var(--account-moqtarid) 12%, transparent);
+  --partner-sharika-bg: color-mix(in srgb, var(--account-sharika) 12%, transparent);
+
+  --partner-sharik-hover: color-mix(in srgb, var(--account-shareek) 18%, transparent);
+  --partner-mustathmir-hover: color-mix(in srgb, var(--account-mostathmir) 18%, transparent);
+  --partner-mumuol-hover: color-mix(in srgb, var(--account-mumawil) 18%, transparent);
+  --partner-moqtarid-hover: color-mix(in srgb, var(--account-moqtarid) 18%, transparent);
+  --partner-sharika-hover: color-mix(in srgb, var(--account-sharika) 18%, transparent);
+
+  --partner-row-border-width: 3px;
+}
+
+/* نقطة لونية في القوائم المنسدلة */
+.combobox-option-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+.combobox-option-dot[data-kind="شريك"] { background: var(--partner-sharik-color); }
+.combobox-option-dot[data-kind="مستثمر"] { background: var(--partner-mustathmir-color); }
+.combobox-option-dot[data-kind="ممول"] { background: var(--partner-mumuol-color); }
+.combobox-option-dot[data-kind="مقترض"] { background: var(--partner-moqtarid-color); }
+.combobox-option-dot[data-kind="شركة"] { background: var(--partner-sharika-color); }
+/* لون نص نوع الحساب في الجدول */
+.badge--kind-شريك { color: var(--account-shareek) !important; }
+.badge--kind-مستثمر { color: var(--account-mostathmir) !important; }
+.badge--kind-ممول { color: var(--account-mumawil) !important; }
+.badge--kind-مقترض { color: var(--account-moqtarid) !important; }
+.badge--kind-شركة { color: var(--account-sharika) !important; }
+
+/* لون خلفية رأس جدول المعاملات حسب نوع الحساب */
+.partner-tx-wrapper thead tr[data-kind="شريك"] th { background: color-mix(in srgb, var(--account-shareek) 15%, transparent) !important; }
+.partner-tx-wrapper thead tr[data-kind="مستثمر"] th { background: color-mix(in srgb, var(--account-mostathmir) 15%, transparent) !important; }
+.partner-tx-wrapper thead tr[data-kind="ممول"] th { background: color-mix(in srgb, var(--account-mumawil) 15%, transparent) !important; }
+.partner-tx-wrapper thead tr[data-kind="مقترض"] th { background: color-mix(in srgb, var(--account-moqtarid) 15%, transparent) !important; }
+.partner-tx-wrapper thead tr[data-kind="شركة"] th { background: color-mix(in srgb, var(--account-sharika) 15%, transparent) !important; }
+
+/* لون نص القائمة المنسدلة حسب نوع الحساب (قبل الفتح) */
+.combobox-trigger[data-kind="شريك"] { color: var(--account-shareek) !important; }
+.combobox-trigger[data-kind="مستثمر"] { color: var(--account-mostathmir) !important; }
+.combobox-trigger[data-kind="ممول"] { color: var(--account-mumawil) !important; }
+.combobox-trigger[data-kind="مقترض"] { color: var(--account-moqtarid) !important; }
+.combobox-trigger[data-kind="شركة"] { color: var(--account-sharika) !important; }
+/* صفوف الجدول حسب نوع الحساب */
+.partner-row--شركة {
+  background: var(--partner-sharika-bg) !important;
+}
+.partner-row--شركة td:first-child {
+  border-right: var(--partner-row-border-width) solid var(--partner-sharika-color) !important;
+}
+.partner-row--شركة:hover {
+  background: var(--partner-sharika-hover) !important;
+}
+
+.customers-page {
+  /* ─── ⚙️ متغيرات حسابات العملاء (Client accounts CSS Variables) ─── */
+
+  /* اللون عند المطالبة المالية (نطلبهم - لون أخضر مريح) */
+  --color-they-owe: #86efac;
+
+  /* اللون عند الالتزام المالي (يطلبونا - لون أحمر للتنبيه) */
+  --color-we-owe: #fca5a5;
+
+  /* تدرجات ألوان بطاقات الإحصائيات العلوية للديون */
+  --they-owe-card-bg: linear-gradient(145deg, rgba(212,175,55,0.22), rgba(255,215,0,0.10));
+  --we-owe-card-bg: linear-gradient(145deg, rgba(239,68,68,0.22), rgba(248,113,113,0.10));
+
+  /* ألوان الحركات المالية داخل نافذة التفاصيل المنبثقة */
+  --tx-deposit-row-bg: rgba(34, 197, 94, 0.04);
+  --tx-withdraw-row-bg: rgba(239, 68, 68, 0.04);
+
+  /* حجم الخط العام لتفاصيل ديون العملاء */
+  --customers-font-size: var(--fs-sm);
+}
+
+/* ─── 📐 تنسيقات تبويب حسابات العملاء ─── */
+
+/* بطاقات المديونية العلوية */
+.customers-page .stat-card {
+  border-radius: 12px !important;
+  padding: 1.5rem 2rem !important;
+  backdrop-filter: blur(12px) !important;
+}
+
+/* ألوان المديونية في أعمدة الجدول */
+.customers-page .col-money.text-green {
+  color: var(--color-they-owe) !important;
+}
+
+.customers-page .col-money.text-red {
+  color: var(--color-we-owe) !important;
+}
+
+/* ─── 📐 تنسيقات نافذة التفاصيل والعمليات المنبثقة (Modal Dialog) ─── */
+
+/* خلفية صفوف العمليات في نافذة التفاصيل */
+.partner-tx-row--deposit {
+  background: var(--tx-deposit-row-bg) !important;
+}
+
+.partner-tx-row--withdraw {
+  background: var(--tx-withdraw-row-bg) !important;
+}
+
+/* شارات نوع الحساب (قاصة، ماستر، مصرف) داخل المودال */
+.account-badge {
+  padding: 2px 8px !important;
+  border-radius: 6px !important;
+  font-size: var(--fs-xs) !important;
+  font-weight: var(--fw-bold) !important;
+  display: inline-block !important;
+}
+
+.account-badge--qasa {
+  background: rgba(216, 168, 90, 0.15) !important;
+  color: #d8a85a !important;
+  border: 1px solid rgba(216, 168, 90, 0.25) !important;
+}
+
+.account-badge--master {
+  background: rgba(139, 92, 246, 0.15) !important;
+  color: #a78bfa !important;
+  border: 1px solid rgba(139, 92, 246, 0.25) !important;
+}
+
+.account-badge--bank {
+  background: rgba(34, 197, 94, 0.15) !important;
+  color: #86efac !important;
+  border: 1px solid rgba(34, 197, 94, 0.25) !important;
+}
+
+

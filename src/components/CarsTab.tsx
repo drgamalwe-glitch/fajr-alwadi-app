@@ -5,13 +5,20 @@ import { carNetProfit, carProfitPercentage } from "../utils/finance";
 import { cleanAndNormalizeNumbers } from "../utils/numberInput";
 import { todayIsoDate } from "../utils/dateSegments";
 import { CarFormPanel } from "./CarFormPanel";
-import { ActionButton, PriceDisplay, TextInput } from "@/components/ui";
+import { ActionButton, PriceDisplay } from "@/components/ui";
+import { PAGE_SIZE } from "../constants";
+import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
+import "../styles/cars.css";
+import "../styles/cards.css";
+import "../styles/searching.css";
 
 interface CarsTabProps {
   cars: Car[];
   onRefresh: () => Promise<void>;
   carFormTrigger: { mode: "new" | "edit"; car?: Car } | null;
   onClearCarFormTrigger: () => void;
+  searchOpen?: boolean;
+  onSearchClose?: () => void;
 }
 
 /** وضع اللوحة الجانبية */
@@ -23,16 +30,18 @@ type CarSortKey =
   | "number"
   | "chassis"
   | "purchase"
-  | "selling";
+  | "selling"
+  | "profit";
 
 const SORT_LABELS: Record<CarSortKey, string> = {
   model: "نوع السيارة",
-  year: "سنة الصنع",
+  year: "الموديل",
   color: "اللون",
   number: "رقم السيارة",
   chassis: "رقم الشاصي",
-  purchase: "سعر الشراء",
+  purchase: "اجمالي التكلفة",
   selling: "سعر البيع",
+  profit: "الأرباح",
 };
 
 type CarsTabId = "available" | "sold";
@@ -87,9 +96,9 @@ function carToForm(car: Car): CarFormState {
     saleCurrency: (car.sale_currency as "IQD" | "USD") ?? "IQD",
     purchasePaymentType: (car.purchase_payment_type === "ماستر" ? "ماستر" : "قاصه"),
     salePaymentType: (car.sale_payment_type === "ماستر" ? "ماستر" : "قاصه"),
-    purchaseType: car.purchase_type === "دين" ? "تمويل" : ((car.purchase_type as any) ?? "كاش"),
+    purchaseType: car.purchase_type === "دين" ? "تمويل" : (car.purchase_type ?? "كاش"),
     financerName: car.financer_name ?? "",
-    commissionType: (car.commission_type as any) ?? "لا يوجد",
+    commissionType: car.commission_type ?? "لا يوجد",
     commissionValue: String(car.commission_value ?? 0),
     carPartners: (car.car_partners ?? []).map((p) => ({
       partner_name: p.partner_name,
@@ -105,18 +114,25 @@ export function CarsTab({
   onRefresh,
   carFormTrigger,
   onClearCarFormTrigger,
+  searchOpen = false,
+  onSearchClose,
 }: CarsTabProps) {
   const [form, setForm] = useState<CarFormState>(emptyForm);
   const formRef = useRef<CarFormState>(emptyForm());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode | null>(null);
   const [search, setSearch] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [searchHighlightIdx, setSearchHighlightIdx] = useState(0);
   const [carsTab, setCarsTab] = useState<CarsTabId>("available");
   const [sortConfig, setSortConfig] = useState<{ key: CarSortKey; direction: "asc" | "desc" } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [autoSaveTimer, setAutoSaveTimer] = useState<NodeJS.Timeout | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [carToDelete, setCarToDelete] = useState<Car | null>(null);
+  const [page, setPage] = useState(0);
+  const lastAvailableClickRef = useRef(0);
 
   const availableCarsList = useMemo(() => cars.filter((c) => c.status === "متوفرة"), [cars]);
   const purchaseIqd = useMemo(() => availableCarsList.filter((c) => c.currency !== "USD").reduce((sum, c) => sum + c.purchase_price, 0), [availableCarsList]);
@@ -151,8 +167,13 @@ export function CarsTab({
     if (sortConfig) {
       const sign = sortConfig.direction === "asc" ? 1 : -1;
       result = [...result].sort((a, b) => {
-        if (sortConfig.key === "purchase") return (a.purchase_price - b.purchase_price) * sign;
+        if (sortConfig.key === "purchase") {
+          const totalA = a.purchase_price + (a.expenses_sum || 0);
+          const totalB = b.purchase_price + (b.expenses_sum || 0);
+          return (totalA - totalB) * sign;
+        }
         if (sortConfig.key === "selling") return (a.selling_price - b.selling_price) * sign;
+        if (sortConfig.key === "profit") return (carNetProfit(a) - carNetProfit(b)) * sign;
         const av = sortConfig.key === "model" ? (a.car_model || a.car_name)
           : sortConfig.key === "year" ? (a.car_year ?? "")
           : sortConfig.key === "color" ? (a.color ?? "")
@@ -170,6 +191,19 @@ export function CarsTab({
     }
     return result;
   }, [cars, search, carsTab, sortConfig]);
+
+  useEffect(() => {
+    const lastPage = Math.max(0, Math.ceil(filteredCars.length / PAGE_SIZE) - 1);
+    setPage(lastPage);
+  }, [filteredCars.length, search, carsTab]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredCars.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages - 1);
+
+  const pageEntries = useMemo(
+    () => filteredCars.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE),
+    [filteredCars, currentPage]
+  );
 
   useEffect(() => {
     if (!toast) return;
@@ -241,163 +275,164 @@ export function CarsTab({
   const renderSortHeader = (key: CarSortKey) => (
     <button type="button" className="th-sort-btn" onClick={() => toggleSort(key)}>
       <span>{SORT_LABELS[key]}</span>
-      <span className="th-sort-indicator" aria-hidden>
-        {sortConfig?.key === key ? (sortConfig.direction === "asc" ? "↑" : "↓") : "↕"}
-      </span>
     </button>
   );
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.num.trim() || !form.model.trim()) {
-      showToast("يرجى إدخال رقم اللوحة والموديل");
+  /* ── الحفظ التلقائي ── */
+  useEffect(() => {
+    if (panelMode === null) return;
+    
+    // الغاء التايمر القديم
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+
+    // التحقق من المتطلبات الأساسية قبل الحفظ التلقائي
+    if (!form.num.trim() || !form.model.trim() || !Number(form.purchase)) {
       return;
     }
-    const purchaseNum = Number(form.purchase);
-    if (!purchaseNum) {
-      showToast("يرجى إدخال سعر شراء صحيح");
-      return;
-    }
-    if (form.status === "مبيوعة") {
-      const sellingNum = Number(form.selling);
-      if (!sellingNum) {
-        showToast("يرجى إدخال سعر بيع صحيح");
-        return;
-      }
-      if (form.paymentType !== "كاش") {
-        const amountPaidNum = Number(form.amountPaid);
-        if (isNaN(amountPaidNum) || amountPaidNum < 0) {
-          showToast("يرجى إدخال المقدمة المستلمة بشكل صحيح");
-          return;
-        }
-      }
-    }
+
+    const timer = setTimeout(() => {
+      void handleAutoSave();
+    }, 1000); // حفظ بعد ثانية واحدة من التوقف عن الكتابة
+
+    setAutoSaveTimer(timer);
+
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [form]);
+
+  const handleAutoSave = async () => {
+    // تحديد السيارة الأصلية قبل التعديل
+    const originalCar = cars.find((c) => c.car_number === selectedId);
+    const wasSold = originalCar?.status === "مبيوعة";
+    const isSaleOnly = isEditing && wasSold;
 
     // 🔍 تحديد ما إذا كانت هذه عملية بيع جديدة — منع تكرار الأقساط
     const isNewSale = (() => {
       if (panelMode === "new") return form.status === "مبيوعة";
-      const originalCar = cars.find((c) => c.car_number === selectedId);
       return originalCar?.status === "متوفرة" && form.status === "مبيوعة";
     })();
 
-    setSaving(true);
     try {
-      // تحديد السيارة الأصلية قبل التعديل
-      const originalCar = cars.find((c) => c.car_number === selectedId);
-      // هل كانت السيارة مبيوعة أصلاً قبل هذا التعديل
-      const wasSold = originalCar?.status === "مبيوعة";
-      // هل تحولت السيارة من متوفرة إلى مبيوعة الآن → بيع جديد
-      const isSaleOnly = isEditing && wasSold;
-
-      // أرسل بيانات السيارة للحفظ
       const carArgs = buildCarInvokeArgs(form);
-
-      // عند تعديل سيارة مبيوعة → احتفظ بتاريخ الشراء الأصلي ولا تتغيره
       if (isSaleOnly && originalCar) {
         carArgs.purchaseDate = originalCar.purchase_date ?? carArgs.purchaseDate;
       }
 
       await callTauri("add_car", carArgs);
 
-      // تَمَّتْ مَنَاقَلَةُ عَمَلِيَّةِ تَوْزِيعِ الأَرْبَاحِ إِلَى خَلْفِيَّةِ الرُّسْتِ لِتَكُونَ تِلْقَائِيَّةً وَآَمِنَةً.
-
-      // ═══════════════════════════════════════════════
-      //  Automation Pipeline — يُشتغل مرة واحدة فقط عند
-      //  أول مرة تُباع فيها السيارة (status transition)
-      // ═══════════════════════════════════════════════
-      // لا تُسجّل حركة بيع جديدة إذا كانت السيارة مبيوعة أصلاً (isSaleOnly)
       if (isNewSale && !isSaleOnly && form.status === "مبيوعة" && form.paymentType !== "كاش") {
-        const buyerName = form.buyerName.trim();
-        const phone = form.phone.trim();
-        const carLabel = form.name || form.model || "سيارة";
+        await handleSaleAutomation(form);
+      }
 
-        if (buyerName) {
-          // 1. إنشاء/تحديث ديون العميل
-          const partnerKind = "مقترض";
-          await callTauri("add_partner", { name: buyerName, phone, kind: partnerKind });
+      await onRefresh();
+      // تحديث selectedId في حال تغير رقم اللوحة (إذا كان مسموحاً)
+      if (panelMode === "edit" && form.num !== selectedId) {
+        setSelectedId(form.num);
+      }
+    } catch (err) {
+      console.error("Auto-save failed:", err);
+    }
+  };
 
-          // 2. تسديد الدفعة المستلمة (نسجل فقط الدفعة المسددة بالـ "إيداع")
-          const amountPaidNum = Number(form.amountPaid);
-          if (amountPaidNum > 0) {
-            // إيداع (التسديد الفعلي للدفعة)
+  const handleSaleAutomation = async (formData: CarFormState) => {
+    // 1. تنظيف البيانات والأسماء تماماً من المسافات الخفية في حقل البيع والمعرض
+    const buyerName = formData.buyerName.trim();
+    const phone = formData.phone.trim();
+    const carLabel = (formData.name || formData.model || "سيارة").trim();
+    
+    if (!buyerName) return;
+
+    // 2. استخدام نوع الحساب الصحيح المتوافق مع الفلترة والتحويل
+    const partnerKind = "مقترض"; 
+
+    try {
+      // استدعاء الحفظ بالاسم النظيف تماماً ليتطابق مع قيود قاعدة البيانات
+      await callTauri("add_partner", { name: buyerName, phone, kind: partnerKind });
+      
+      const amountPaidNum = Number(formData.amountPaid);
+      if (amountPaidNum > 0) {
+        await callTauri("add_partner_transaction", {
+          partnerName: buyerName,
+          kind: partnerKind,
+          type: "ايداع",
+          amount: amountPaidNum,
+          date: formData.saleDate || new Date().toISOString().slice(0, 10),
+          notes: `دفعة أولى مستلمة - بيع ${carLabel}`,
+          currency: formData.saleCurrency,
+        });
+      }
+
+      const remaining = Number(formData.amountRemaining);
+      if (remaining > 0) {
+        const existingTxns = await callTauri<PartnerTransaction[]>(
+          "get_partner_transactions",
+          { partnerName: buyerName, kind: partnerKind },
+        );
+        
+        const saleLabel = `- ${carLabel}`;
+        const alreadyLinked = existingTxns?.some((tx) => tx.notes?.includes(saleLabel));
+        
+        if (!alreadyLinked) {
+          if (formData.paymentType === "اقساط") {
+            const months = Math.max(1, Number(formData.installmentMonths) || 1);
+            const perMonth = Math.floor(remaining / months);
+            const remainder = remaining - perMonth * months;
+            const baseDate = formData.firstPaymentDate || formData.saleDate || new Date().toISOString().slice(0, 10);
+            
+            for (let i = 0; i < months; i++) {
+              const d = new Date(baseDate);
+              d.setMonth(d.getMonth() + i);
+              const amount = i === months - 1 ? perMonth + remainder : perMonth;
+              await callTauri("add_partner_transaction", {
+                partnerName: buyerName,
+                kind: partnerKind,
+                type: "سحب",
+                amount,
+                date: d.toISOString().slice(0, 10),
+                notes: `قسط ${i + 1}/${months}${saleLabel}`,
+                currency: formData.saleCurrency,
+              });
+            }
+          } else if (formData.paymentType === "موعد") {
+            const dueDate = formData.deliveryDate || formData.saleDate || new Date().toISOString().slice(0, 10);
             await callTauri("add_partner_transaction", {
               partnerName: buyerName,
               kind: partnerKind,
-              type: "ايداع",
-              amount: amountPaidNum,
-              date: form.saleDate || new Date().toISOString().slice(0, 10),
-              notes: `دفعة أولى مستلمة - بيع ${carLabel}`,
-              currency: form.saleCurrency,
+              type: "سحب",
+              amount: remaining,
+              date: dueDate,
+              notes: `موعد تسليم${saleLabel}`,
+              currency: formData.saleCurrency,
             });
-          }
-
-          // 3. المبلغ المتبقي
-          const remaining = Number(form.amountRemaining);
-          if (remaining > 0) {
-            // 🛡️ التحقق الأمني: نتأكد من عدم وجود معاملات سابقة لهذه البيعة
-            const existingTxns = await callTauri<PartnerTransaction[]>(
-              "get_partner_transactions",
-              { partnerName: buyerName, kind: partnerKind },
-            );
-            const saleLabel = `- ${carLabel}`;
-            const alreadyLinked = existingTxns?.some((tx) => tx.notes?.includes(saleLabel));
-            if (!alreadyLinked) {
-              if (form.paymentType === "اقساط") {
-                // CASE A: أقساط — تقسيم على الأشهر
-                const months = Math.max(1, Number(form.installmentMonths) || 1);
-                const perMonth = Math.floor(remaining / months);
-                const remainder = remaining - perMonth * months;
-                const baseDate = form.firstPaymentDate || form.saleDate || new Date().toISOString().slice(0, 10);
-
-                for (let i = 0; i < months; i++) {
-                  const d = new Date(baseDate);
-                  d.setMonth(d.getMonth() + i);
-                  const amount = i === months - 1 ? perMonth + remainder : perMonth;
-
-                  await callTauri("add_partner_transaction", {
-                    partnerName: buyerName,
-                    kind: partnerKind,
-                    type: "سحب",
-                    amount,
-                    date: d.toISOString().slice(0, 10),
-                    notes: `قسط ${i + 1}/${months}${saleLabel}`,
-                    currency: form.saleCurrency,
-                  });
-                }
-              } else if (form.paymentType === "موعد") {
-                // CASE B: موعد تسليم — قيد واحد
-                const dueDate = form.deliveryDate || form.saleDate || new Date().toISOString().slice(0, 10);
-                await callTauri("add_partner_transaction", {
-                  partnerName: buyerName,
-                  kind: partnerKind,
-                  type: "سحب",
-                  amount: remaining,
-                  date: dueDate,
-                  notes: `موعد تسليم${saleLabel}`,
-                  currency: form.saleCurrency,
-                });
-              }
-            }
           }
         }
       }
-
-      closePanel();
-      setCarsTab(
-        form.status === "متوفرة" ? "available" : "sold",
-      );
-      await onRefresh();
-    } catch (err) {
-      console.error(err);
-      showToast("تعذر حفظ السيارة — تحقق من البيانات");
-    } finally {
-      setSaving(false);
+    } catch (saveErr) {
+      console.error("فشل إكمال أتمتة البيع والتسجيل التلقائي:", saveErr);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await handleAutoSave();
+    closePanel();
   };
 
   const handleClosePanel = () => {
     closePanel();
   };
+
+  /* ── متابعة حالة البحث المنبثق ── */
+  useEffect(() => {
+    if (searchOpen) {
+      // تركيز حقل البحث بعد انتهاء الأنيميشن
+      const t = setTimeout(() => searchInputRef.current?.focus(), 120);
+      return () => clearTimeout(t);
+    } else {
+      setSearch("");
+    }
+  }, [searchOpen]);
 
   /* ── Esc key ── */
   useEffect(() => {
@@ -407,6 +442,10 @@ export function CarsTab({
           setShowDeleteModal(false);
           return;
         }
+        if (searchOpen) {
+          onSearchClose?.();
+          return;
+        }
         if (panelMode !== null) {
           closePanel();
         }
@@ -414,7 +453,7 @@ export function CarsTab({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [panelMode, showDeleteModal]);
+  }, [panelMode, showDeleteModal, searchOpen]);
 
   const executeTableDelete = async () => {
     if (!carToDelete) return;
@@ -436,68 +475,213 @@ export function CarsTab({
   };
 
   return (
-    <div className="cars-page" style={{ position: "relative", display: "flex", flexDirection: "column", gap: "1.25rem", flex: 1, minHeight: 0, height: "100%", overflow: "hidden" }}>
+    <div className="cars-page" style={{ position: "relative", display: "flex", flexDirection: "column", gap: 0, flex: 1, minHeight: 0, height: "100%", overflow: "hidden" }}>
       {toast && <div className="toast" role="status">{toast}</div>}
 
-      {/* ── شريط الأدوات (دائماً ظاهر) ── */}
-      <div className="cars-page__toolbar">
-        <div className="cars-page__toolbar-right" style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-          {/* تبويبات الحالة */}
-          <div className="cars-tabs">
-            {CARS_TABS.map((tab) => (
+      {/* ── نافذة البحث المنبثقة ── */}
+      {searchOpen && (
+        <div className="search-overlay" onClick={() => onSearchClose?.()}>
+          <div
+            className="search-popup"
+            onClick={(e) => e.stopPropagation()}
+            role="search"
+            aria-label="بحث في المعرض"
+          >
+            {/* ── رأس النافذة ── */}
+            <div className="search-popup__header">
+              <span className="search-popup__icon" aria-hidden>◈</span>
+              <span className="search-popup__title">بحث في المعرض</span>
+              {search.trim() && (
+                <span className="search-popup__badge">
+                  {filteredCars.length}
+                </span>
+              )}
               <button
-                key={tab.id}
                 type="button"
-                className={`cars-tab cars-tab--${tab.id} ${carsTab === tab.id ? "cars-tab--active" : ""}`}
-                onClick={() => {
+                className="search-popup__close"
+                onClick={() => onSearchClose?.()}
+                aria-label="إغلاق البحث"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* ── حقل البحث ── */}
+            <div className="search-popup__body">
+              <span className="search-popup__search-icon" aria-hidden>🔍</span>
+              <input
+                ref={searchInputRef}
+                type="search"
+                className="search-popup__input"
+                placeholder="ابحث بالموديل أو رقم اللوحة أو الشاصي أو اللون..."
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setSearchHighlightIdx(0);
+                }}
+                onKeyDown={(e) => {
+                  const results = filteredCars.slice(0, 8);
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setSearchHighlightIdx((i) => Math.min(i + 1, results.length - 1));
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setSearchHighlightIdx((i) => Math.max(i - 1, 0));
+                  } else if (e.key === "Enter" && results.length > 0) {
+                    e.preventDefault();
+                    const car = results[searchHighlightIdx] ?? results[0];
+                    onSearchClose?.();
+                    handleSingleClick(car);
+                  }
+                }}
+                autoComplete="off"
+                dir="rtl"
+              />
+              {search && (
+                <button
+                  type="button"
+                  className="search-popup__clear"
+                  onClick={() => { setSearch(""); setSearchHighlightIdx(0); }}
+                  aria-label="مسح البحث"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* ── قائمة النتائج ── */}
+            {search.trim() && (
+              <div className="search-popup__results">
+                {filteredCars.length === 0 ? (
+                  <div className="search-popup__empty">
+                    <span className="search-popup__empty-icon" aria-hidden>🚗</span>
+                    <span>لا توجد سيارات مطابقة</span>
+                  </div>
+                ) : (
+                  <ul className="search-popup__list" role="listbox">
+                    {filteredCars.slice(0, 8).map((car, resultIdx) => {
+                      const isSold = car.status === "مبيوعة";
+                      const isHighlighted = resultIdx === searchHighlightIdx;
+                      const q = search.trim();
+                      const highlight = (text: string) => {
+                        if (!q) return text;
+                        const idx = text.toLowerCase().indexOf(q.toLowerCase());
+                        if (idx === -1) return text;
+                        return (
+                          <>
+                            {text.slice(0, idx)}
+                            <mark className="search-popup__mark">{text.slice(idx, idx + q.length)}</mark>
+                            {text.slice(idx + q.length)}
+                          </>
+                        );
+                      };
+                      return (
+                        <li
+                          key={car.car_number}
+                          className={`search-popup__item${isSold ? " search-popup__item--sold" : ""}${isHighlighted ? " search-popup__item--active" : ""}`}
+                          role="option"
+                          aria-selected={isHighlighted}
+                          onMouseEnter={() => setSearchHighlightIdx(resultIdx)}
+                          onClick={() => {
+                            onSearchClose?.();
+                            handleSingleClick(car);
+                          }}
+                        >
+                          <div className="search-popup__item-main">
+                            <span className="search-popup__item-model">
+                              {highlight(car.car_model || car.car_name || "—")}
+                            </span>
+                            {car.car_year && (
+                              <span className="search-popup__item-year">{car.car_year}</span>
+                            )}
+                            <span className={`search-popup__item-status${isSold ? " sold" : " available"}`}>
+                              {isSold ? "مبيوع" : "متوفر"}
+                            </span>
+                          </div>
+                          <div className="search-popup__item-sub">
+                            <span className="search-popup__item-plate">
+                              {highlight(car.car_plate_num ?? car.car_number)}
+                            </span>
+                            {car.car_province && (
+                              <span className="search-popup__item-province">{car.car_province}</span>
+                            )}
+                            {car.color && (
+                              <span className="search-popup__item-color">
+                                <span className="search-popup__item-dot" aria-hidden>•</span>
+                                {highlight(car.color)}
+                              </span>
+                            )}
+                            {car.chassis_number && (
+                              <span className="search-popup__item-chassis">
+                                <span className="search-popup__item-dot" aria-hidden>•</span>
+                                {highlight(car.chassis_number)}
+                              </span>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                    {filteredCars.length > 8 && (
+                      <li className="search-popup__more">
+                        و {filteredCars.length - 8} سيارة أخرى...
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── شريط الأدوات (دائماً ظاهر) ── */}
+      <div className="cars-page__toolbar unified-toolbar">
+        <div className="unified-toolbar__right">
+          {/* تبويبات الحالة */}
+          <div className="cars-tabs financial-tabs">
+            {CARS_TABS.map((tab) => {
+              const isActive = carsTab === tab.id;
+
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`${tab.id === "available" ? "top-btn-one" : "top-btn-two"} ${isActive ? (tab.id === "available" ? "top-btn-one--active" : "top-btn-two--active") : ""}`.trim()}
+                  onClick={() => {
+                  if (tab.id === "available") {
+                    const now = Date.now();
+                    if (now - lastAvailableClickRef.current < 300) {
+                      lastAvailableClickRef.current = 0;
+                      startNewCar();
+                      return;
+                    }
+                    lastAvailableClickRef.current = now;
+                  }
                   if (panelMode !== null) {
                     closePanel();
                   }
                   setCarsTab(tab.id);
                 }}
               >
-                {tab.label}
-                <span className="cars-tab__count">
-                  {cars.filter((c) => tab.id === "available" ? c.status === "متوفرة" : c.status === "مبيوعة").length}
-                </span>
-              </button>
-            ))}
+                  {tab.label}
+                  <span className="cars-tab__count">
+                    {cars.filter((c) => tab.id === "available" ? c.status === "متوفرة" : c.status === "مبيوعة").length}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-
-          <ActionButton type="button" variant="primary" className="btn-new-car" onClick={startNewCar}>
-            + شراء سيارة جديدة
-          </ActionButton>
         </div>
-        <div className="cars-page__toolbar-center">
-          <TextInput
-            type="search"
-            placeholder="بحث عن سيارة..."
-            value={search}
-            inputSize="sm"
-            onFocus={() => {
-              if (panelMode !== null) {
-                closePanel();
-              }
-            }}
-            onChange={(e) => {
-              if (panelMode !== null) {
-                closePanel();
-              }
-              setSearch(e.target.value);
-            }}
-            containerClassName="min-w-[300px] w-full max-w-[420px]"
-          />
+        <div className="unified-toolbar__center">
         </div>
-        <div className="cars-page__toolbar-left" style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+        <div className="unified-toolbar__left">
           {carsTab === "available" && panelMode === null && (
             <>
-              <div className="summary-card-premium summary-card-premium--iqd">
-                <div className="summary-card-premium__label">مجموع المعرض بالدينار</div>
-                <PriceDisplay amount={purchaseIqd} />
-              </div>
-              <div className="summary-card-premium summary-card-premium--usd">
-                <div className="summary-card-premium__label">مجموع المعرض بالدولار</div>
+              <div className="currency-card currency-card--usd">
                 <PriceDisplay amount={purchaseUsd} currency="USD" />
+              </div>
+              <div className="currency-card currency-card--iqd">
+                <PriceDisplay amount={purchaseIqd} />
               </div>
             </>
           )}
@@ -509,13 +693,35 @@ export function CarsTab({
         <div
           key="list-view"
           style={{ 
-            position: "relative"
+            position: "relative",
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column"
           }}
         >
-          {/* ── التخطيط الرئيسي ── */}
-          <div className="cars-layout">
-            {/* جدول السيارات */}
-            <div className="cars-list-panel">
+          {/* العلامات الدالة على الصفحة (فوق الجدول) */}
+          {totalPages >= 1 && (
+            <div className="table-page-dots" aria-label="تنقل بين الصفحات">
+              {Array.from({ length: totalPages }, (_, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  className={`table-page-dot ${idx === currentPage ? "is-active" : ""}`}
+                  onClick={() => setPage(idx)}
+                  aria-label={`الصفحة ${idx + 1}`}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* جدول السيارات */}
+          <div
+            className="table-card-container"
+              onWheel={(e) => handlePaginationWheel(e, currentPage, totalPages, setPage)}
+              onKeyDown={(e) => handlePaginationKeyDown(e, currentPage, totalPages, setPage)}
+              tabIndex={0}
+            >
               {filteredCars.length === 0 ? (
                 <div className="cars-empty">
                   <p>لا توجد سيارات مطابقة</p>
@@ -525,19 +731,22 @@ export function CarsTab({
                   <table className="data-table cars-data-table">
                     <thead>
                       <tr>
-                        <th className="ct-model">{renderSortHeader("model")}</th>
-                        <th className="ct-year">{renderSortHeader("year")}</th>
-                        <th className="ct-color">{renderSortHeader("color")}</th>
-                        <th className="ct-num">{renderSortHeader("number")}</th>
-                        <th className="ct-chassis">{renderSortHeader("chassis")}</th>
-                        <th className="ct-price">{renderSortHeader("purchase")}</th>
-                        <th className="ct-price">{renderSortHeader("selling")}</th>
-                        <th className="ct-profit" colSpan={2}>الأرباح</th>
+                        <th className="cell-num" style={{ width: "40px" }}>ت</th>
+                        <th className={`ct-model ${sortConfig?.key === "model" ? "th--sorted" : ""}`}>{renderSortHeader("model")}</th>
+                        <th className={`ct-year ${sortConfig?.key === "year" ? "th--sorted" : ""}`}>{renderSortHeader("year")}</th>
+                        <th className={`ct-color ${sortConfig?.key === "color" ? "th--sorted" : ""}`}>{renderSortHeader("color")}</th>
+                        <th className={`ct-num ${sortConfig?.key === "number" ? "th--sorted" : ""}`}>{renderSortHeader("number")}</th>
+                        <th className={`ct-chassis ${sortConfig?.key === "chassis" ? "th--sorted" : ""}`}>{renderSortHeader("chassis")}</th>
+                        <th className={`ct-price ${sortConfig?.key === "purchase" ? "th--sorted" : ""}`}>{renderSortHeader("purchase")}</th>
+                        <th className={`ct-price ${sortConfig?.key === "selling" ? "th--sorted" : ""}`}>{renderSortHeader("selling")}</th>
+                        <th className={`ct-profit ${sortConfig?.key === "profit" ? "th--sorted" : ""}`} colSpan={2}>
+                          {renderSortHeader("profit")}
+                        </th>
                         <th className="ct-delete">حذف</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredCars.map((car) => {
+                      {pageEntries.map((car, idx) => {
                         const profit = carNetProfit(car);
                         const isSold = car.status === "مبيوعة";
                         const isSelected = selectedId === car.car_number;
@@ -549,6 +758,7 @@ export function CarsTab({
                             onClick={() => handleSingleClick(car)}
                             title="اضغط لعرض التفاصيل"
                           >
+                            <td className="cell-num">{currentPage * PAGE_SIZE + idx + 1}</td>
                             <td className="ct-model cell-bold">
                               {car.car_model || car.car_name || "—"}
                             </td>
@@ -562,7 +772,7 @@ export function CarsTab({
                             </td>
                             <td className="ct-chassis">{car.chassis_number || "—"}</td>
                             <td className="ct-price" style={{ color: car.currency === "USD" ? "#10b981" : "#d8a85a" }}>
-                              <PriceDisplay amount={car.purchase_price} currency={car.currency} />
+                              <PriceDisplay amount={car.purchase_price + (car.expenses_sum || 0)} currency={car.currency} />
                             </td>
                             <td className="ct-price" style={{ color: car.sale_currency === "USD" ? "#10b981" : "#d8a85a" }}>
                               {isSold ? (
@@ -592,13 +802,28 @@ export function CarsTab({
                           </tr>
                         );
                       })}
+                      {Array.from({ length: Math.max(0, PAGE_SIZE - pageEntries.length) }).map((_, i) => (
+                        <tr key={`empty-${i}`} style={{ pointerEvents: "none" }} className="cars-tr opacity-25">
+                          <td className="cell-num">&nbsp;</td>
+                          <td className="ct-model">&nbsp;</td>
+                          <td className="ct-year">&nbsp;</td>
+                          <td className="ct-color">&nbsp;</td>
+                          <td className="ct-num">&nbsp;</td>
+                          <td className="ct-chassis">&nbsp;</td>
+                          <td className="ct-price">&nbsp;</td>
+                          <td className="ct-price">&nbsp;</td>
+                          <td className="ct-profit">&nbsp;</td>
+                          <td className="ct-profit-pct">&nbsp;</td>
+                          <td className="ct-delete">&nbsp;</td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
               )}
+
             </div>
           </div>
-        </div>
       ) : (
         <div
           key="form-view"

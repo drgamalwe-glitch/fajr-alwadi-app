@@ -1,0 +1,518 @@
+/* ==========================================================================
+   📊 لوحة التحكم — Dashboard Stylesheet
+   ==========================================================================
+   🔧 غيّر أي متغير هنا لتخصيص التصميم كاملاً فوراً
+   ========================================================================== */
+
+/* ══════════════════════════════════════════════════════
+   🎨 متغيرات البطاقات الأربع (ألوان قابلة للتخصيص)
+══════════════════════════════════════════════════════ */
+:root {
+  /* ── بطاقة القاصة ── */
+  --dc-safe-accent:        #f59e0b;          /* اللون الرئيسي */
+  --dc-safe-glow:          rgba(245,158,11,0.18);
+  --dc-safe-border:        rgba(245,158,11,0.22);
+  --dc-safe-icon-bg:       rgba(245,158,11,0.12);
+  --dc-safe-shimmer:       rgba(245, 159, 11, 0.179);
+
+  /* ── بطاقة الماستر ── */
+  --dc-master-accent:      #818cf8;
+  --dc-master-glow:        rgba(129,140,248,0.18);
+  --dc-master-border:      rgba(129,140,248,0.22);
+  --dc-master-icon-bg:     rgba(129,140,248,0.12);
+  --dc-master-shimmer:     rgba(129,140,248,0.06);
+
+  /* ── بطاقة الأرباح ── */
+  --dc-profit-accent:      #00ffa2;
+  --dc-profit-glow:        rgba(52,211,153,0.18);
+  --dc-profit-border:      rgba(52,211,153,0.22);
+  --dc-profit-icon-bg:     rgba(52,211,153,0.12);
+  --dc-profit-shimmer:     rgba(52,211,153,0.06);
+  --dc-loss-accent:        #f87171;
+  --dc-loss-glow:          rgba(248,113,113,0.18);
+
+  /* ── بطاقة المخزون ── */
+  --dc-inventory-accent:   #22d3ee;
+  --dc-inventory-glow:     rgba(34,211,238,0.18);
+  --dc-inventory-border:   rgba(34,211,238,0.22);
+  --dc-inventory-icon-bg:  rgba(34,211,238,0.12);
+  --dc-inventory-shimmer:  rgba(34,211,238,0.06);
+
+  /* ══ ألوان بطاقات الإجراءات السريعة ══ */
+
+  /* ── شراء سيارة: ذهبي عنبري ── */
+  --dc-buy-accent:         #f59e0b;
+  --dc-buy-glow:           rgba(245,158,11,0.2);
+  --dc-buy-border:         rgba(245,158,11,0.28);
+  --dc-buy-icon-bg:        rgba(245,158,11,0.13);
+  --dc-buy-bg: linear-gradient(145deg, rgba(15,17,26,0.88) 0%, rgba(245,158,11,0.06) 100%);
+
+  /* ── بيع سيارة: أزرق فيروزي ── */
+  --dc-sell-accent:        #38bdf8;
+  --dc-sell-glow:          rgba(56,189,248,0.2);
+  --dc-sell-border:        rgba(56,189,248,0.28);
+  --dc-sell-icon-bg:       rgba(56,189,248,0.13);
+  --dc-sell-bg: linear-gradient(145deg, rgba(15,17,26,0.88) 0%, rgba(56,189,248,0.06) 100%);
+
+  /* ── تسجيل مصروف: أحمر وردي ── */
+  --dc-expense-accent:     #fb7185;
+  --dc-expense-glow:       rgba(251,113,133,0.2);
+  --dc-expense-border:     rgba(251,113,133,0.28);
+  --dc-expense-icon-bg:    rgba(251,113,133,0.13);
+  --dc-expense-bg: linear-gradient(145deg, rgba(15,17,26,0.88) 0%, rgba(251,113,133,0.06) 100%);
+
+  /* ── سحب ممول: بنفسجي ── */
+  --dc-creditor-accent:    #c084fc;
+  --dc-creditor-glow:      rgba(192,132,252,0.2);
+  --dc-creditor-border:    rgba(192,132,252,0.28);
+  --dc-creditor-icon-bg:   rgba(192,132,252,0.13);
+  --dc-creditor-bg: linear-gradient(145deg, rgba(15,17,26,0.88) 0%, rgba(192,132,252,0.06) 100%);
+
+  /* ══ ألوان بطاقتَي القسم السفلي ══ */
+
+  /* ── الأقساط والمستحقات: برتقالي نحاسي ── */
+  --dc-install-accent:     #fb923c;
+  --dc-install-glow:       rgba(251,146,60,0.2);
+  --dc-install-border:     rgba(251,146,60,0.28);
+  --dc-install-bg: linear-gradient(145deg, rgba(15,17,26,0.85) 0%, rgba(251,146,60,0.05) 100%);
+
+  /* ── الجهات الممولة: أخضر زمردي ── */
+  --dc-fund-accent:        #34d399;
+  --dc-fund-glow:          rgba(52,211,153,0.2);
+  --dc-fund-border:        rgba(52,211,153,0.28);
+  --dc-fund-bg: linear-gradient(145deg, rgba(15,17,26,0.85) 0%, rgba(52,211,153,0.05) 100%);
+
+  /* ── البطاقة العامة ── */
+  --dc-card-bg:            rgba(122, 122, 122, 0.344);
+  --dc-card-radius:        var(--all-radius, 16px);
+  --dc-card-padding:       1.35rem 1.5rem;
+  --dc-card-shadow:        0 8px 32px rgba(0,0,0,0.45);
+  --dc-card-blur:          var(--backkground-secondary-blur, 0px);
+
+  /* ── الانيميشن ── */
+  --dc-anim-duration:      0.55s;
+  --dc-anim-stagger:       0.08s;   /* التأخير بين البطاقات */
+  --dc-hover-lift:         -5px;    /* ارتفاع البطاقة عند hover */
+}
+
+/* ══════════════════════════════════════════════════════
+   🃏 البطاقة الإحصائية (Stat Card)
+══════════════════════════════════════════════════════ */
+.stat-card {
+  position: relative;
+  overflow: hidden;
+  padding: var(--dc-card-padding);
+  background: var(--dc-card-bg);
+  border-radius: var(--dc-card-radius);
+  backdrop-filter: blur(var(--dc-card-blur));
+  -webkit-backdrop-filter: blur(var(--dc-card-blur));
+  box-shadow: var(--dc-card-shadow);
+  cursor: default;
+
+  /* انيميشن الدخول */
+  animation: dc-card-in var(--dc-anim-duration) cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* تأخير تسلسلي لكل بطاقة */
+.stat-card:nth-child(1) { animation-delay: calc(var(--dc-anim-stagger) * 0); }
+.stat-card:nth-child(2) { animation-delay: calc(var(--dc-anim-stagger) * 1); }
+.stat-card:nth-child(3) { animation-delay: calc(var(--dc-anim-stagger) * 2); }
+.stat-card:nth-child(4) { animation-delay: calc(var(--dc-anim-stagger) * 3); }
+
+@keyframes dc-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(22px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ── وميض الضوء العلوي ── */
+.stat-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid var(--dc-card-border, rgba(255,255,255,0.07));
+  pointer-events: none;
+  transition: border-color 0.35s;
+}
+
+/* ── توهج خلفي ── */
+.stat-card::after {
+  content: "";
+  position: absolute;
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  top: -60px;
+  left: -40px;
+  background: var(--dc-card-shimmer, rgba(255,255,255,0.03));
+  filter: blur(40px);
+  pointer-events: none;
+  transition: opacity 0.4s;
+}
+
+/* ── hover ── */
+.stat-card:hover {
+  transform: translateY(var(--dc-hover-lift));
+  box-shadow: var(--dc-card-shadow), 0 0 40px var(--dc-card-glow, rgba(255,255,255,0.05));
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 0.28s ease;
+}
+
+.stat-card:hover::before {
+  border-color: var(--dc-card-border-hover, rgba(255,255,255,0.14));
+}
+
+/* ══════════════════════════════════════════════════════
+   🎨 ألوان البطاقات الأربع
+══════════════════════════════════════════════════════ */
+
+/* بطاقة القاصة */
+.stat-card--safe {
+  --dc-card-border:        var(--dc-safe-border);
+  --dc-card-border-hover:  var(--dc-safe-accent);
+  --dc-card-glow:          var(--dc-safe-glow);
+  --dc-card-shimmer:       var(--dc-safe-shimmer);
+  --dc-card-accent:        var(--dc-safe-accent);
+  --dc-card-icon-bg:       var(--dc-safe-icon-bg);
+  background: linear-gradient(145deg,
+    rgba(15,17,26,0.85) 0%,
+    rgba(245,158,11,0.04) 100%
+  );
+}
+
+/* بطاقة الماستر */
+.stat-card--master {
+  --dc-card-border:        var(--dc-master-border);
+  --dc-card-border-hover:  var(--dc-master-accent);
+  --dc-card-glow:          var(--dc-master-glow);
+  --dc-card-shimmer:       var(--dc-master-shimmer);
+  --dc-card-accent:        var(--dc-master-accent);
+  --dc-card-icon-bg:       var(--dc-master-icon-bg);
+  background: linear-gradient(145deg,
+    rgba(15,17,26,0.85) 0%,
+    rgba(129,140,248,0.04) 100%
+  );
+}
+
+/* بطاقة الأرباح */
+.stat-card--profit {
+  --dc-card-border:        var(--dc-profit-border);
+  --dc-card-border-hover:  var(--dc-profit-accent);
+  --dc-card-glow:          var(--dc-profit-glow);
+  --dc-card-shimmer:       var(--dc-profit-shimmer);
+  --dc-card-accent:        var(--dc-profit-accent);
+  --dc-card-icon-bg:       var(--dc-profit-icon-bg);
+  background: linear-gradient(145deg,
+    rgba(15,17,26,0.85) 0%,
+    rgba(52,211,153,0.04) 100%
+  );
+}
+
+.stat-card--profit.stat-card--loss {
+  --dc-card-border:        var(--dc-loss-glow);
+  --dc-card-border-hover:  var(--dc-loss-accent);
+  --dc-card-glow:          var(--dc-loss-glow);
+  --dc-card-accent:        var(--dc-loss-accent);
+  --dc-card-icon-bg:       rgba(248,113,113,0.12);
+  background: linear-gradient(145deg,
+    rgba(15,17,26,0.85) 0%,
+    rgba(248,113,113,0.04) 100%
+  );
+}
+
+/* بطاقة المخزون */
+.stat-card--inventory {
+  --dc-card-border:        var(--dc-inventory-border);
+  --dc-card-border-hover:  var(--dc-inventory-accent);
+  --dc-card-glow:          var(--dc-inventory-glow);
+  --dc-card-shimmer:       var(--dc-inventory-shimmer);
+  --dc-card-accent:        var(--dc-inventory-accent);
+  --dc-card-icon-bg:       var(--dc-inventory-icon-bg);
+  background: linear-gradient(145deg,
+    rgba(15,17,26,0.85) 0%,
+    rgba(34,211,238,0.04) 100%
+  );
+}
+
+/* ── قيمة الرقم الرئيسي في البطاقة ── */
+.stat-card__value {
+  font-size: var(--fs-xl, 1.6rem);
+  font-weight: 800;
+  color: var(--dc-card-accent);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  transition: color 0.3s;
+}
+
+/* ── نقطة النبض (pulse dot) على الأيقونة ── */
+.stat-card__pulse {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dc-card-accent);
+  box-shadow: 0 0 8px var(--dc-card-glow);
+  animation: dc-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes dc-pulse {
+  0%, 100% { opacity: 0.9; transform: scale(1); }
+  50%       { opacity: 0.35; transform: scale(0.7); }
+}
+
+/* ── خط الزخرفة السفلي ── */
+.stat-card__bar {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--dc-card-accent) 50%,
+    transparent 100%
+  );
+  opacity: 0.45;
+  border-radius: 0 0 var(--dc-card-radius) var(--dc-card-radius);
+  transition: opacity 0.3s;
+}
+
+.stat-card:hover .stat-card__bar {
+  opacity: 0.8;
+}
+
+/* ══════════════════════════════════════════════════════
+   ⚡ أزرار الإجراءات السريعة (Quick Buttons)
+══════════════════════════════════════════════════════ */
+.quick-btn {
+  position: relative;
+  overflow: hidden;
+  background: var(--dc-card-bg);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: var(--dc-card-radius);
+  backdrop-filter: blur(var(--dc-card-blur));
+  -webkit-backdrop-filter: blur(var(--dc-card-blur));
+  box-shadow: var(--dc-card-shadow);
+  padding: 1.1rem 0.75rem;
+  transition: transform 0.22s cubic-bezier(0.22,1,0.36,1),
+              box-shadow 0.22s ease,
+              border-color 0.22s ease;
+  animation: dc-card-in var(--dc-anim-duration) cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.quick-btn:nth-child(1) { animation-delay: calc(var(--dc-anim-stagger) * 4); }
+.quick-btn:nth-child(2) { animation-delay: calc(var(--dc-anim-stagger) * 5); }
+.quick-btn:nth-child(3) { animation-delay: calc(var(--dc-anim-stagger) * 6); }
+.quick-btn:nth-child(4) { animation-delay: calc(var(--dc-anim-stagger) * 7); }
+
+.quick-btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 0%, rgba(255,255,255,0.04), transparent 70%);
+  pointer-events: none;
+}
+
+.quick-btn:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: var(--dc-card-shadow), 0 12px 28px rgba(0,0,0,0.35);
+  border-color: rgba(255,255,255,0.14);
+}
+
+.quick-btn:active {
+  transform: translateY(-1px) scale(0.99);
+}
+
+/* ══════════════════════════════════════════════════════
+   📋 لوحات القسم السفلي (Panels)
+══════════════════════════════════════════════════════ */
+.dashboard-panel {
+  background: var(--dc-card-bg) !important;
+  border: 1px solid rgba(255,255,255,0.07) !important;
+  border-radius: var(--dc-card-radius) !important;
+  padding: 1.25rem !important;
+  backdrop-filter: blur(var(--dc-card-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--dc-card-blur)) !important;
+  box-shadow: var(--dc-card-shadow) !important;
+  animation: dc-card-in var(--dc-anim-duration) cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--dc-anim-stagger) * 8);
+}
+
+/* ── قائمة التمرير الداخلية ── */
+.dashboard-scroll-list {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0.55rem !important;
+  flex: 1 !important;
+  overflow-y: auto !important;
+  min-height: 0 !important;
+}
+
+.dashboard-scroll-list::-webkit-scrollbar       { width: 4px; }
+.dashboard-scroll-list::-webkit-scrollbar-track  { background: transparent; }
+.dashboard-scroll-list::-webkit-scrollbar-thumb  {
+  background: rgba(255,255,255,0.1);
+  border-radius: 10px;
+}
+.dashboard-scroll-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.2);
+}
+
+/* ══════════════════════════════════════════════════════
+   ⚡ ألوان بطاقات الإجراءات السريعة
+══════════════════════════════════════════════════════ */
+
+/* ── الشاكل المشترك: نقطة نبض + خط سفلي + hover ملوّن ── */
+.quick-btn--colored {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--dc-card-radius);
+  backdrop-filter: blur(var(--dc-card-blur));
+  -webkit-backdrop-filter: blur(var(--dc-card-blur));
+  box-shadow: var(--dc-card-shadow);
+  padding: 1.1rem 0.75rem;
+  transition: transform 0.22s cubic-bezier(0.22,1,0.36,1),
+              box-shadow 0.22s ease,
+              border-color 0.22s ease;
+  animation: dc-card-in var(--dc-anim-duration) cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* خط الزخرفة السفلي */
+.quick-btn--colored::before {
+  content: "";
+  position: absolute;
+  bottom: 0; right: 0; left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--qb-accent), transparent);
+  opacity: 0.5;
+  transition: opacity 0.25s;
+  border-radius: 0 0 var(--dc-card-radius) var(--dc-card-radius);
+}
+
+/* بريق علوي */
+.quick-btn--colored::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% -10%, color-mix(in srgb, var(--qb-accent) 12%, transparent) 0%, transparent 65%);
+  pointer-events: none;
+}
+
+.quick-btn--colored:hover {
+  transform: translateY(-5px) scale(1.02);
+  box-shadow: var(--dc-card-shadow), 0 0 28px var(--qb-glow);
+  border-color: var(--qb-border-hover) !important;
+}
+
+.quick-btn--colored:hover::before { opacity: 0.9; }
+
+.quick-btn--colored:active {
+  transform: translateY(-1px) scale(0.99);
+}
+
+/* ── شراء سيارة ── */
+.quick-btn--buy {
+  --qb-accent:       var(--dc-buy-accent);
+  --qb-glow:         var(--dc-buy-glow);
+  --qb-border-hover: var(--dc-buy-accent);
+  background: var(--dc-buy-bg) !important;
+  border: 1px solid var(--dc-buy-border) !important;
+}
+
+/* ── بيع سيارة ── */
+.quick-btn--sell {
+  --qb-accent:       var(--dc-sell-accent);
+  --qb-glow:         var(--dc-sell-glow);
+  --qb-border-hover: var(--dc-sell-accent);
+  background: var(--dc-sell-bg) !important;
+  border: 1px solid var(--dc-sell-border) !important;
+}
+
+/* ── تسجيل مصروف ── */
+.quick-btn--expense {
+  --qb-accent:       var(--dc-expense-accent);
+  --qb-glow:         var(--dc-expense-glow);
+  --qb-border-hover: var(--dc-expense-accent);
+  background: var(--dc-expense-bg) !important;
+  border: 1px solid var(--dc-expense-border) !important;
+}
+
+/* ── سحب ممول ── */
+.quick-btn--creditor {
+  --qb-accent:       var(--dc-creditor-accent);
+  --qb-glow:         var(--dc-creditor-glow);
+  --qb-border-hover: var(--dc-creditor-accent);
+  background: var(--dc-creditor-bg) !important;
+  border: 1px solid var(--dc-creditor-border) !important;
+}
+
+/* ══════════════════════════════════════════════════════
+   📋 ألوان لوحتَي القسم السفلي
+══════════════════════════════════════════════════════ */
+
+/* ── الأقساط والمستحقات ── */
+.dashboard-panel--install {
+  background: var(--dc-install-bg) !important;
+  border: 1px solid var(--dc-install-border) !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.dashboard-panel--install::before {
+  content: "";
+  position: absolute;
+  bottom: 0; right: 0; left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--dc-install-accent), transparent);
+  opacity: 0.5;
+}
+
+.dashboard-panel--install::after {
+  content: "";
+  position: absolute;
+  top: -40px; left: 50%;
+  transform: translateX(-50%);
+  width: 180px; height: 180px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--dc-install-glow) 0%, transparent 70%);
+  pointer-events: none;
+  animation: dc-pulse 3.5s ease-in-out infinite;
+}
+
+/* ── الجهات الممولة ── */
+.dashboard-panel--fund {
+  background: var(--dc-fund-bg) !important;
+  border: 1px solid var(--dc-fund-border) !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.dashboard-panel--fund::before {
+  content: "";
+  position: absolute;
+  bottom: 0; right: 0; left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--dc-fund-accent), transparent);
+  opacity: 0.5;
+}
+
+.dashboard-panel--fund::after {
+  content: "";
+  position: absolute;
+  top: -40px; left: 50%;
+  transform: translateX(-50%);
+  width: 180px; height: 180px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--dc-fund-glow) 0%, transparent 70%);
+  pointer-events: none;
+  animation: dc-pulse 4s ease-in-out infinite reverse;
+}

@@ -10,7 +10,7 @@ export function PriceDisplay({ amount, currency, noColor }: PriceDisplayProps) {
   const isNegative = amount < 0;
   const abs = Math.abs(amount);
   const formatted = formatNumber(abs);
-  const numColor = noColor ? "inherit" : isNegative ? "#f43f5e" : currency === "USD" ? "#10b981" : "#d8a85a";
+  const numColor = noColor ? "inherit" : isNegative ? "#f43f5e" : currency === "USD" ? "var(--usd-text-color, #10b981)" : "var(--iq-text-color, #d8a85a)";
   const symColor = numColor;
   const sign = isNegative ? "- " : "";
 

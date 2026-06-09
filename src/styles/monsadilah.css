@@ -1,0 +1,205 @@
+/* ============================================================
+   🎯 القوائم المنسدلة — منسدلة (Dropdowns)
+   
+   🔧 قابلة للتعديل — غيّر القيم في :root
+   ============================================================ */
+
+:root {
+  /* ─── حواف دائرية ─── */
+  --cmb-radius-trigger: 10px;
+  --cmb-radius-dropdown: 10px;
+
+  /* ─── ألوان ذهبية ─── */
+  --cmb-gold: #ffc40080;
+  --cmb-gold-light: #f4d03f;
+  --cmb-glow: rgba(212, 175, 55, 0.25);
+
+  /* ─── ألوان حمراء (تدرج) ─── */
+  --cmb-red: #7a0d0d;
+  --cmb-red-light: #b91c1c;
+
+  /* ─── ألوان الخلفية ─── */
+  --cmb-bg-trigger: var(--text-input);
+  --cmb-bg-dropdown: rgba(55, 55, 55, 0.939);
+  --cmb-bg-hover: var(--cmb-bg-hover);
+  --cmb-bg-active: rgba(255, 0, 0, 0);
+
+  /* ─── حدود ─── */
+  --cmb-border: 1px solid rgba(255, 255, 255, 0.235);
+
+  /* ─── ظلال ─── */
+  --cmb-shadow-trigger: 0 10px 30px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --cmb-shadow-focus: 0 0 0 1px var(--cmb-glow), 0 0 25px rgba(212, 175, 55, 0.15), 0 15px 40px rgba(0, 0, 0, 0.55);
+  --cmb-shadow-dropdown: 0 20px 60px rgba(0, 0, 0, 0.65), 0 0 30px rgba(212, 175, 55, 0.08);
+
+  /* ─── طباعة ─── */
+  --cmb-font-size: var(--font-size);
+  --cmb-height: 58px;
+  --cmb-color: #f5f5f5;
+  --cmb-placeholder: #bdbdbd;
+
+  /* ─── فراغ ─── */
+  --cmb-gap: 8px;
+  --cmb-padding-x: 18px;
+
+  /* ─── القائمة ─── */
+  --cmb-max-height: 320px;
+}
+
+/* ─── حاوية المنسدلة ─── */
+.search-select {
+  background: var(--backkground-secondary);
+  border-radius: var(--all-radius);
+}
+
+/* ─── حقل الإدخال ─── */
+.combobox-trigger {
+  width: 100%;
+  height: var(--cmb-height);
+  padding: 0 var(--cmb-padding-x);
+  border-radius: var(--cmb-radius-trigger);
+  outline: none;
+  text-align: center;
+  color: var(--cmb-color);
+  font-size: var(--cmb-font-size);
+  background: var(--cmb-bg-trigger);
+  border: var(--cmb-border);
+  box-shadow: var(--cmb-shadow-trigger);
+  transition: border-color 0.25s, box-shadow 0.25s, background 0.25s;
+  caret-color: var(--cmb-gold);
+}
+
+.combobox-trigger::placeholder {
+  color: var(--cmb-placeholder);
+}
+
+.combobox-trigger:focus {
+  border-color: var(--input-focus-border, var(--cmb-gold));
+  box-shadow: var(--input-focus-shadow, var(--cmb-shadow-focus));
+}
+
+.combobox-trigger--has-suffix {
+  padding: 0 var(--cmb-padding-x) 0 calc(var(--cmb-padding-x) + 32px);
+}
+
+/* ─── لاحقة (نسبة مئوية) ─── */
+.combobox-suffix {
+  position: absolute;
+  left: 36px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--fs-xs);
+  color: var(--cmb-gold);
+  font-weight: var(--fw-bold);
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+/* ─── سهم القائمة ─── */
+.combobox-arrow {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--cmb-gold);
+  opacity: 0.5;
+  pointer-events: none;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s;
+}
+
+.combobox-arrow--open {
+  transform: translateY(-50%) rotate(180deg);
+  opacity: 0.85;
+}
+
+.combobox-trigger:focus ~ .combobox-arrow {
+  opacity: 0.85;
+}
+
+/* ─── القائمة المنبثقة ─── */
+.combobox-dropdown {
+  position: absolute;
+  background: var(--cmb-bg-dropdown);
+  border: var(--cmb-border);
+  border-radius: var(--cmb-radius-dropdown);
+  box-shadow: var(--cmb-shadow-dropdown);
+}
+
+/* ─── المحتوى الداخلي القابل للتمرير ─── */
+.combobox-dropdown-inner {
+  max-height: var(--cmb-max-height);
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.combobox-dropdown-inner::-webkit-scrollbar {
+  width: 8px;
+}
+
+.combobox-dropdown-inner::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.combobox-dropdown-inner::-webkit-scrollbar-thumb {
+  background: var(--cmb-gold);
+  border-radius: 20px;
+}
+
+/* ─── خيارات القائمة ─── */
+.combobox-option {
+  padding: 14px 18px;
+  color: var(--cmb-color);
+  cursor: pointer;
+  border-right: 3px solid transparent;
+  transition: all 0.18s ease;
+  user-select: none;
+}
+
+.combobox-option:hover,
+.combobox-option--highlighted {
+  background: var(--cmb-bg-hover);
+  border-right-color: var(--cmb-gold);
+  padding-right: 24px;
+}
+
+.combobox-option--selected {
+  background: var(--cmb-bg-active);
+  color: white;
+  border-right-color: var(--cmb-gold);
+  box-shadow: inset 0 0 20px rgba(212, 175, 55, 0.12);
+  padding-right: 24px;
+}
+
+/* ─── رسالة لا توجد نتائج ─── */
+.combobox-no-result {
+  padding: 16px;
+  text-align: center;
+  color: var(--cmb-placeholder);
+  font-size: var(--fs-sm);
+}
+
+/* ─── زر المسح (إلغاء الاختيار) ─── */
+.combobox-clear {
+  padding: 14px 18px;
+  color: var(--cmb-red-light);
+  cursor: pointer;
+  border-right: 3px solid transparent;
+  transition: all 0.18s ease;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  margin-bottom: 2px;
+  user-select: none;
+}
+
+.combobox-clear:hover {
+  background: rgba(185, 28, 28, 0.12);
+  border-right-color: var(--cmb-red-light);
+  padding-right: 24px;
+}
+
+/* ─── sublabel ─── */
+.combobox-option-sub {
+  font-size: var(--fs-xs);
+  opacity: 0.45;
+  font-weight: var(--fw-medium);
+}

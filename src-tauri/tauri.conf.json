@@ -12,11 +12,12 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "نظام فجر الوادي لإدارة المعرض",
         "width": 1280,
         "height": 800,
-        "minWidth": 1024,
-        "minHeight": 700,
+        "minWidth": 900,
+        "minHeight": 500,
         "resizable": true,
         "fullscreen": false,
         "maximized": true

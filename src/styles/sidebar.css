@@ -1,0 +1,284 @@
+/* ==========================================================================
+   🧭 الشريط الجانبي — Sidebar Stylesheet
+   ==========================================================================
+   🔧 خصّص كل شيء من متغيرات :root أدناه فقط
+   ========================================================================== */
+
+:root {
+  /* ── خلفية الشريط ── */
+  --sb-bg:              var(--backkground-secondary);
+  --sb-blur:            10px;
+  --sb-width:           300px;
+  --sb-radius:          var(--all-radius, 18px);
+  --sb-padding:         20px 12px;
+  --sb-shadow:          0 0 60px rgba(0,0,0,0.5);
+
+  /* ── حدود الشريط ── */
+  --sb-border:          1px solid rgba(255,255,255,0.07);
+
+  /* ── توهج جانبي (الكرة الضوئية في الخلف) ── */
+  --sb-glow-color:      rgba(255, 7, 3, 0.381);
+  --sb-glow-size:       280px;
+
+  /* ── الأزرار: الحالة العادية ── */
+  --sb-btn-color:       rgba(255,255,255,0.58);
+  --sb-btn-bg:          transparent;
+  --sb-btn-radius:      12px;
+  --sb-btn-height:      46px;
+  --sb-btn-font:        var(--fs-sidebar, var(--fs-sm));
+  --sb-btn-icon-size:   18px;
+  --sb-btn-gap:         10px;
+
+  /* ── الأزرار: hover ── */
+  --sb-btn-hover-bg:    rgba(212,175,55,0.08);
+  --sb-btn-hover-color: rgba(255,255,255,0.88);
+  --sb-btn-hover-border:rgba(212,175,55,0.2);
+
+  /* ── الأزرار: active (التاب المحدد) ── */
+  --sb-btn-active-bg:   linear-gradient(135deg, rgba(212,175,55,0.14) 0%, rgba(212,175,55,0.06) 100%);
+  --sb-btn-active-color:#fff;
+  --sb-btn-active-border:rgba(212,175,55,0.45);
+  --sb-btn-active-shadow:0 4px 20px rgba(212,175,55,0.15), inset 0 1px 0 rgba(255,255,255,0.06);
+
+  /* ── ألوان أيقونات كل تاب (مُتطابقة مع بطاقات الداشبورد) ── */
+  --sb-icon-dashboard:  #f59e0b;   /* ذهبي  — لوحة التحكم */
+  --sb-icon-cars:       #818cf8;   /* بنفسجي — المعرض */
+  --sb-icon-partners:   #34d399;   /* أخضر  — حسابات العملاء */
+  --sb-icon-agencies:   #22d3ee;   /* سماوي — الوكالات */
+  --sb-icon-expenses:   #f87171;   /* أحمر  — المصروفات */
+  --sb-icon-accounts:   #fb923c;   /* برتقالي — القاصة */
+  --sb-icon-transactions:#a78bfa;  /* بنفسجي فاتح — سجل المعاملات */
+
+  /* ── الشريط الذهبي للتاب النشط (جانبي) ── */
+  --sb-active-bar-color: #d4af37;
+  --sb-active-bar-width: 3px;
+
+  /* ── خط الفاصل بين اللوغو والقائمة ── */
+  --sb-divider:         rgba(255,255,255,0.07);
+}
+
+/* ══════════════════════════════════════════════════════
+   هيكل الشريط الجانبي
+══════════════════════════════════════════════════════ */
+.app-sidebar {
+  position: relative !important;
+  width: var(--sb-width) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  padding: var(--sb-padding) !important;
+  background: var(--sb-bg) !important;
+  backdrop-filter: blur(var(--sb-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--sb-blur)) !important;
+  border: var(--sb-border) !important;
+  border-radius: var(--sb-radius) !important;
+  box-shadow: var(--sb-shadow) !important;
+  overflow: hidden !important;
+  animation: sb-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes sb-in {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── الحد المضيء الرفيع من الأعلى ── */
+.app-sidebar::before {
+  content: "" !important;
+  display: block !important;
+  position: absolute !important;
+  inset: 0 !important;
+  border-radius: inherit !important;
+  border: 1px solid rgba(212,175,55,0.1) !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+}
+
+/* ── توهج ذهبي داخلي من الأعلى ── */
+.app-sidebar::after {
+  content: "" !important;
+  display: block !important;
+  position: absolute !important;
+  top: -60px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  width: var(--sb-glow-size) !important;
+  height: var(--sb-glow-size) !important;
+  border-radius: 50% !important;
+  background: var(--sb-glow-color) !important;
+  filter: blur(50px) !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+  animation: sb-glow-pulse 4s ease-in-out infinite !important;
+}
+
+@keyframes sb-glow-pulse {
+  0%, 100% { opacity: 0.7; transform: translateX(-50%) scale(1); }
+  50%       { opacity: 1;   transform: translateX(-50%) scale(1.1); }
+}
+
+/* ── توهج سفلي خفيف ── */
+.sidebar-glow {
+  display: block !important;
+  position: absolute !important;
+  bottom: -80px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  width: 160px !important;
+  height: 160px !important;
+  border-radius: 50% !important;
+  background: rgba(129,140,248,0.08) !important;
+  filter: blur(40px) !important;
+  pointer-events: none !important;
+  animation: sb-glow-pulse 5s ease-in-out infinite reverse !important;
+}
+
+/* ══════════════════════════════════════════════════════
+   اللوغو والرأس
+══════════════════════════════════════════════════════ */
+.sidebar-header {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  padding-bottom: 14px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--sb-divider);
+}
+
+/* ══════════════════════════════════════════════════════
+   قائمة التنقل
+══════════════════════════════════════════════════════ */
+.sidebar-nav {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+/* ── زر التاب ── */
+.app-sidebar .nav-btn {
+  position: relative;
+  width: 100%;
+  height: var(--sb-btn-height);
+  display: flex;
+  align-items: center;
+  gap: var(--sb-btn-gap);
+  padding: 0 12px;
+  border-radius: var(--sb-btn-radius);
+  background: var(--sb-btn-bg);
+  border: 1px solid transparent;
+  color: var(--sb-btn-color);
+  font-size: var(--sb-btn-font);
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.22s ease,
+    color 0.22s ease,
+    border-color 0.22s ease,
+    box-shadow 0.22s ease,
+    transform 0.18s cubic-bezier(0.22,1,0.36,1);
+  text-align: right;
+  direction: rtl;
+  overflow: hidden;
+}
+
+/* ── شريط اللون الجانبي ── */
+.app-sidebar .nav-btn::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 20%;
+  height: 60%;
+  width: var(--sb-active-bar-width);
+  border-radius: 10px 0 0 10px;
+  background: var(--sb-btn-icon-color, var(--sb-active-bar-color));
+  opacity: 0;
+  transform: scaleY(0.4);
+  transition: opacity 0.22s, transform 0.22s cubic-bezier(0.22,1,0.36,1);
+}
+
+/* ── توهج hover خلفي ── */
+.app-sidebar .nav-btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(ellipse at 80% 50%, var(--sb-btn-hover-bg) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.25s;
+  pointer-events: none;
+}
+
+.app-sidebar .nav-btn:hover::after { opacity: 1; }
+
+/* ── hover ── */
+.app-sidebar .nav-btn:hover {
+  background: var(--sb-btn-hover-bg);
+  color: var(--sb-btn-hover-color);
+  border-color: var(--sb-btn-hover-border);
+  transform: translateX(-2px);
+}
+
+/* ── التاب النشط ── */
+.app-sidebar .nav-btn--active {
+  background: var(--sb-btn-active-bg) !important;
+  color: var(--sb-btn-active-color) !important;
+  border-color: var(--sb-btn-active-border) !important;
+  box-shadow: var(--sb-btn-active-shadow) !important;
+  transform: translateX(-2px) !important;
+}
+
+.app-sidebar .nav-btn--active::before {
+  opacity: 1 !important;
+  transform: scaleY(1) !important;
+}
+
+.app-sidebar .nav-btn:active {
+  transform: translateX(-1px) scale(0.98);
+}
+
+/* ── أيقونة التاب ── */
+.app-sidebar .nav-btn__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: var(--sb-btn-icon-size);
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.05);
+  transition: background 0.22s, box-shadow 0.22s, color 0.22s;
+}
+
+.app-sidebar .nav-btn--active .nav-btn__icon,
+.app-sidebar .nav-btn:hover .nav-btn__icon {
+  background: rgba(255,255,255,0.08);
+}
+
+/* ── ألوان أيقونات كل تاب ── */
+.app-sidebar .nav-btn[data-tab="dashboard"]    { --sb-btn-icon-color: var(--sb-icon-dashboard); }
+.app-sidebar .nav-btn[data-tab="cars"]         { --sb-btn-icon-color: var(--sb-icon-cars); }
+.app-sidebar .nav-btn[data-tab="partners-financial"] { --sb-btn-icon-color: var(--sb-icon-partners); }
+.app-sidebar .nav-btn[data-tab="agencies"]     { --sb-btn-icon-color: var(--sb-icon-agencies); }
+.app-sidebar .nav-btn[data-tab="expenses"]     { --sb-btn-icon-color: var(--sb-icon-expenses); }
+.app-sidebar .nav-btn[data-tab="financial-accounts"] { --sb-btn-icon-color: var(--sb-icon-accounts); }
+.app-sidebar .nav-btn[data-tab="financial-transactions"] { --sb-btn-icon-color: var(--sb-icon-transactions); }
+
+/* تلوين الأيقونة بلونها الخاص عند التنشيط */
+.app-sidebar .nav-btn--active .nav-btn__icon,
+.app-sidebar .nav-btn:hover .nav-btn__icon {
+  color: var(--sb-btn-icon-color, var(--sb-active-bar-color));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--sb-btn-icon-color, #d4af37) 40%, transparent);
+}
+
+/* نص التاب */
+.app-sidebar .nav-btn__label {
+  flex: 1;
+  text-align: right;
+  letter-spacing: 0.01em;
+  font-size: var(--sb-btn-font);
+}

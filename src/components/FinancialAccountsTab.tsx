@@ -3,36 +3,15 @@ import { callTauri } from "../api/tauri";
 import type { CashRegisterEntry } from "../types";
 import { CashRegisterTab } from "./CashRegisterTab";
 import { PriceDisplay } from "@/components/ui";
+import "../styles/qasa.css";
+import "../styles/cards.css";
 
-type PaymentTab = "قاصه" | "ماستر" | "ممول";
+type PaymentTab = "قاصه" | "ماستر";
 
 const PAYMENT_TABS: { id: PaymentTab; label: string }[] = [
   { id: "قاصه", label: "قاصه" },
   { id: "ماستر", label: "ماستر" },
-  { id: "ممول", label: "الممولون" },
 ];
-
-const TAB_THEMES: Record<PaymentTab, {
-  activeBg: string;
-  activeColor: string;
-  activeShadow: string;
-}> = {
-  قاصه: {
-    activeBg: "linear-gradient(135deg, rgba(216,168,90,0.25), rgba(216,168,90,0.08))",
-    activeColor: "#d8a85a",
-    activeShadow: "0 0 20px rgba(216,168,90,0.15), inset 0 1px 0 rgba(216,168,90,0.15)",
-  },
-  ماستر: {
-    activeBg: "linear-gradient(135deg, rgba(216,168,90,0.25), rgba(216,168,90,0.08))",
-    activeColor: "#d8a85a",
-    activeShadow: "0 0 20px rgba(216,168,90,0.15), inset 0 1px 0 rgba(216,168,90,0.15)",
-  },
-  ممول: {
-    activeBg: "linear-gradient(135deg, rgba(139,92,246,0.25), rgba(139,92,246,0.08))",
-    activeColor: "#a78bfa",
-    activeShadow: "0 0 20px rgba(139,92,246,0.15), inset 0 1px 0 rgba(139,92,246,0.15)",
-  },
-};
 
 
 export function FinancialAccountsTab() {
@@ -67,35 +46,20 @@ export function FinancialAccountsTab() {
 
 
   return (
-    <div className="dashboard">
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: "1rem",
-        marginBottom: "1.5rem",
-        flexWrap: "wrap",
-      }}>
-        <h2 className="page-intro__title" style={{ margin: 0, fontSize: "1.5rem" }}>القاصة</h2>
-
-        {loadingBalance ? (
-          <span style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.85rem" }}>جاري التحميل...</span>
-        ) : (
-          <>
-            <div className="financial-tabs" style={{ display: "inline-flex" }}>
+    <div className="dashboard financial-accounts-shell" data-active-tab={activeTab}>
+      <div className="cars-page__toolbar unified-toolbar">
+        <div className="unified-toolbar__right">
+          {!loadingBalance && (
+            <div className="financial-tabs">
               {PAYMENT_TABS.map((tab) => {
                 const isActive = activeTab === tab.id;
-                const theme = TAB_THEMES[tab.id];
                 return (
                   <button
                     key={tab.id}
                     type="button"
-                    className={`financial-tab ${isActive ? "financial-tab--active-custom" : ""}`}
-                    style={isActive ? {
-                      background: theme.activeBg,
-                      color: theme.activeColor,
-                      boxShadow: theme.activeShadow,
-                    } : {}}
+                    role="tab"
+                    aria-selected={isActive}
+                    className={`${tab.id === "قاصه" ? "top-btn-one" : "top-btn-two"} ${isActive ? (tab.id === "قاصه" ? "top-btn-one--active" : "top-btn-two--active") : ""}`.trim()}
                     onClick={() => setActiveTab(tab.id)}
                   >
                     {tab.label}
@@ -103,32 +67,29 @@ export function FinancialAccountsTab() {
                 );
               })}
             </div>
-
-            <div style={{
-              display: "flex",
-              gap: "0.75rem",
-              alignItems: "center",
-            }}>
-              <div className="summary-card-premium summary-card-premium--iqd">
-                <div className="summary-card-premium__label">
-                  {activeTab === "ممول" ? "صافي الممولين بالدينار" : "الدينار العراقي"}
-                </div>
-                <PriceDisplay amount={iqdBalance} />
-              </div>
-              <div className="summary-card-premium summary-card-premium--usd">
-                <div className="summary-card-premium__label">
-                  {activeTab === "ممول" ? "صافي الممولين بالدولار" : "الدولار الامريكي"}
-                </div>
+          )}
+        </div>
+        <div className="unified-toolbar__center">
+          {loadingBalance && (
+            <span style={{ color: "rgba(255,255,255,0.4)", fontSize: "var(--fs-sm)" }}>جاري التحميل...</span>
+          )}
+        </div>
+        <div className="unified-toolbar__left">
+          {!loadingBalance && (
+            <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+              <div className="currency-card currency-card--usd">
                 <PriceDisplay amount={usdBalance} currency="USD" />
               </div>
+              <div className="currency-card currency-card--iqd">
+                <PriceDisplay amount={iqdBalance} />
+              </div>
             </div>
-          </>
-        )}
+          )}
+        </div>
       </div>
 
       {activeTab === "قاصه" && <CashRegisterTab paymentType="قاصه" />}
       {activeTab === "ماستر" && <CashRegisterTab paymentType="ماستر" />}
-      {activeTab === "ممول" && <CashRegisterTab paymentType="ممول" />}
     </div>
   );
 }

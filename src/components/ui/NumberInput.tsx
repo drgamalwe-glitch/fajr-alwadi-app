@@ -178,7 +178,7 @@ const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(
               props.onBlur?.(e);
             }}
             className={cn(
-              "app-input-field w-20 bg-transparent text-left text-xl font-bold tabular-nums text-white outline-none",
+              "app-input-field w-20 bg-transparent text-center text-xl font-bold tabular-nums text-white outline-none",
               "placeholder:text-white/35",
               className,
             )}

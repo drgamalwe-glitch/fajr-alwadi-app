@@ -84,6 +84,10 @@ const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
               id={id}
               value={value}
               placeholder={showFloating || !label ? placeholder : undefined}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
               onFocus={(e) => {
                 setIsFocused(true);
                 props.onFocus?.(e);
@@ -93,7 +97,7 @@ const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
                 props.onBlur?.(e);
               }}
               className={cn(
-                "w-full bg-transparent text-white outline-none placeholder:text-white/35",
+                "w-full bg-transparent text-white outline-none placeholder:text-white/35 text-center",
                 "file:mr-2 file:rounded-pill file:border-0 file:bg-white/10 file:px-3 file:py-1 file:text-xs file:font-bold file:text-text-secondary file:transition-colors hover:file:bg-white/20",
                 inputSize === "sm" ? "app-input-field-sm text-sm font-semibold" : "app-input-field text-xl font-bold",
                 className,

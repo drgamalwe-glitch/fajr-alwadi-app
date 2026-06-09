@@ -110,7 +110,33 @@ export interface CashRegisterEntry {
   currency?: string | null;
 }
 
-export type TabId = "dashboard" | "cars" | "partners" | "partners-financial" | "debtors" | "cashregister" | "expenses" | "financial-accounts" | "financial-transactions";
+export interface Agency {
+  id: number;
+  old_agent_name: string;
+  car_number: string;
+  car_model: string;
+  color: string;
+  new_agent_name: string;
+  phone: string;
+  amount_usd: number;
+  amount_iqd: number;
+  notes: string;
+  date: string;
+  time: string;
+}
+
+export interface AgencyTransaction {
+  id: number;
+  agency_id: number;
+  date: string;
+  time: string;
+  type_: string;
+  amount: number;
+  currency?: string | null;
+  notes: string | null;
+}
+
+export type TabId = "dashboard" | "cars" | "partners" | "partners-financial" | "debtors" | "cashregister" | "expenses" | "financial-accounts" | "financial-transactions" | "agencies";
 
 export interface FinancialSummary {
   iqd_balance: number;
@@ -149,9 +175,10 @@ export interface CarFormState {
   saleCurrency: "IQD" | "USD";
   purchasePaymentType: "قاصه" | "ماستر";
   salePaymentType: "قاصه" | "ماستر";
-  purchaseType: "كاش" | "شراكه" | "تمويل";
+  purchaseType: "كاش" | "شراكه" | "تمويل" | "شركة";
   financerName: string;
   commissionType: "نسبة" | "مقطوع" | "لا يوجد";
   commissionValue: string;
   carPartners: { partner_name: string; amount: string; currency: "IQD" | "USD"; kind?: string }[];
+  oldNum?: string;
 }

@@ -23,6 +23,7 @@ interface PriceInputProps {
   required?: boolean;
   tabIndex?: number;
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  onBlur?: () => void;
 }
 
 const currencyConfig = {
@@ -53,6 +54,7 @@ export function PriceInput({
   required = false,
   tabIndex,
   onKeyDown: externalOnKeyDown,
+  onBlur: externalOnBlur,
 }: PriceInputProps) {
   const [internalCurrency, setInternalCurrency] = useState<Currency>("IQD");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -208,6 +210,10 @@ export function PriceInput({
             placeholder={placeholder}
             required={required}
             disabled={disabled}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
             onBlur={() => {
               const currentVal = latestFloatValue.current;
               if (currentVal !== undefined && currentVal < min) {
@@ -215,11 +221,12 @@ export function PriceInput({
               } else if ((value === "" || currentVal === undefined) && required) {
                 onChange(String(min));
               }
+              externalOnBlur?.();
             }}
             tabIndex={tabIndex}
             onKeyDown={handleKeyDown}
             onClick={handleInputClick}
-            className="app-input-field w-full min-w-0 bg-transparent text-xl font-bold text-white placeholder:text-white/35 outline-none py-0 px-4 text-right flex-1"
+            className="app-input-field w-full min-w-0 bg-transparent text-xl font-bold text-white placeholder:text-white/35 outline-none py-0 px-4 text-center flex-1"
             dir="ltr"
           />
         </div>

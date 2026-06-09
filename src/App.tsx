@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { callTauri } from "./api/tauri";
 import { BrandLogo } from "./components/BrandLogo";
 import { CarsTab } from "./components/CarsTab";
@@ -8,14 +8,20 @@ import { ExpensesTab } from "./components/ExpensesTab";
 import { FinancialAccountsTab } from "./components/FinancialAccountsTab";
 import { FinancialTransactionsTab } from "./components/FinancialTransactionsTab";
 import { PartnersTab } from "./components/PartnersTab";
+import { AgenciesTab } from "./components/AgenciesTab";
+import { ActionButton } from "@/components/ui";
 import type { Car, Partner, TabId } from "./types";
-import "./App.css";
+import "./styles/App.css";
+import "./styles/buttons.css";
+import "./styles/tables.css";
+import "./styles/inputfieal.css";
 
 // Ordered list of tabs — matches sidebar order top → bottom
 const TAB_IDS: TabId[] = [
   "dashboard",
   "cars",
   "partners-financial",
+  "agencies",
   "expenses",
   "financial-accounts",
   "financial-transactions",
@@ -25,36 +31,20 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
 
   const [carFormTrigger, setCarFormTrigger] = useState<{ mode: "new" | "edit"; car?: Car } | null>(null);
+  const [carsSearchOpen, setCarsSearchOpen] = useState(false);
+  const [partnersSearchOpen, setPartnersSearchOpen] = useState(false);
+  const [partnerActions, setPartnerActions] = useState<{ onDeposit: () => void; onWithdraw: () => void } | null>(null);
+  const [agenciesSearchOpen, setAgenciesSearchOpen] = useState(false);
   const [cars, setCars] = useState<Car[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-
-  // Keep a ref of activeTab so the scroll handler always sees the latest value
-  const activeTabRef = useRef(activeTab);
-  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
-
   // Navigate to a tab
   const navigateTo = useCallback((nextTab: TabId) => {
     setActiveTab(nextTab);
+    setPartnerActions(null);
   }, []);
-
-  // Called from Header onWheel: deltaY > 0 = scroll down → go lower in sidebar
-  const handleSidebarScroll = useCallback((deltaY: number) => {
-    const currentIndex = TAB_IDS.indexOf(activeTabRef.current);
-    if (deltaY > 0) {
-      // Scroll down → next tab (lower in sidebar)
-      if (currentIndex < TAB_IDS.length - 1) {
-        navigateTo(TAB_IDS[currentIndex + 1]);
-      }
-    } else {
-      // Scroll up → previous tab (higher in sidebar)
-      if (currentIndex > 0) {
-        navigateTo(TAB_IDS[currentIndex - 1]);
-      }
-    }
-  }, [navigateTo]);
 
   // Manual tab click: decide direction by comparing indices
   const handleTabChange = useCallback((nextTab: TabId) => {
@@ -94,6 +84,32 @@ export default function App() {
     void refreshData();
   }, [refreshData]);
 
+  // فتح مربع البحث بـ Space عندما لا يكون التركيز في حقل نص
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      const tag = (document.activeElement?.tagName ?? "").toLowerCase();
+      const isEditable =
+        tag === "input" ||
+        tag === "textarea" ||
+        tag === "select" ||
+        (document.activeElement as HTMLElement)?.isContentEditable;
+      if (isEditable) return;
+
+      e.preventDefault();
+
+      if (activeTab === "cars") {
+        setCarsSearchOpen(true);
+      } else if (activeTab === "partners-financial") {
+        setPartnersSearchOpen(true);
+      } else if (activeTab === "agencies") {
+        setAgenciesSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeTab]);
+
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     event.currentTarget.style.setProperty("--mx", `${event.clientX}px`);
     event.currentTarget.style.setProperty("--my", `${event.clientY}px`);
@@ -112,7 +128,11 @@ export default function App() {
       <Header
         activeTab={activeTab}
         onTabChange={handleTabChange}
-        onSidebarScroll={handleSidebarScroll}
+        onCarsSearchToggle={() => setCarsSearchOpen((v) => !v)}
+        onPartnersSearchToggle={() => setPartnersSearchOpen((v) => !v)}
+        onAgenciesSearchToggle={() => setAgenciesSearchOpen((v) => !v)}
+        onDeposit={partnerActions?.onDeposit}
+        onWithdraw={partnerActions?.onWithdraw}
       />
 
       <div className="app-content">
@@ -154,13 +174,31 @@ export default function App() {
                   onRefresh={refreshData}
                   carFormTrigger={carFormTrigger}
                   onClearCarFormTrigger={() => setCarFormTrigger(null)}
+                  searchOpen={carsSearchOpen}
+                  onSearchClose={() => setCarsSearchOpen(false)}
                 />
               )}
               {activeTab === "partners" && <PartnersTab partners={partners} onRefresh={refreshData} kind="شريك" />}
-              {activeTab === "partners-financial" && <PartnersTab partners={partners} onRefresh={refreshData} kind="partners-financial" />}
+              {activeTab === "partners-financial" && (
+                <PartnersTab
+                  partners={partners}
+                  onRefresh={refreshData}
+                  kind="partners-financial"
+                  partnersSearchOpen={partnersSearchOpen}
+                  onPartnersSearchClose={() => setPartnersSearchOpen(false)}
+                  onPartnerActionsChange={setPartnerActions}
+                />
+              )}
               {activeTab === "debtors" && <PartnersTab partners={partners} onRefresh={refreshData} kind="مطلوب" />}
               {activeTab === "expenses" && <ExpensesTab />}
               {activeTab === "financial-accounts" && <FinancialAccountsTab />}
+              {activeTab === "agencies" && (
+                <AgenciesTab
+                  onRefresh={refreshData}
+                  agenciesSearchOpen={agenciesSearchOpen}
+                  onAgenciesSearchClose={() => setAgenciesSearchOpen(false)}
+                />
+              )}
               {activeTab === "financial-transactions" && <FinancialTransactionsTab />}
             </div>
           </main>
@@ -171,12 +209,10 @@ export default function App() {
         <div className="footer-dev">
           <span className="footer-dev__label">تم تطوير البرنامج بواسطة :-</span>
           <span className="footer-dev__name">سيد ضرغام العلوي</span>
-          <a href="tel:07806539291" className="footer-dev__phone" dir="ltr">07806539291</a>
         </div>
         <div className="footer-brand" dir="ltr">
           <span className="footer-brand__dot" aria-hidden>✦</span>
           <span className="footer-brand__text">FAJIR ALWADI CAR TRADING</span>
-          <span className="footer-brand__year">2026</span>
         </div>
       </footer>
     </div>

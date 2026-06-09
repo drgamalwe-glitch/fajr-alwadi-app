@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::{env, sync::Mutex};
 use tauri::{Manager, State};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -114,6 +114,35 @@ pub struct CashRegisterEntry {
     pub notes: Option<String>,
     pub balance: f64,
     pub currency: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Agency {
+    pub id: i64,
+    pub old_agent_name: String,
+    pub car_number: String,
+    pub car_model: String,
+    pub color: String,
+    pub new_agent_name: String,
+    pub phone: String,
+    pub amount_usd: f64,
+    pub amount_iqd: f64,
+    pub notes: String,
+    pub date: String,
+    pub time: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AgencyTransaction {
+    pub id: i64,
+    pub agency_id: i64,
+    pub date: String,
+    pub time: String,
+    #[serde(rename = "type_")]
+    pub type_: String,
+    pub amount: f64,
+    pub currency: Option<String>,
+    pub notes: Option<String>,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -324,6 +353,39 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         [],
     )?;
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS agencies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            old_agent_name TEXT NOT NULL,
+            car_number TEXT NOT NULL DEFAULT '',
+            car_model TEXT NOT NULL DEFAULT '',
+            color TEXT NOT NULL DEFAULT '',
+            new_agent_name TEXT NOT NULL,
+            phone TEXT NOT NULL DEFAULT '',
+            amount_usd REAL NOT NULL DEFAULT 0.0,
+            amount_iqd REAL NOT NULL DEFAULT 0.0,
+            notes TEXT NOT NULL DEFAULT '',
+            date TEXT NOT NULL,
+            time TEXT NOT NULL
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS agency_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agency_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            time TEXT NOT NULL DEFAULT '00:00',
+            type_ TEXT NOT NULL,
+            amount REAL NOT NULL,
+            currency TEXT DEFAULT 'IQD',
+            notes TEXT,
+            FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
     // ترقيم قاعدة البيانات للترحيل
     conn.execute(
         "CREATE TABLE IF NOT EXISTS db_version (version INTEGER PRIMARY KEY)",
@@ -404,9 +466,22 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         let _ = conn.execute("INSERT INTO db_version (version) VALUES (3)", []);
     }
 
+    // Performance indexes
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_cars_status ON cars(status)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_cars_purchase_type ON cars(purchase_type)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_partner_transactions_partner ON partner_transactions(partner_name, kind)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_partner_transactions_date ON partner_transactions(date)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_cash_register_date ON cash_register(date)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_cash_register_type ON cash_register(type)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_car_expenses_car ON car_expenses(car_number)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_car_partners_car ON car_partners(car_number)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_cars_plate ON cars(car_plate_num)", []);
+
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 fn add_car(
     state: State<AppState>,
@@ -547,7 +622,7 @@ fn add_car(
         .prepare("SELECT partner_name FROM partners WHERE kind = 'شريك' AND partner_name != 'فجر الوادي'")
         .map_err(|e| e.to_string())?;
     let mut partners_list = partners_stmt
-        .query_map([], |row| Ok(row.get::<_, String>(0)?))
+        .query_map([], |row| row.get::<_, String>(0))
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<String>, _>>()
         .map_err(|e| e.to_string())?;
@@ -626,80 +701,53 @@ fn add_car(
         }
     }
 
-    // التأكد من وجود حركات شراء قديمة — إن وُجدت، نَحتفظ بها ولا نعيد إنشاءها
-    let exists: bool = db
-        .query_row(
-            "SELECT COUNT(1) FROM partner_transactions WHERE notes = ?1 OR notes = ?2",
-            [&new_purchase_note, &new_debt_note],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0)
-        > 0;
+    // حذف حركات الشراء القديمة ثم إعادة إنشائها حسب نوع الشراء الحالي
+    db.execute(
+        "DELETE FROM partner_transactions WHERE notes = ?1 OR notes = ?2",
+        params![&new_purchase_note, &new_debt_note],
+    )
+    .map_err(|e| e.to_string())?;
 
-    if !exists {
-        // لا توجد حركات شراء قديمة → هذه أول مرة تُنشأ فيها السيارة، نُسجّل حركات الشراء
-        if purchase_type.as_deref() == Some("شراكه") {
-            if let Some(partners) = &car_partners {
-                for partner in partners {
-                    let p_name = partner.partner_name.trim();
-                    if p_name == "فجر الوادي" {
-                        let amount_per_partner = partner.amount / n_partners;
-                        for sub_p in &partners_list {
-                            db.execute(
-                            "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, 'شريك')",
-                            [sub_p],
-                        )
-                        .map_err(|e| e.to_string())?;
-
-                            let note = format!("سحب شراء سيارة {} {}", name.trim(), chassis.trim())
-                                .trim()
-                                .replace("  ", " ");
-
-                            db.execute(
-                            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
-                             VALUES (?1, 'شريك', 'سحب شراء سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, ?6)",
-                            params![
-                                sub_p,
-                                amount_per_partner,
-                                purchase_date.as_deref().unwrap_or(""),
-                                note,
-                                partner.currency.trim(),
-                                purchase_payment_type.as_deref().unwrap_or("قاصه"),
-                            ],
-                        )
-                        .map_err(|e| e.to_string())?;
-                        }
-                    } else {
-                        let p_kind = partner.kind.as_deref().unwrap_or("شريك");
+    if purchase_type.as_deref() == Some("شراكه") {
+        let expenses_sum: f64 = db
+            .query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+                [car_number.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+        let total_amount = purchase + expenses_sum;
+        let total_partner_amounts: f64 = car_partners
+            .as_ref()
+            .map(|p| p.iter().map(|x| x.amount).sum())
+            .unwrap_or(0.0);
+        if let Some(partners) = &car_partners {
+            for partner in partners {
+                let p_name = partner.partner_name.trim();
+                let share = if total_partner_amounts > 0.0 {
+                    (partner.amount / total_partner_amounts) * total_amount
+                } else {
+                    total_amount / partners.len() as f64
+                };
+                if p_name == "فجر الوادي" {
+                    let amount_per_partner = share / n_partners;
+                    for sub_p in &partners_list {
                         db.execute(
-                        "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, ?2)",
-                        params![p_name, p_kind],
+                        "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, 'شريك')",
+                        [sub_p],
                     )
                     .map_err(|e| e.to_string())?;
 
-                        let tx_type = if p_kind == "مطلوب" {
-                            "ايداع"
-                        } else {
-                            "سحب شراء سيارة"
-                        };
-                        let note = if p_kind == "مطلوب" {
-                            format!("تمويل شراء سيارة {} {}", name.trim(), chassis.trim())
-                                .trim()
-                                .replace("  ", " ")
-                        } else {
-                            format!("سحب شراء سيارة {} {}", name.trim(), chassis.trim())
-                                .trim()
-                                .replace("  ", " ")
-                        };
+                        let note = format!("سحب شراء سيارة {} {}", name.trim(), chassis.trim())
+                            .trim()
+                            .replace("  ", " ");
 
                         db.execute(
                         "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
-                         VALUES (?1, ?2, ?3, ?4, ?5, strftime('%H:%M', 'now', 'localtime'), ?6, ?7, ?8)",
+                         VALUES (?1, 'شريك', 'سحب شراء سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, ?6)",
                         params![
-                            p_name,
-                            p_kind,
-                            tx_type,
-                            partner.amount,
+                            sub_p,
+                            amount_per_partner,
                             purchase_date.as_deref().unwrap_or(""),
                             note,
                             partner.currency.trim(),
@@ -708,57 +756,28 @@ fn add_car(
                     )
                     .map_err(|e| e.to_string())?;
                     }
-                }
-            }
-        } else if purchase_type.as_deref() == Some("كاش") {
-            let amount_per_partner = purchase / n_partners;
-            for sub_p in &partners_list {
-                db.execute(
-                "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, 'شريك')",
-                [sub_p],
-            )
-            .map_err(|e| e.to_string())?;
-
-                let note = format!("سحب شراء سيارة {} {}", name.trim(), chassis.trim())
-                    .trim()
-                    .replace("  ", " ");
-
-                db.execute(
-                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
-                 VALUES (?1, 'شريك', 'سحب شراء سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, ?6)",
-                params![
-                    sub_p,
-                    amount_per_partner,
-                    purchase_date.as_deref().unwrap_or(""),
-                    note,
-                    currency.as_deref().unwrap_or("IQD"),
-                    purchase_payment_type.as_deref().unwrap_or("قاصه"),
-                ],
-            )
-            .map_err(|e| e.to_string())?;
-            }
-        } else if purchase_type.as_deref() == Some("دين") {
-            if let Some(f_name) = &financer_name {
-                if !f_name.trim().is_empty() {
+                } else {
+                    let p_kind = partner.kind.as_deref().unwrap_or("شريك");
                     db.execute(
-                    "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, 'مطلوب')",
-                    [f_name.trim()],
+                    "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, ?2)",
+                    params![p_name, p_kind],
                 )
                 .map_err(|e| e.to_string())?;
 
-                    let note = format!("تمويل شراء سيارة {} {}", name.trim(), chassis.trim())
+                    let note = format!("سحب شراء سيارة {} {}", name.trim(), chassis.trim())
                         .trim()
                         .replace("  ", " ");
 
                     db.execute(
                     "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
-                     VALUES (?1, 'مطلوب', 'ايداع', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, ?6)",
+                     VALUES (?1, ?2, 'سحب شراء سيارة', ?3, ?4, strftime('%H:%M', 'now', 'localtime'), ?5, ?6, ?7)",
                     params![
-                        f_name.trim(),
-                        purchase,
+                        p_name,
+                        p_kind,
+                        share,
                         purchase_date.as_deref().unwrap_or(""),
                         note,
-                        currency.as_deref().unwrap_or("IQD"),
+                        partner.currency.trim(),
                         purchase_payment_type.as_deref().unwrap_or("قاصه"),
                     ],
                 )
@@ -766,7 +785,77 @@ fn add_car(
                 }
             }
         }
-    } // نهاية if !exists — لا نعيد إنشاء حركات الشراء إن كانت موجودة
+    } else if purchase_type.as_deref() == Some("كاش") {
+        let expenses_sum: f64 = db
+            .query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+                [car_number.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+        let total_amount = purchase + expenses_sum;
+        let amount_per_partner = total_amount / n_partners;
+        for sub_p in &partners_list {
+            db.execute(
+            "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, 'شريك')",
+            [sub_p],
+        )
+        .map_err(|e| e.to_string())?;
+
+            let note = format!("سحب شراء سيارة {} {}", name.trim(), chassis.trim())
+                .trim()
+                .replace("  ", " ");
+
+            db.execute(
+            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+             VALUES (?1, 'شريك', 'سحب شراء سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, ?6)",
+            params![
+                sub_p,
+                amount_per_partner,
+                purchase_date.as_deref().unwrap_or(""),
+                note,
+                currency.as_deref().unwrap_or("IQD"),
+                purchase_payment_type.as_deref().unwrap_or("قاصه"),
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        }
+    } else if purchase_type.as_deref() == Some("دين") || purchase_type.as_deref() == Some("شركة") {
+        let p_kind = if purchase_type.as_deref() == Some("دين") { "ممول" } else { "شركة" };
+        let expenses_sum: f64 = db
+            .query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+                [car_number.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+        let total_amount = purchase + expenses_sum;
+        if let Some(f_name) = &financer_name {
+            let f_name = f_name.trim();
+            if !f_name.is_empty() {
+                // أدخل المعاملة مباشرة بالاسم والنوع الحالي الصحيح.
+                // الحذف تمّ أعلاه بـ notes، فلا حاجة لمس جدول partners.
+                let note = format!("سحب شراء سيارة {} {}", name.trim(), chassis.trim())
+                    .trim()
+                    .replace("  ", " ");
+
+                db.execute(
+                    "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                     VALUES (?1, ?2, 'سحب شراء سيارة', ?3, ?4, strftime('%H:%M', 'now', 'localtime'), ?5, ?6, ?7)",
+                    params![
+                        f_name,
+                        p_kind,
+                        total_amount,
+                        purchase_date.as_deref().unwrap_or(""),
+                        note,
+                        currency.as_deref().unwrap_or("IQD"),
+                        purchase_payment_type.as_deref().unwrap_or("قاصه"),
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
 
     // حذف وإعادة توزيع الأرباح ورأس المال عند البيع
     let sale_note = format!("ايداع بيع سيارة {} {}", name.trim(), chassis.trim())
@@ -1118,12 +1207,46 @@ fn add_partner(
     kind: String,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.execute(
-        "INSERT OR REPLACE INTO partners (partner_name, phone, total_amount, kind)
-         VALUES (?1, ?2, COALESCE((SELECT total_amount FROM partners WHERE partner_name = ?1 AND kind = ?3), 0.0), ?3)",
-        (name.trim(), phone.trim(), kind.trim()),
-    )
-    .map_err(|e| e.to_string())?;
+    let name = name.trim();
+    let phone = phone.trim();
+    let kind = kind.trim();
+
+    let exists: bool = db
+        .query_row(
+            "SELECT COUNT(*) FROM partners WHERE partner_name = ?1 AND kind = ?2",
+            (name, kind),
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| e.to_string())?
+        > 0;
+
+    if exists {
+        db.execute(
+            "UPDATE partners SET phone = ?1 WHERE partner_name = ?2 AND kind = ?3",
+            (phone, name, kind),
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    let exists_with_other_kind: bool = db
+        .query_row(
+            "SELECT COUNT(*) FROM partners WHERE partner_name = ?1 AND kind = ?2",
+            [name, kind],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| e.to_string())?
+        > 0;
+
+    if !exists_with_other_kind {
+        db.execute(
+            "INSERT INTO partners (partner_name, phone, total_amount, kind)
+             VALUES (?1, ?2, 0.0, ?3)",
+            (name, phone, kind),
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }
 
@@ -1179,7 +1302,7 @@ fn get_unified_accounts(state: State<AppState>) -> Result<Vec<UnifiedAccount>, S
             p.kind
          FROM partners p
          LEFT JOIN partner_transactions t ON p.partner_name = t.partner_name AND p.kind = t.kind
-         WHERE p.kind = 'مطلوب' OR p.kind = 'ممول'
+         WHERE p.kind = 'مطلوب' OR p.kind = 'ممول' OR p.kind = 'شركة'
          GROUP BY p.partner_name, p.phone, p.kind
          ORDER BY p.partner_name"
     ).map_err(|e| e.to_string())?;
@@ -1289,6 +1412,19 @@ fn update_partner(
         return Ok(());
     }
 
+    let target_exists: bool = db
+        .query_row(
+            "SELECT COUNT(*) FROM partners WHERE partner_name = ?1 AND kind = ?2",
+            (&name, &kind),
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| e.to_string())?
+        > 0;
+
+    if target_exists {
+        return Err(format!("يوجد حساب بالفعل باسم '{}' ونوع '{}'", name, kind));
+    }
+
     db.execute(
         "UPDATE partners SET partner_name = ?1, phone = ?2, kind = ?3 WHERE partner_name = ?4 AND kind = ?5",
         (&name, phone.trim(), &kind, &old_name, &old_kind),
@@ -1302,6 +1438,7 @@ fn update_partner(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 fn add_partner_transaction(
     state: State<AppState>,
@@ -1315,6 +1452,19 @@ fn add_partner_transaction(
     payment_type: Option<String>,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
+    let is_financier_repayment = (kind.trim() == "ممول" && type_.trim().starts_with("سحب"))
+        || (kind.trim() == "مطلوب"
+            && type_.trim().starts_with("ايداع")
+            && notes
+                .as_deref()
+                .unwrap_or("")
+                .contains("ممول"));
+    let tx_payment_type = if is_financier_repayment {
+        Some("ممول")
+    } else {
+        payment_type.as_deref()
+    };
+
     db.execute(
         "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
          VALUES (?1, ?2, ?3, ?4, ?5, strftime('%H:%M', 'now', 'localtime'), ?6, ?7, ?8)",
@@ -1324,18 +1474,221 @@ fn add_partner_transaction(
             type_.trim(),
             amount,
             date.trim(),
-            notes,
-            currency,
-            payment_type,
+            notes.as_deref(),
+            currency.as_deref(),
+            tx_payment_type,
         ),
     )
     .map_err(|e| e.to_string())?;
 
     recalculate_partner_total(&db, partner_name.trim(), kind.trim())?;
+    if is_financier_repayment {
+        distribute_financier_repayment_to_partners(
+            &db,
+            partner_name.trim(),
+            amount,
+            date.trim(),
+            currency.as_deref().unwrap_or("IQD"),
+            notes.as_deref(),
+        )?;
+    }
 
     Ok(())
 }
 
+fn distribute_financier_repayment_to_partners(
+    db: &Connection,
+    financier_name: &str,
+    amount: f64,
+    date: &str,
+    currency: &str,
+    notes: Option<&str>,
+) -> Result<(), String> {
+    if amount <= 0.0 {
+        return Ok(());
+    }
+
+    let mut stmt = db
+        .prepare("SELECT partner_name FROM partners WHERE kind = 'شريك' ORDER BY partner_name ASC")
+        .map_err(|e| e.to_string())?;
+    let partners = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    if partners.is_empty() {
+        return Err("لا يوجد شركاء لتوزيع تسديد الممول عليهم".to_string());
+    }
+
+    let commission_amount = parse_financier_commission(amount, notes);
+    let partner_share = amount / partners.len() as f64;
+    for partner in &partners {
+        db.execute(
+            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+             VALUES (?1, 'شريك', 'سحب تسديد ممول', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
+            params![
+                partner.as_str(),
+                partner_share,
+                date,
+                format!("حصة الشريك من تسديد الممول {}", financier_name),
+                currency,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        recalculate_partner_total(db, partner, "شريك")?;
+    }
+
+    // Distribute commission as partner withdrawal only (no separate expense)
+    if commission_amount > 0.0 {
+        let commission_share = commission_amount / partners.len() as f64;
+        for partner in &partners {
+            db.execute(
+                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                 VALUES (?1, 'شريك', 'سحب عمولة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
+                params![
+                    partner.as_str(),
+                    commission_share,
+                    date,
+                    format!("حصة الشريك من عمولة تسديد الممول {}", financier_name),
+                    currency,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            recalculate_partner_total(db, partner, "شريك")?;
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_financier_commission(amount: f64, notes: Option<&str>) -> f64 {
+    let Some(notes) = notes else {
+        return 0.0;
+    };
+    let Some(raw_commission) = notes.split("عمولة:").nth(1) else {
+        return 0.0;
+    };
+    let raw_commission = raw_commission.trim();
+    if raw_commission.contains('%') {
+        let percent = raw_commission
+            .split('%')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .parse::<f64>()
+            .unwrap_or(0.0);
+        return (amount * percent) / 100.0;
+    }
+    raw_commission.parse::<f64>().unwrap_or(0.0)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn pay_financier_from_partners(
+    state: State<AppState>,
+    financier_name: String,
+    financier_kind: String,
+    amount: f64,
+    date: String,
+    notes: Option<String>,
+    currency: Option<String>,
+    commission_amount: Option<f64>,
+    commission_currency: Option<String>,
+    _commission_notes: Option<String>,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let financier_name = financier_name.trim();
+    let financier_kind = financier_kind.trim();
+    let date = date.trim();
+    let currency = currency.unwrap_or_else(|| "IQD".to_string());
+    let commission_amount = commission_amount.unwrap_or(0.0);
+
+    if financier_name.is_empty() {
+        return Err("اسم الممول مطلوب".to_string());
+    }
+    if amount <= 0.0 {
+        return Err("مبلغ التسديد يجب أن يكون أكبر من صفر".to_string());
+    }
+
+    let financier_tx_type = if financier_kind == "مطلوب" {
+        "ايداع"
+    } else {
+        "سحب"
+    };
+
+    db.execute(
+        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+         VALUES (?1, ?2, ?3, ?4, ?5, strftime('%H:%M', 'now', 'localtime'), ?6, ?7, 'ممول')",
+        params![
+            financier_name,
+            financier_kind,
+            financier_tx_type,
+            amount,
+            date,
+            notes.as_deref(),
+            currency.as_str(),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    recalculate_partner_total(&db, financier_name, financier_kind)?;
+
+    let mut stmt = db
+        .prepare("SELECT partner_name FROM partners WHERE kind = 'شريك' ORDER BY partner_name ASC")
+        .map_err(|e| e.to_string())?;
+    let partners = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    if partners.is_empty() {
+        return Err("لا يوجد شركاء لتوزيع تسديد الممول عليهم".to_string());
+    }
+
+    // Distribute the amount equally among partners
+    let partner_share = amount / partners.len() as f64;
+    for partner in &partners {
+        db.execute(
+            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+             VALUES (?1, 'شريك', 'سحب تسديد ممول', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
+            params![
+                partner.as_str(),
+                partner_share,
+                date,
+                format!("حصة الشريك من تسديد الممول {}", financier_name),
+                currency.as_str(),
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        recalculate_partner_total(&db, partner, "شريك")?;
+    }
+
+    // Distribute commission as partner withdrawal only (no separate expense)
+    if commission_amount > 0.0 {
+        let commission_currency = commission_currency.unwrap_or_else(|| "IQD".to_string());
+        let commission_share = commission_amount / partners.len() as f64;
+        for partner in &partners {
+            db.execute(
+                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                 VALUES (?1, 'شريك', 'سحب عمولة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
+                params![
+                    partner.as_str(),
+                    commission_share,
+                    date,
+                    format!("حصة الشريك من عمولة تسديد الممول {}", financier_name),
+                    commission_currency.as_str(),
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            recalculate_partner_total(&db, partner, "شريك")?;
+        }
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 fn update_partner_transaction(
     state: State<AppState>,
@@ -1695,13 +2048,10 @@ fn get_cash_register_entries(
                 "مطلوب" if tx_type.starts_with("ايداع") => ("تسديد دين", amount),
                 "مقترض" if tx_type.starts_with("ايداع") => ("ايداع مقترض", amount),
                 "مقترض" if tx_type.starts_with("سحب") => ("سحب مقترض", -amount),
-                "ممول" if tx_type.starts_with("ايداع") => {
-                    if payment_type.as_deref() == Some("ممول") {
+                "ممول" if tx_type.starts_with("ايداع")
+                    && payment_type.as_deref() == Some("ممول") => {
                         ("ايداع ممول", amount)
-                    } else {
-                        ("", 0.0)
                     }
-                }
                 "ممول" if tx_type.starts_with("سحب") => {
                     let commission = match &notes {
                         Some(n) => {
@@ -1727,7 +2077,7 @@ fn get_cash_register_entries(
                     } else {
                         amount + commission
                     };
-                    ("تسديد ممول", -total_amount)
+                    ("سحب ممول", -total_amount)
                 }
                 _ => ("", 0.0),
             };
@@ -1825,136 +2175,6 @@ fn get_cash_register_entries(
 }
 
 #[tauri::command]
-fn add_cash_register_entry(
-    state: State<AppState>,
-    date: String,
-    time: String,
-    type_: String,
-    amount: f64,
-    description: String,
-    notes: Option<String>,
-) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.execute(
-        "INSERT INTO cash_register (date, time, type, amount, description, notes)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        (
-            date.trim(),
-            time.trim(),
-            type_.trim(),
-            amount,
-            description.trim(),
-            notes,
-        ),
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-fn delete_cash_register_entry(state: State<AppState>, id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.execute("DELETE FROM cash_register WHERE id = ?1", [id])
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-fn get_cash_register_balance(state: State<AppState>) -> Result<f64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    let mut balance = 0.0;
-
-    // شراء السيارات (outflow)
-    {
-        let mut stmt = db
-            .prepare(
-                "SELECT c.purchase_price
-                 FROM cars c
-                 WHERE c.purchase_date IS NOT NULL AND c.purchase_price > 0",
-            )
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([], |row| row.get::<_, f64>(0))
-            .map_err(|e| e.to_string())?;
-        for row in rows {
-            balance -= row.map_err(|e| e.to_string())?;
-        }
-    }
-
-    // بيع السيارات (inflow)
-    for payment_type in &["كاش", "موعد", "اقساط"] {
-        let amount_col = if *payment_type == "كاش" {
-            "selling_price"
-        } else {
-            "amount_paid"
-        };
-        let sql = format!(
-            "SELECT {} FROM cars c
-             WHERE c.status = 'مبيوعة' AND c.payment_type = ?1
-               AND c.sale_date IS NOT NULL AND c.sale_date != ''",
-            amount_col
-        );
-        let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([*payment_type], |row| row.get::<_, Option<f64>>(0))
-            .map_err(|e| e.to_string())?;
-        for row in rows {
-            balance += row.map_err(|e| e.to_string())?.unwrap_or(0.0);
-        }
-    }
-
-    // معاملات الشركاء والمستثمرين والمديونيات (المدفوعات فقط)
-    {
-        let mut stmt = db
-            .prepare(
-                "SELECT pt.kind, pt.type, pt.amount
-                 FROM partner_transactions pt
-                 WHERE NOT (pt.kind = 'مطلوب' AND pt.type LIKE 'سحب%')",
-            )
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, f64>(2)?,
-                ))
-            })
-            .map_err(|e| e.to_string())?;
-        for row in rows {
-            let (kind, tx_type, amount) = row.map_err(|e| e.to_string())?;
-            match kind.as_str() {
-                "شريك" | "مستثمر" | "مطلوب" | "مقترض" if tx_type.starts_with("ايداع") => {
-                    if !tx_type.starts_with("ايداع بيع سيارة") {
-                        balance += amount;
-                    }
-                }
-                "شريك" | "مستثمر" | "مقترض" if tx_type.starts_with("سحب") => {
-                    if !tx_type.starts_with("سحب شراء سيارة") && !tx_type.starts_with("سحب مصروف")
-                    {
-                        balance -= amount;
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    // المصروفات (outflow)
-    {
-        let mut stmt = db
-            .prepare("SELECT COALESCE(SUM(amount), 0) FROM expenses")
-            .map_err(|e| e.to_string())?;
-        let total: f64 = stmt
-            .query_row([], |row| row.get(0))
-            .map_err(|e| e.to_string())?;
-        balance -= total;
-    }
-
-    Ok(balance)
-}
-
-#[tauri::command]
 fn add_expense(
     state: State<AppState>,
     description: String,
@@ -1966,134 +2186,140 @@ fn add_expense(
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    // إذا كان المصروف خاص بسيارة: لا يسجل في سجل المصروفات
-    // بل يوزع بالتساوي على شركاء السيارة كسحب من أرصدة الشركاء
+    // إذا كان المصروف خاص بسيارة: يُسجل في car_expenses ثم يُحدّث
+    // سحب شراء السيارة ليشمل المبلغ الكلي (الشراء + جميع المصاريف)
     if let Some(ref car_num) = car_number {
         let car_num = car_num.trim();
         if !car_num.is_empty() {
+            // 1. تسجيل المصروف في جدول car_expenses أولاً
+            db.execute(
+                "INSERT INTO car_expenses (car_number, description, amount, date, currency)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                (
+                    car_num,
+                    description.trim(),
+                    amount,
+                    date.trim(),
+                    &currency,
+                ),
+            )
+            .map_err(|e| e.to_string())?;
+
+            // 2. جلب معلومات السيارة — إذا لم توجد السيارة بعد، نكتفي بتسجيل المصروف
+            let car_exists: bool = db
+                .query_row(
+                    "SELECT COUNT(1) FROM cars WHERE car_number = ?1",
+                    [car_num],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0) > 0;
+            if !car_exists {
+                return Ok(());
+            }
+            let (car_name, chassis_number, purchase_price, purchase_type, financer_name): (String, Option<String>, f64, Option<String>, Option<String>) = db
+                .query_row(
+                    "SELECT car_name, chassis_number, purchase_price, purchase_type, financer_name FROM cars WHERE car_number = ?1",
+                    [car_num],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                )
+                .unwrap_or((String::new(), None, 0.0, None, None));
+            let chassis_str = chassis_number.unwrap_or_default();
+
+            // 3. حساب مجموع المصاريف بعد إضافة المصروف الجديد
+            let expenses_sum: f64 = db
+                .query_row(
+                    "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+                    [car_num],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0.0);
+
+            // 4. المبلغ الكلي = سعر الشراء + مجموع المصاريف
+            let total_amount = purchase_price + expenses_sum;
+
+            // 5. حذف حركات سحب شراء السيارة القديمة
+            let purchase_note = format!("سحب شراء سيارة {} {}", car_name.trim(), chassis_str.trim())
+                .trim()
+                .replace("  ", " ");
+            db.execute(
+                "DELETE FROM partner_transactions WHERE notes = ?1",
+                [&purchase_note],
+            )
+            .map_err(|e| e.to_string())?;
+
+            // 6. إنشاء حركات جديدة بالمبلغ الكلي
             let expense_currency = currency.as_deref().unwrap_or("IQD");
             let expense_date = date.trim();
 
-            let (car_name, chassis_number, _purchase_price): (String, Option<String>, Option<f64>) = db
-                .query_row(
-                    "SELECT car_name, chassis_number, purchase_price FROM cars WHERE car_number = ?1",
-                    [car_num],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .unwrap_or((String::new(), None, None));
-            let chassis_str = chassis_number.unwrap_or_default();
-
-            // محاولة جلب شركاء السيارة المحددين (في حالة شراكه)
-            let mut stmt = db
-                .prepare(
-                    "SELECT cp.partner_name, cp.kind, cp.amount
-                     FROM car_partners cp
-                     WHERE cp.car_number = ?1",
-                )
-                .map_err(|e| e.to_string())?;
-
-            let car_partner_rows: Vec<(String, String, f64)> = stmt
-                .query_map([car_num], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
-                })
-                .map_err(|e| e.to_string())?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?;
-
-            // تحديد قائمة الشركاء المستهدفين
-            let target_shares: Vec<(String, String, f64)> = if !car_partner_rows.is_empty() {
-                let total_partner_amounts: f64 = car_partner_rows.iter().map(|(_, _, a)| *a).sum();
-                let denominator = if total_partner_amounts > 0.0 { total_partner_amounts } else { 1.0 };
-                let num_partners = car_partner_rows.len() as f64;
-                
-                car_partner_rows.into_iter().map(|(p_name, p_kind, p_amount)| {
-                    let share = if total_partner_amounts > 0.0 {
-                        (p_amount / denominator) * amount
-                    } else {
-                        amount / num_partners
-                    };
-                    (p_name, p_kind, share)
-                }).collect()
-            } else {
-                let mut s = db
+            if purchase_type.as_deref() == Some("شراكه") {
+                // شراكه: جلب شركاء السيارة وتوزيع المبلغ الكلي بنسبة مساهمتهم
+                let mut stmt = db
                     .prepare(
-                        "SELECT partner_name, kind FROM partners WHERE kind = 'شريك' AND partner_name != 'فجر الوادي'"
+                        "SELECT cp.partner_name, cp.kind, cp.amount
+                         FROM car_partners cp
+                         WHERE cp.car_number = ?1",
                     )
                     .map_err(|e| e.to_string())?;
-                let mapped = s
-                    .query_map([], |row| {
-                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+
+                let car_partner_rows: Vec<(String, String, f64)> = stmt
+                    .query_map([car_num], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
                     })
+                    .map_err(|e| e.to_string())?
+                    .collect::<Result<Vec<_>, _>>()
                     .map_err(|e| e.to_string())?;
-                let mut rows = Vec::new();
-                for r in mapped {
-                    rows.push(r.map_err(|e| e.to_string())?);
-                }
-                let n = rows.len() as f64;
-                let share = if n > 0.0 { amount / n } else { 0.0 };
-                rows.into_iter().map(|(p_name, p_kind)| (p_name, p_kind, share)).collect()
-            };
 
-            if !target_shares.is_empty() {
-                let expense_note = format!(
-                    "سحب مصروف سيارة {} {} {}",
-                    car_name.trim(),
-                    chassis_str.trim(),
-                    description.trim()
-                )
-                .trim()
-                .replace("  ", " ");
+                let total_partner_amounts: f64 = car_partner_rows.iter().map(|(_, _, a)| a).sum();
 
-                for (p_name, p_kind, share) in target_shares {
+                // قائمة الشركاء الفعليين لتوزيع حصة فجر الوادي
+                let mut stmt2 = db
+                    .prepare("SELECT partner_name FROM partners WHERE kind = 'شريك' AND partner_name != 'فجر الوادي'")
+                    .map_err(|e| e.to_string())?;
+                let partner_list: Vec<String> = stmt2
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .map_err(|e| e.to_string())?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| e.to_string())?;
+
+                for (p_name, p_kind, p_amount) in &car_partner_rows {
+                    let share = if total_partner_amounts > 0.0 {
+                        (p_amount / total_partner_amounts) * total_amount
+                    } else {
+                        total_amount / car_partner_rows.len() as f64
+                    };
+
                     if p_name == "فجر الوادي" {
-                        let mut fajr_stmt = db
-                            .prepare(
-                                "SELECT partner_name FROM partners WHERE kind = 'شريك' AND partner_name != 'فجر الوادي'"
-                            )
-                            .map_err(|e| e.to_string())?;
-                        let fajr_partners: Vec<String> = fajr_stmt
-                            .query_map([], |row| row.get::<_, String>(0))
-                            .map_err(|e| e.to_string())?
-                            .collect::<Result<Vec<_>, _>>()
-                            .map_err(|e| e.to_string())?;
-
-                        if fajr_partners.is_empty() {
+                        let sub_partners: Vec<&String> = partner_list.iter().filter(|s| *s != "فجر الوادي").collect();
+                        if sub_partners.is_empty() {
                             db.execute(
                                 "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, 'شريك')",
                                 ["فجر الوادي"],
                             ).map_err(|e| e.to_string())?;
                             db.execute(
                                 "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
-                                 VALUES (?1, 'شريك', 'سحب مصروف سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
-                                params!["فجر الوادي", share, expense_date, expense_note, expense_currency],
+                                 VALUES (?1, 'شريك', 'سحب شراء سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
+                                params!["فجر الوادي", share, expense_date, purchase_note, expense_currency],
                             ).map_err(|e| e.to_string())?;
                         } else {
-                            let fajr_n = fajr_partners.len() as f64;
-                            let fajr_share = share / fajr_n;
-                            for sub_p in &fajr_partners {
+                            let sub_share = share / sub_partners.len() as f64;
+                            for sub in sub_partners {
                                 db.execute(
                                     "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, 'شريك')",
-                                    [sub_p.as_str()],
+                                    [sub],
                                 ).map_err(|e| e.to_string())?;
                                 db.execute(
                                     "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
-                                     VALUES (?1, 'شريك', 'سحب مصروف سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
-                                    params![sub_p.as_str(), fajr_share, expense_date, expense_note, expense_currency],
+                                     VALUES (?1, 'شريك', 'سحب شراء سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
+                                    params![sub.as_str(), sub_share, expense_date, purchase_note, expense_currency],
                                 ).map_err(|e| e.to_string())?;
                             }
                         }
-                        recalculate_all_partners(&db)?;
                     } else {
-                        let tx_type = if p_kind == "مطلوب" {
-                            "ايداع مصروف"
-                        } else {
-                            "سحب مصروف سيارة"
-                        };
-
+                        let p_kind_str = p_kind.as_str();
                         let exists: bool = db
                             .query_row(
                                 "SELECT COUNT(*) FROM partners WHERE partner_name = ?1 AND kind = ?2",
-                                params![p_name.as_str(), p_kind.as_str()],
+                                params![p_name.as_str(), p_kind_str],
                                 |row| row.get::<_, i64>(0),
                             )
                             .unwrap_or(0) > 0;
@@ -2101,29 +2327,128 @@ fn add_expense(
                         if !exists {
                             db.execute(
                                 "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, ?2)",
-                                params![p_name.as_str(), p_kind.as_str()],
+                                params![p_name.as_str(), p_kind_str],
                             ).map_err(|e| e.to_string())?;
                         }
+
+                        let tx_type = if p_kind_str == "مطلوب" { "ايداع" } else { "سحب شراء سيارة" };
+                        let note = if p_kind_str == "مطلوب" {
+                            format!("تمويل شراء سيارة {} {}", car_name.trim(), chassis_str.trim())
+                                .trim().replace("  ", " ")
+                        } else {
+                            purchase_note.clone()
+                        };
 
                         db.execute(
                             "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
                              VALUES (?1, ?2, ?3, ?4, ?5, strftime('%H:%M', 'now', 'localtime'), ?6, ?7, 'قاصه')",
                             params![
                                 p_name.as_str(),
-                                p_kind.as_str(),
+                                p_kind_str,
                                 tx_type,
                                 share,
                                 expense_date,
-                                expense_note,
+                                note,
                                 expense_currency,
                             ],
                         ).map_err(|e| e.to_string())?;
+                    }
+                }
+        } else if purchase_type.as_deref() == Some("دين") || purchase_type.as_deref() == Some("شركة") {
+            let p_kind = if purchase_type.as_deref() == Some("دين") { "ممول" } else { "شركة" };
+                if let Some(f_name) = &financer_name {
+                    if !f_name.trim().is_empty() {
+                        let exists = db
+                            .query_row(
+                                "SELECT 1 FROM partners WHERE partner_name = ?1 AND kind = ?2",
+                                params![f_name.trim(), p_kind],
+                                |_| Ok(()),
+                            )
+                            .is_ok();
+                        if !exists {
+                            db.execute(
+                                "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, ?2)",
+                                params![f_name.trim(), p_kind],
+                            ).map_err(|e| e.to_string())?;
+                        }
 
-                        recalculate_partner_total(&db, &p_name, &p_kind)?;
+                        db.execute(
+                            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                             VALUES (?1, ?2, 'سحب شراء سيارة', ?3, ?4, strftime('%H:%M', 'now', 'localtime'), ?5, ?6, 'قاصه')",
+                            params![
+                                f_name.trim(),
+                                p_kind,
+                                total_amount,
+                                expense_date,
+                                purchase_note,
+                                expense_currency,
+                            ],
+                        ).map_err(|e| e.to_string())?;
+                    }
+                }
+            } else {
+                // كاش أو غيره: توزيع بالتساوي على جميع الشركاء
+                let mut stmt = db
+                    .prepare(
+                        "SELECT partner_name FROM partners WHERE kind = 'شريك' AND partner_name != 'فجر الوادي'"
+                    )
+                    .map_err(|e| e.to_string())?;
+                let mut partners: Vec<String> = stmt
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .map_err(|e| e.to_string())?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| e.to_string())?;
+
+                if partners.is_empty() {
+                    partners.push("فجر الوادي".to_string());
+                }
+
+                let n = partners.len() as f64;
+                let per_partner = total_amount / n;
+
+                for p in &partners {
+                    db.execute(
+                        "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, 'شريك')",
+                        [p.as_str()],
+                    ).map_err(|e| e.to_string())?;
+
+                    if p == "فجر الوادي" {
+                        // توزيع حصة فجر الوادي على بقية الشركاء
+                        let sub_partners: Vec<String> = partners.iter()
+                            .filter(|s| *s != "فجر الوادي")
+                            .cloned()
+                            .collect();
+                        if sub_partners.is_empty() {
+                            db.execute(
+                                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                                 VALUES (?1, 'شريك', 'سحب شراء سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
+                                params!["فجر الوادي", per_partner, expense_date, purchase_note, expense_currency],
+                            ).map_err(|e| e.to_string())?;
+                        } else {
+                            let sub_share = per_partner / sub_partners.len() as f64;
+                            for sub in &sub_partners {
+                                db.execute(
+                                    "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, 'شريك')",
+                                    [sub.as_str()],
+                                ).map_err(|e| e.to_string())?;
+                                db.execute(
+                                    "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                                     VALUES (?1, 'شريك', 'سحب شراء سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
+                                    params![sub.as_str(), sub_share, expense_date, purchase_note, expense_currency],
+                                ).map_err(|e| e.to_string())?;
+                            }
+                        }
+                    } else {
+                        db.execute(
+                            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                             VALUES (?1, 'شريك', 'سحب شراء سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
+                            params![p.as_str(), per_partner, expense_date, purchase_note, expense_currency],
+                        ).map_err(|e| e.to_string())?;
                     }
                 }
             }
 
+            recalculate_all_partners(&db)?;
             return Ok(());
         }
     }
@@ -2267,68 +2592,702 @@ fn get_car_expense_records(
 fn delete_car_expense_record(state: State<AppState>, id: i64) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    // 1. Fetch car_expense info
+    // 1. جلب معلومات المصروف
     let row_result = db.query_row(
-        "SELECT car_number, description, date FROM car_expenses WHERE id = ?1",
+        "SELECT car_number, amount FROM car_expenses WHERE id = ?1",
         [id],
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)),
     );
 
-    if let Ok((car_number, description, expense_date)) = row_result {
-        // 2. Fetch car info
-        let (car_name, chassis_number): (String, Option<String>) = db
+    if let Ok((car_number, _expense_amount)) = row_result {
+        // 2. حذف سجل المصروف أولاً
+        db.execute("DELETE FROM car_expenses WHERE id = ?1", [id])
+            .map_err(|e| e.to_string())?;
+
+        // 3. جلب معلومات السيارة
+        let (car_name, chassis_number, purchase_price, purchase_type, financer_name): (String, Option<String>, f64, Option<String>, Option<String>) = db
             .query_row(
-                "SELECT car_name, chassis_number FROM cars WHERE car_number = ?1",
+                "SELECT car_name, chassis_number, purchase_price, purchase_type, financer_name FROM cars WHERE car_number = ?1",
                 [&car_number],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
-            .unwrap_or((String::new(), None));
+            .unwrap_or((String::new(), None, 0.0, None, None));
         let chassis_str = chassis_number.unwrap_or_default();
 
-        // 3. Construct note
-        let expense_note = format!(
-            "سحب مصروف سيارة {} {} {}",
-            car_name.trim(),
-            chassis_str.trim(),
-            description.trim()
+        // 4. حساب مجموع المصاريف المتبقية
+        let expenses_sum: f64 = db
+            .query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+                [&car_number],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+
+        // 5. المبلغ الكلي = سعر الشراء + المصاريف المتبقية
+        let total_amount = purchase_price + expenses_sum;
+
+        // 6. حذف حركات سحب شراء السيارة القديمة
+        let purchase_note = format!("سحب شراء سيارة {} {}", car_name.trim(), chassis_str.trim())
+            .trim()
+            .replace("  ", " ");
+        db.execute(
+            "DELETE FROM partner_transactions WHERE notes = ?1",
+            [&purchase_note],
+        )
+        .map_err(|e| e.to_string())?;
+
+        // 7. إعادة إنشاء الحركات بالمبلغ الكلي الجديد
+        let date = db
+            .query_row(
+                "SELECT COALESCE(MIN(date), '') FROM partner_transactions WHERE notes = ?1",
+                [&purchase_note],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_or_default();
+
+        if purchase_type.as_deref() == Some("شراكه") {
+            let mut stmt = db
+                .prepare(
+                    "SELECT cp.partner_name, cp.kind, cp.amount
+                     FROM car_partners cp WHERE cp.car_number = ?1",
+                )
+                .map_err(|e| e.to_string())?;
+
+            let car_partner_rows: Vec<(String, String, f64)> = stmt
+                .query_map([&car_number], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+
+            let total_partner_amounts: f64 = car_partner_rows.iter().map(|(_, _, a)| a).sum();
+
+            let mut stmt2 = db
+                .prepare("SELECT partner_name FROM partners WHERE kind = 'شريك' AND partner_name != 'فجر الوادي'")
+                .map_err(|e| e.to_string())?;
+            let partner_list: Vec<String> = stmt2
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+
+            for (p_name, p_kind, p_amount) in &car_partner_rows {
+                let share = if total_partner_amounts > 0.0 {
+                    (p_amount / total_partner_amounts) * total_amount
+                } else {
+                    total_amount / car_partner_rows.len() as f64
+                };
+
+                if p_name == "فجر الوادي" {
+                    let sub_partners: Vec<&String> = partner_list.iter().filter(|s| *s != "فجر الوادي").collect();
+                    if sub_partners.is_empty() {
+                        db.execute(
+                            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                             VALUES (?1, 'شريك', 'سحب شراء سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
+                            params!["فجر الوادي", share, date, purchase_note, "IQD"],
+                        ).map_err(|e| e.to_string())?;
+                    } else {
+                        let sub_share = share / sub_partners.len() as f64;
+                        for sub in sub_partners {
+                            db.execute(
+                                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                                 VALUES (?1, 'شريك', 'سحب شراء سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
+                                params![sub.as_str(), sub_share, date, purchase_note, "IQD"],
+                            ).map_err(|e| e.to_string())?;
+                        }
+                    }
+                } else {
+                    let p_kind_str = p_kind.as_str();
+                    let tx_type = if p_kind_str == "مطلوب" { "ايداع" } else { "سحب شراء سيارة" };
+                    let note = if p_kind_str == "مطلوب" {
+                        format!("تمويل شراء سيارة {} {}", car_name.trim(), chassis_str.trim())
+                            .trim().replace("  ", " ")
+                    } else {
+                        purchase_note.clone()
+                    };
+
+                    db.execute(
+                        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                         VALUES (?1, ?2, ?3, ?4, ?5, strftime('%H:%M', 'now', 'localtime'), ?6, ?7, 'قاصه')",
+                        params![p_name.as_str(), p_kind_str, tx_type, share, date, note, "IQD"],
+                    ).map_err(|e| e.to_string())?;
+                }
+            }
+        } else if purchase_type.as_deref() == Some("دين") || purchase_type.as_deref() == Some("شركة") {
+            let p_kind = if purchase_type.as_deref() == Some("دين") { "ممول" } else { "شركة" };
+            if let Some(f_name) = &financer_name {
+                if !f_name.trim().is_empty() {
+                    let exists = db
+                        .query_row(
+                            "SELECT 1 FROM partners WHERE partner_name = ?1 AND kind = ?2",
+                            params![f_name.trim(), p_kind],
+                            |_| Ok(()),
+                        )
+                        .is_ok();
+                    if !exists {
+                        db.execute(
+                            "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, ?2)",
+                            params![f_name.trim(), p_kind],
+                        ).map_err(|e| e.to_string())?;
+                    }
+
+                    db.execute(
+                        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                         VALUES (?1, ?2, 'سحب شراء سيارة', ?3, ?4, strftime('%H:%M', 'now', 'localtime'), ?5, ?6, 'قاصه')",
+                        params![
+                            f_name.trim(),
+                            p_kind,
+                            total_amount,
+                            date,
+                            purchase_note,
+                            "IQD",
+                        ],
+                    ).map_err(|e| e.to_string())?;
+                }
+            }
+        } else {
+            let mut stmt = db
+                .prepare("SELECT partner_name FROM partners WHERE kind = 'شريك' AND partner_name != 'فجر الوادي'")
+                .map_err(|e| e.to_string())?;
+            let mut partners: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+
+            if partners.is_empty() {
+                partners.push("فجر الوادي".to_string());
+            }
+
+            let n = partners.len() as f64;
+            let per_partner = total_amount / n;
+
+            for p in &partners {
+                if p == "فجر الوادي" {
+                    let sub_partners: Vec<String> = partners.iter()
+                        .filter(|s| *s != "فجر الوادي")
+                        .cloned()
+                        .collect();
+                    if sub_partners.is_empty() {
+                        db.execute(
+                            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                             VALUES (?1, 'شريك', 'سحب شراء سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
+                            params!["فجر الوادي", per_partner, date, purchase_note, "IQD"],
+                        ).map_err(|e| e.to_string())?;
+                    } else {
+                        let sub_share = per_partner / sub_partners.len() as f64;
+                        for sub in &sub_partners {
+                            db.execute(
+                                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                                 VALUES (?1, 'شريك', 'سحب شراء سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
+                                params![sub.as_str(), sub_share, date, purchase_note, "IQD"],
+                            ).map_err(|e| e.to_string())?;
+                        }
+                    }
+                } else {
+                    db.execute(
+                        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                         VALUES (?1, 'شريك', 'سحب شراء سيارة', ?2, ?3, strftime('%H:%M', 'now', 'localtime'), ?4, ?5, 'قاصه')",
+                        params![p.as_str(), per_partner, date, purchase_note, "IQD"],
+                    ).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+
+        recalculate_all_partners(&db)?;
+    } else {
+        // إذا لم يتم العثور على المصروف، فقط احذف السجل إن وُجد
+        db.execute("DELETE FROM car_expenses WHERE id = ?1", [id])
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn now_datetime() -> (String, String) {
+    use std::time::SystemTime;
+    let now = SystemTime::now();
+    let epoch = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // simple UTC-based calculation (no chrono dependency)
+    let secs_per_day = 86400u64;
+    let total_days = epoch / secs_per_day;
+    let time_of_day = epoch % secs_per_day;
+    let hh = time_of_day / 3600;
+    let mm = (time_of_day % 3600) / 60;
+    // days since 1970-01-01
+    let mut y = 1970u64;
+    let mut days = total_days;
+    loop {
+        let days_in_year = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 { 366 } else { 365 };
+        if days < days_in_year { break; }
+        days -= days_in_year;
+        y += 1;
+    }
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let month_days: [u64; 12] = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut m = 0usize;
+    for (i, &md) in month_days.iter().enumerate() {
+        if days < md { m = i; break; }
+        days -= md;
+    }
+    let d = days + 1;
+    let date = format!("{:04}-{:02}-{:02}", y, m + 1, d);
+    let time = format!("{:02}:{:02}", hh, mm);
+    (date, time)
+}
+
+#[tauri::command]
+fn get_agencies(state: State<AppState>) -> Result<Vec<Agency>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = db
+        .prepare(
+            "SELECT id, old_agent_name, car_number, car_model, color, new_agent_name, phone,
+                    amount_usd, amount_iqd, notes, date, time
+             FROM agencies ORDER BY id DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let agencies = stmt
+        .query_map([], |row| {
+            Ok(Agency {
+                id: row.get(0)?,
+                old_agent_name: row.get(1)?,
+                car_number: row.get(2)?,
+                car_model: row.get(3)?,
+                color: row.get(4)?,
+                new_agent_name: row.get(5)?,
+                phone: row.get(6)?,
+                amount_usd: row.get(7)?,
+                amount_iqd: row.get(8)?,
+                notes: row.get(9)?,
+                date: row.get(10)?,
+                time: row.get(11)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(agencies)
+}
+
+#[tauri::command]
+fn add_agency(
+    state: State<AppState>,
+    old_agent_name: String,
+    car_number: String,
+    car_model: String,
+    color: String,
+    new_agent_name: String,
+    phone: String,
+    amount_usd: f64,
+    amount_iqd: f64,
+    notes: String,
+) -> Result<i64, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let (date, time) = now_datetime();
+
+    db.execute(
+        "INSERT INTO agencies (old_agent_name, car_number, car_model, color, new_agent_name, phone, amount_usd, amount_iqd, notes, date, time)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        (
+            old_agent_name.trim(),
+            car_number.trim(),
+            car_model.trim(),
+            color.trim(),
+            new_agent_name.trim(),
+            phone.trim(),
+            amount_usd,
+            amount_iqd,
+            notes.trim(),
+            date.clone(),
+            time,
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let new_id = db.last_insert_rowid();
+
+    // توزيع ارباح الوكالة على حسابات الشركاء
+    if amount_iqd > 0.0 || amount_usd > 0.0 {
+        let mut stmt = db
+            .prepare(
+                "SELECT partner_name, kind FROM partners WHERE kind = 'شريك' AND partner_name != 'فجر الوادي'",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let partner_rows: Vec<(String, String)> = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        drop(stmt);
+
+        let n = partner_rows.len() as f64;
+        let agency_note = format!(
+            "ارباح وكالة {} {}",
+            old_agent_name.trim(),
+            new_agent_name.trim()
         )
         .trim()
         .replace("  ", " ");
 
-        // 4. Find affected partners
-        let mut stmt = db.prepare(
-            "SELECT DISTINCT partner_name, kind FROM partner_transactions WHERE notes = ?1 AND date = ?2"
-        ).map_err(|e| e.to_string())?;
-        
-        let affected_partners: Vec<(String, String)> = stmt.query_map(params![&expense_note, &expense_date], |row| {
+        for (p_name, p_kind) in &partner_rows {
+            db.execute(
+                "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, ?2)",
+                params![p_name, p_kind],
+            )
+            .map_err(|e| e.to_string())?;
+
+            if amount_iqd > 0.0 && n > 0.0 {
+                let share = amount_iqd / n;
+                db.execute(
+                    "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                     VALUES (?1, ?2, 'ايداع ارباح وكالة', ?3, ?4, strftime('%H:%M', 'now', 'localtime'), ?5, 'IQD', 'قاصه')",
+                    params![p_name, p_kind, share, date.trim(), agency_note],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+
+            if amount_usd > 0.0 && n > 0.0 {
+                let share = amount_usd / n;
+                db.execute(
+                    "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                     VALUES (?1, ?2, 'ايداع ارباح وكالة', ?3, ?4, strftime('%H:%M', 'now', 'localtime'), ?5, 'USD', 'قاصه')",
+                    params![p_name, p_kind, share, date.trim(), agency_note],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+
+            recalculate_partner_total(&db, p_name, p_kind)?;
+        }
+    }
+
+    Ok(new_id)
+}
+
+#[tauri::command]
+fn update_agency(
+    state: State<AppState>,
+    id: i64,
+    old_agent_name: String,
+    car_number: String,
+    car_model: String,
+    color: String,
+    new_agent_name: String,
+    phone: String,
+    amount_usd: f64,
+    amount_iqd: f64,
+    notes: String,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let (old_amount_usd, old_amount_iqd): (f64, f64) = db
+        .query_row(
+            "SELECT amount_usd, amount_iqd FROM agencies WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap_or((0.0, 0.0));
+
+    db.execute(
+        "UPDATE agencies SET old_agent_name = ?1, car_number = ?2, car_model = ?3, color = ?4, new_agent_name = ?5, phone = ?6, amount_usd = ?7, amount_iqd = ?8, notes = ?9 WHERE id = ?10",
+        (
+            old_agent_name.trim(),
+            car_number.trim(),
+            car_model.trim(),
+            color.trim(),
+            new_agent_name.trim(),
+            phone.trim(),
+            amount_usd,
+            amount_iqd,
+            notes.trim(),
+            id,
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let diff_usd = amount_usd - old_amount_usd;
+    let diff_iqd = amount_iqd - old_amount_iqd;
+
+    if diff_usd > 0.0 || diff_iqd > 0.0 {
+        let (date, _time) = now_datetime();
+
+        let mut stmt = db
+            .prepare(
+                "SELECT partner_name, kind FROM partners WHERE kind = 'شريك' AND partner_name != 'فجر الوادي'",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let partner_rows: Vec<(String, String)> = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        drop(stmt);
+
+        let n = partner_rows.len() as f64;
+        let agency_note = format!(
+            "ارباح وكالة {} {}",
+            old_agent_name.trim(),
+            new_agent_name.trim()
+        )
+        .trim()
+        .replace("  ", " ");
+
+        for (p_name, p_kind) in &partner_rows {
+            db.execute(
+                "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, ?2)",
+                params![p_name, p_kind],
+            )
+            .map_err(|e| e.to_string())?;
+
+            if diff_iqd > 0.0 && n > 0.0 {
+                let share = diff_iqd / n;
+                db.execute(
+                    "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                     VALUES (?1, ?2, 'ايداع ارباح وكالة', ?3, ?4, strftime('%H:%M', 'now', 'localtime'), ?5, 'IQD', 'قاصه')",
+                    params![p_name, p_kind, share, date.trim(), agency_note],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+
+            if diff_usd > 0.0 && n > 0.0 {
+                let share = diff_usd / n;
+                db.execute(
+                    "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                     VALUES (?1, ?2, 'ايداع ارباح وكالة', ?3, ?4, strftime('%H:%M', 'now', 'localtime'), ?5, 'USD', 'قاصه')",
+                    params![p_name, p_kind, share, date.trim(), agency_note],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+
+            recalculate_partner_total(&db, p_name, p_kind)?;
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_agency(state: State<AppState>, id: i64) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+
+    let (old_agent_name, new_agent_name): (String, String) = db
+        .query_row(
+            "SELECT old_agent_name, new_agent_name FROM agencies WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap_or_default();
+
+    let agency_note = format!(
+        "ارباح وكالة {} {}",
+        old_agent_name.trim(),
+        new_agent_name.trim()
+    )
+    .trim()
+    .replace("  ", " ");
+
+    db.execute(
+        "DELETE FROM partner_transactions WHERE type = 'ايداع ارباح وكالة' AND notes = ?1",
+        [&agency_note],
+    )
+    .map_err(|e| e.to_string())?;
+
+    db.execute("DELETE FROM agency_transactions WHERE agency_id = ?1", [id])
+        .map_err(|e| e.to_string())?;
+    db.execute("DELETE FROM agencies WHERE id = ?1", [id])
+        .map_err(|e| e.to_string())?;
+
+    recalculate_all_partners(&db)?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn get_agency_transactions(
+    state: State<AppState>,
+    agency_id: i64,
+) -> Result<Vec<AgencyTransaction>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = db
+        .prepare(
+            "SELECT id, agency_id, date, time, type_, amount, currency, notes
+             FROM agency_transactions WHERE agency_id = ?1 ORDER BY id ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let transactions = stmt
+        .query_map([agency_id], |row| {
+            Ok(AgencyTransaction {
+                id: row.get(0)?,
+                agency_id: row.get(1)?,
+                date: row.get(2)?,
+                time: row.get(3)?,
+                type_: row.get(4)?,
+                amount: row.get(5)?,
+                currency: row.get(6)?,
+                notes: row.get(7)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(transactions)
+}
+
+#[tauri::command]
+fn add_agency_transaction(
+    state: State<AppState>,
+    agency_id: i64,
+    type_: String,
+    amount: f64,
+    date: String,
+    notes: Option<String>,
+    currency: Option<String>,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let (_, time) = now_datetime();
+
+    db.execute(
+        "INSERT INTO agency_transactions (agency_id, date, time, type_, amount, currency, notes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        (
+            agency_id,
+            date.trim(),
+            time,
+            type_.trim(),
+            amount,
+            currency.as_deref(),
+            notes.as_deref(),
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+
+    // توزيع المبلغ على حسابات الشركاء
+    let (old_agent_name, new_agent_name): (String, String) = db
+        .query_row(
+            "SELECT old_agent_name, new_agent_name FROM agencies WHERE id = ?1",
+            [agency_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let agency_note = format!(
+        "وكالة {} {}",
+        old_agent_name.trim(),
+        new_agent_name.trim()
+    )
+    .trim()
+    .replace("  ", " ");
+
+    let mut stmt = db
+        .prepare(
+            "SELECT partner_name, kind FROM partners WHERE kind = 'شريك' AND partner_name != 'فجر الوادي'",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let partner_rows: Vec<(String, String)> = stmt
+        .query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
-        drop(stmt);
+    drop(stmt);
 
-        // 5. Delete transactions
+    let n = partner_rows.len() as f64;
+    let share = if n > 0.0 { amount / n } else { 0.0 };
+    let partner_tx_type = if type_.trim() == "ايداع" {
+        "ايداع وكالة"
+    } else {
+        "سحب وكالة"
+    };
+
+    for (p_name, p_kind) in &partner_rows {
         db.execute(
-            "DELETE FROM partner_transactions WHERE notes = ?1 AND date = ?2",
-            params![&expense_note, &expense_date],
+            "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, ?2)",
+            params![p_name, p_kind],
         )
         .map_err(|e| e.to_string())?;
 
-        // 6. Recalculate totals
-        for (p_name, p_kind) in affected_partners {
-            if p_name == "فجر الوادي" {
-                recalculate_all_partners(&db)?;
-            } else {
-                recalculate_partner_total(&db, &p_name, &p_kind)?;
-            }
-        }
+        db.execute(
+            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, strftime('%H:%M', 'now', 'localtime'), ?6, ?7, 'قاصه')",
+            params![
+                p_name,
+                p_kind,
+                partner_tx_type,
+                share,
+                date.trim(),
+                agency_note,
+                currency.as_deref(),
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+
+        recalculate_partner_total(&db, p_name, p_kind)?;
     }
 
-    // 7. Delete car expense record
-    db.execute("DELETE FROM car_expenses WHERE id = ?1", [id])
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_agency_transaction(state: State<AppState>, id: i64) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+
+    let (agency_id, tx_date, tx_type): (i64, String, String) = db
+        .query_row(
+            "SELECT agency_id, date, type_ FROM agency_transactions WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
         .map_err(|e| e.to_string())?;
+
+    let (old_agent_name, new_agent_name): (String, String) = db
+        .query_row(
+            "SELECT old_agent_name, new_agent_name FROM agencies WHERE id = ?1",
+            [agency_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let agency_note = format!(
+        "وكالة {} {}",
+        old_agent_name.trim(),
+        new_agent_name.trim()
+    )
+    .trim()
+    .replace("  ", " ");
+
+    let partner_tx_type = if tx_type.trim() == "ايداع" {
+        "ايداع وكالة"
+    } else {
+        "سحب وكالة"
+    };
+
+    db.execute(
+        "DELETE FROM partner_transactions WHERE type = ?1 AND notes = ?2 AND date = ?3",
+        params![partner_tx_type, agency_note, tx_date.trim()],
+    )
+    .map_err(|e| e.to_string())?;
+
+    db.execute("DELETE FROM agency_transactions WHERE id = ?1", [id])
+        .map_err(|e| e.to_string())?;
+
+    recalculate_all_partners(&db)?;
 
     Ok(())
 }
@@ -2585,35 +3544,6 @@ fn get_financial_summary(
 }
 
 #[tauri::command]
-fn get_investors_totals(state: State<AppState>) -> Result<(f64, f64), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-
-    // IQD Total: SUM(ايداع) - SUM(سحب) for kind = 'مستثمر' where currency is not USD
-    let iqd_total: f64 = db
-        .query_row(
-            "SELECT COALESCE(SUM(CASE WHEN type LIKE 'ايداع%' THEN amount WHEN type LIKE 'سحب%' THEN -amount ELSE 0.0 END), 0.0)
-             FROM partner_transactions
-             WHERE kind = 'مستثمر' AND (currency IS NULL OR currency = 'IQD' OR currency = '')",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-
-    // USD Total: SUM(ايداع) - SUM(سحب) for kind = 'مستثمر' where currency is USD
-    let usd_total: f64 = db
-        .query_row(
-            "SELECT COALESCE(SUM(CASE WHEN type LIKE 'ايداع%' THEN amount WHEN type LIKE 'سحب%' THEN -amount ELSE 0.0 END), 0.0)
-             FROM partner_transactions
-             WHERE kind = 'مستثمر' AND currency = 'USD'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-
-    Ok((iqd_total, usd_total))
-}
-
-#[tauri::command]
 fn get_partners_totals(state: State<AppState>, kind: String) -> Result<(f64, f64), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
@@ -2686,15 +3616,20 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let app_data_dir = app
-                .path()
-                .app_data_dir()
-                .map_err(|e| format!("تعذر الوصول لمجلد البيانات: {e}"))?;
+            let app_dir = if cfg!(debug_assertions) {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            } else {
+                env::current_exe()
+                    .map_err(|e| format!("تعذر معرفة مسار البرنامج: {e}"))?
+                    .parent()
+                    .ok_or_else(|| "تعذر معرفة مجلد البرنامج".to_string())?
+                    .to_path_buf()
+            };
 
-            std::fs::create_dir_all(&app_data_dir)
-                .map_err(|e| format!("تعذر إنشاء مجلد البيانات: {e}"))?;
+            std::fs::create_dir_all(&app_dir)
+                .map_err(|e| format!("تعذر إنشاء مجلد قاعدة البيانات: {e}"))?;
 
-            let db_path = app_data_dir.join("fjr_alwadi_data.db");
+            let db_path = app_dir.join("fjr_alwadi_data.db");
             let conn =
                 Connection::open(&db_path).map_err(|e| format!("تعذر فتح قاعدة البيانات: {e}"))?;
 
@@ -2703,10 +3638,6 @@ pub fn run() {
             app.manage(AppState {
                 db: Mutex::new(conn),
             });
-
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.maximize();
-            }
 
             Ok(())
         })
@@ -2719,13 +3650,11 @@ pub fn run() {
             get_partners,
             delete_partner,
             add_partner_transaction,
+            pay_financier_from_partners,
             update_partner_transaction,
             delete_partner_transaction,
             get_partner_transactions,
             get_cash_register_entries,
-            get_cash_register_balance,
-            add_cash_register_entry,
-            delete_cash_register_entry,
             add_expense,
             get_expenses,
             delete_expense,
@@ -2733,9 +3662,15 @@ pub fn run() {
             get_car_expense_records,
             delete_car_expense_record,
             get_financial_summary,
-            get_investors_totals,
             get_partners_totals,
             get_unified_accounts,
+            get_agencies,
+            add_agency,
+            update_agency,
+            delete_agency,
+            get_agency_transactions,
+            add_agency_transaction,
+            delete_agency_transaction,
             open_whatsapp,
         ])
         .run(tauri::generate_context!())

@@ -1,19 +1,32 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { callTauri } from "../api/tauri";
 import { todayIsoDate } from "../utils/dateSegments";
 import { UnifiedDateField } from "./UnifiedDateField";
 import type { ExpenseEntry, Partner } from "../types";
 import { ActionButton, TextInput, PriceInput, PriceDisplay } from "@/components/ui";
 import type { Currency } from "@/components/ui";
+import { PAGE_SIZE } from "../constants";
+import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
+import "../styles/expenses.css";
+import "../styles/cards.css";
+import "../styles/agencies.css";
 
 export function ExpensesTab() {
   const [entries, setEntries] = useState<ExpenseEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
   const [description, setDescription] = useState("");
   const [currency, setCurrency] = useState<Currency>("IQD");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(todayIsoDate());
   const [notes, setNotes] = useState("");
+  const [page, setPage] = useState(0);
+  const [showAddModal, setShowAddModal] = useState(false);
+
+  useEffect(() => {
+    const lastPage = Math.max(0, Math.ceil(entries.length / PAGE_SIZE) - 1);
+    setPage(lastPage);
+  }, [entries.length]);
 
   const load = async () => {
     setLoading(true);
@@ -101,73 +114,171 @@ export function ExpensesTab() {
     void load();
   };
 
+  const handleSort = (key: string) => {
+    setSortConfig((prev) => ({
+      key,
+      direction: prev?.key === key && prev.direction === "asc" ? "desc" : "asc",
+    }));
+  };
+
+  const sortedEntries = useMemo(() => {
+    if (!sortConfig) return entries;
+    const { key, direction } = sortConfig;
+    const sign = direction === "asc" ? 1 : -1;
+    return [...entries].sort((a, b) => {
+      if (key === "id" || key === "amount") {
+        return (Number(a[key] ?? 0) - Number(b[key] ?? 0)) * sign;
+      }
+      if (key === "date") {
+        const dtA = `${a.date}T${a.time || "00:00"}`;
+        const dtB = `${b.date}T${b.time || "00:00"}`;
+        return dtA.localeCompare(dtB) * sign;
+      }
+      const valA = String(a[key as keyof ExpenseEntry] ?? "");
+      const valB = String(b[key as keyof ExpenseEntry] ?? "");
+      return valA.localeCompare(valB, "ar", { numeric: true }) * sign;
+    });
+  }, [entries, sortConfig]);
+
+  const totalPages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages - 1);
+
+  const pageEntries = useMemo(
+    () => sortedEntries.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE),
+    [sortedEntries, currentPage]
+  );
+
   const expenseIqd = entries.filter((e) => e.currency !== "USD").reduce((sum, e) => sum + e.amount, 0);
   const expenseUsd = entries.filter((e) => e.currency === "USD").reduce((sum, e) => sum + e.amount, 0);
 
   return (
     <div className="dashboard">
-      <div className="page-intro" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div>
-          <h2 className="page-intro__title">المصروفات</h2>
-          <p className="page-intro__desc">تسجيل وإدارة المصروفات</p>
+      {/* ── شريط الأدوات الموحد في الأعلى ── */}
+      <div className="cars-page__toolbar unified-toolbar">
+        <div className="unified-toolbar__right">
+          <ActionButton type="button" variant="primary" className="btn-new-car" onClick={() => setShowAddModal(true)}>
+            + إضافة مصروف
+          </ActionButton>
         </div>
-        <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
-          <div className="summary-card-premium summary-card-premium--iqd">
-            <div className="summary-card-premium__label">المصروفات بالدينار</div>
-            <PriceDisplay amount={expenseIqd} />
-          </div>
-          <div className="summary-card-premium summary-card-premium--usd">
-            <div className="summary-card-premium__label">المصروفات بالدولار</div>
+        <div className="unified-toolbar__center"></div>
+        <div className="unified-toolbar__left">
+          <div className="currency-card currency-card--usd">
             <PriceDisplay amount={expenseUsd} currency="USD" />
+          </div>
+          <div className="currency-card currency-card--iqd">
+            <PriceDisplay amount={expenseIqd} />
           </div>
         </div>
       </div>
 
-      <section className="panel-card" style={{ marginBottom: "1rem" }}>
-        <form onSubmit={handleAdd} style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "flex-end" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: "3px", flex: "2", minWidth: "200px" }}>
-            <label className="cf-label">البيان</label>
-            <TextInput
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              required
-              placeholder="وصف المصروف"
-              autoFocus
-            />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "3px", flex: "1", minWidth: "120px" }}>
-            <label className="cf-label">المبلغ</label>
-            <PriceInput value={amount} onChange={setAmount} required currency={currency} onCurrencyChange={setCurrency} />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "3px", flex: "1", minWidth: "150px" }}>
-            <label className="cf-label">التاريخ</label>
-            <UnifiedDateField value={date} onChange={setDate} />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "3px", flex: "1", minWidth: "140px" }}>
-            <label className="cf-label">ملاحظة</label>
-            <TextInput
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="اختياري"
-            />
-          </div>
-          <ActionButton type="submit" variant="primary">
-            + إضافة مصروف
-          </ActionButton>
-        </form>
-      </section>
+      {/* ── نافذة إضافة مصروف منبثقة ── */}
+      {showAddModal && (
+        <div className="modal-overlay" role="presentation" onClick={() => setShowAddModal(false)}>
+          <div
+            className="modal-dialog modal-dialog--has-header"
+            role="dialog"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: "520px" }}
+          >
+            {/* رأس النافذة */}
+            <div className="modal-dialog__header">
+              <h2 className="modal-dialog__header-title">
+                <span style={{ fontSize: "1.2rem", background: "none" }}>💸</span>
+                إضافة مصروف جديد
+              </h2>
+              <button type="button" className="modal-dialog__close" onClick={() => setShowAddModal(false)}>×</button>
+            </div>
 
-      <section className="panel-card">
-        <div className="table-wrapper" style={{ maxHeight: "60vh" }}>
+            <form
+              className="modal-dialog__body"
+              onSubmit={(e) => {
+                void handleAdd(e);
+                setShowAddModal(false);
+              }}
+            >
+              {/* ── قسم البيان والمبلغ ── */}
+              <div className="agency-section">
+                <div className="agency-section__title">تفاصيل المصروف</div>
+                <div className="agency-fields-row" style={{ alignItems: "flex-start" }}>
+                  <div className="agency-field agency-field--lg" style={{ flex: "2 1 220px" }}>
+                    <label className="agency-label">البيان *</label>
+                    <TextInput
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      required
+                      placeholder="وصف المصروف"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="agency-field agency-field--lg" style={{ flex: "1 1 160px" }}>
+                    <label className="agency-label">المبلغ *</label>
+                    <PriceInput
+                      value={amount}
+                      onChange={setAmount}
+                      required
+                      currency={currency}
+                      onCurrencyChange={setCurrency}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* ── قسم التاريخ والملاحظة ── */}
+              <div className="agency-section">
+                <div className="agency-section__title">معلومات إضافية</div>
+                <div className="agency-fields-row" style={{ alignItems: "flex-start" }}>
+                  <div className="agency-field agency-field--md">
+                    <label className="agency-label">التاريخ</label>
+                    <UnifiedDateField value={date} onChange={setDate} />
+                  </div>
+                  <div className="agency-field agency-field--lg">
+                    <label className="agency-label">ملاحظة</label>
+                    <TextInput
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      placeholder="اختياري"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* زر submit مخفي — الإرسال بضغط Enter */}
+              <button type="submit" style={{ display: "none" }} />
+            </form>
+          </div>
+        </div>
+      )}
+
+      {totalPages >= 1 && (
+        <div className="table-page-dots" aria-label="تنقل بين الصفحات">
+          {Array.from({ length: totalPages }, (_, idx) => (
+            <button
+              key={idx}
+              type="button"
+              className={`table-page-dot ${idx === currentPage ? "is-active" : ""}`}
+              onClick={() => setPage(idx)}
+              aria-label={`الصفحة ${idx + 1}`}
+            />
+          ))}
+        </div>
+      )}
+
+      <section
+        className="table-card-container"
+        onWheel={(e) => handlePaginationWheel(e, currentPage, totalPages, setPage)}
+        onKeyDown={(e) => handlePaginationKeyDown(e, currentPage, totalPages, setPage)}
+        tabIndex={0}
+      >
+        <div className="table-wrapper" style={{ flex: 1, minHeight: 0 }}>
           <table className="data-table">
             <thead>
               <tr>
-                <th className="cell-num" style={{ width: "40px" }}>ت</th>
-                <th style={{ width: "110px" }}>التاريخ</th>
-                <th style={{ width: "60px" }}>الساعة</th>
-                <th>البيان</th>
-                <th className="col-money">المبلغ</th>
-                <th>ملاحظات</th>
+                <th className={`cell-num ${sortConfig?.key === "id" ? "th--sorted" : ""}`} onClick={() => handleSort("id")} style={{ width: "40px", cursor: "pointer" }}>ت</th>
+                <th className={sortConfig?.key === "date" ? "th--sorted" : ""} onClick={() => handleSort("date")} style={{ width: "110px", cursor: "pointer" }}>التاريخ</th>
+                <th className={sortConfig?.key === "time" ? "th--sorted" : ""} onClick={() => handleSort("time")} style={{ width: "60px", cursor: "pointer" }}>الساعة</th>
+                <th className={sortConfig?.key === "description" ? "th--sorted" : ""} onClick={() => handleSort("description")} style={{ cursor: "pointer" }}>البيان</th>
+                <th className={`col-money ${sortConfig?.key === "amount" ? "th--sorted" : ""}`} onClick={() => handleSort("amount")} style={{ width: 200 ,cursor: "pointer" }}>المبلغ</th>
+                <th className={sortConfig?.key === "notes" ? "th--sorted" : ""} onClick={() => handleSort("notes")} style={{ cursor: "pointer" }}>ملاحظات</th>
                 <th style={{ width: "50px" }}></th>
               </tr>
             </thead>
@@ -177,7 +288,7 @@ export function ExpensesTab() {
               ) : entries.length === 0 ? (
                 <tr><td colSpan={7} className="empty-cell">لا توجد مصروفات بعد</td></tr>
               ) : (
-                entries.map((entry) => (
+                pageEntries.map((entry) => (
                   <tr key={entry.id}>
                     <td className="cell-num">{entry.id}</td>
                     <td style={{ whiteSpace: "nowrap" }}>{entry.date}</td>
@@ -186,18 +297,30 @@ export function ExpensesTab() {
                     <td className="col-money"><PriceDisplay amount={entry.amount} currency={entry.currency} /></td>
                     <td style={{ fontSize: "var(--fs-sm)" }}>{entry.notes || ""}</td>
                     <td>
-                      <ActionButton
+                      <button
                         type="button"
-                        variant="ghost"
+                        className="partner-inline-delete-btn"
                         onClick={() => handleDelete(entry.id)}
                         title="حذف"
+                        aria-label="حذف المصروف"
                       >
                         ✕
-                      </ActionButton>
+                      </button>
                     </td>
                   </tr>
                 ))
               )}
+              {Array.from({ length: Math.max(0, PAGE_SIZE - pageEntries.length) }).map((_, i) => (
+                <tr key={`empty-${i}`} style={{ pointerEvents: "none" }} className="opacity-25">
+                  <td className="cell-num">&nbsp;</td>
+                  <td>&nbsp;</td>
+                  <td>&nbsp;</td>
+                  <td>&nbsp;</td>
+                  <td className="col-money">&nbsp;</td>
+                  <td>&nbsp;</td>
+                  <td>&nbsp;</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

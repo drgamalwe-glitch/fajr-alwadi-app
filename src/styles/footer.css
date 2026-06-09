@@ -1,0 +1,160 @@
+/* ==========================================================================
+   🔻 الشريط السفلي — Footer Stylesheet
+   ==========================================================================
+   🔧 خصّص كل شيء من متغيرات :root أدناه فقط
+   ========================================================================== */
+
+:root {
+  /* ── خلفية ── */
+  --ft-bg:              var(--backkground-secondary);
+  --ft-blur:            10px;
+  --ft-radius:          var(--all-radius, 18px);
+  --ft-padding:         0 24px;
+  --ft-height:          46px;
+  --ft-shadow:          0 -2px 20px rgba(0,0,0,0.3);
+
+  /* ── حدود ── */
+  --ft-border:          1px solid rgba(255,255,255,0.07);
+
+  /* ── خط مضيء في الأسفل (عكس الشريط العلوي) ── */
+  --ft-line-color:      rgba(212,175,55,0.35);
+
+  /* ── توهجات ملونة ── */
+  --ft-glow-left:       rgba(255, 0, 0, 0.143);    /* أخضر يسار */
+  --ft-glow-right:      rgba(255, 196, 0, 0.127);    /* ذهبي يمين */
+
+  /* ── ألوان النص ── */
+  --ft-brand-color:     #ffffff;
+  --ft-brand-shadow:    none;
+  --ft-label-color:     rgba(255, 0, 0, 0.45);
+  --ft-name-color:      #d4af37;
+  --ft-dot-color:       #d4af37;
+
+  /* ── الانيميشن ── */
+  --ft-anim-duration:   0.5s;
+  --ft-anim-delay:      0.15s;
+}
+
+/* ══════════════════════════════════════════════════════
+   هيكل الشريط السفلي
+══════════════════════════════════════════════════════ */
+.app-footer {
+  position: relative !important;
+  grid-column: 1 / -1 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  min-height: var(--ft-height) !important;
+  padding: var(--ft-padding) !important;
+  background: var(--ft-bg) !important;
+  backdrop-filter: blur(var(--ft-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--ft-blur)) !important;
+  border: var(--ft-border) !important;
+  border-radius: var(--ft-radius) !important;
+  box-shadow: var(--ft-shadow) !important;
+  overflow: hidden !important;
+  animation: ft-in var(--ft-anim-duration) cubic-bezier(0.22, 1, 0.36, 1) var(--ft-anim-delay) both;
+}
+
+@keyframes ft-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── خط مضيء رفيع في الأسفل ── */
+.app-footer::before {
+  content: "" !important;
+  position: absolute !important;
+  bottom: 0 !important;
+  left: 10% !important;
+  right: 10% !important;
+  height: 1px !important;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--ft-glow-left) 30%,
+    var(--ft-line-color) 50%,
+    var(--ft-glow-right) 70%,
+    transparent 100%
+  ) !important;
+  pointer-events: none !important;
+}
+
+/* ── توهجات الخلفية ── */
+.app-footer::after {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  background:
+    radial-gradient(ellipse at 10% 50%, var(--ft-glow-left) 0%, transparent 50%),
+    radial-gradient(ellipse at 90% 50%, var(--ft-glow-right) 0%, transparent 50%) !important;
+  pointer-events: none !important;
+}
+
+/* ── منع !important من override السابق ── */
+.app-footer:hover {
+  background: var(--ft-bg) !important;
+  box-shadow: var(--ft-shadow) !important;
+}
+
+/* ── نص "تم التطوير بواسطة" ── */
+.footer-dev {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: ft-text-in 0.6s cubic-bezier(0.22,1,0.36,1) 0.25s both;
+}
+
+.footer-dev__label {
+  font-size: var(--fs-xs);
+  color: var(--ft-label-color);
+  font-weight: 500;
+}
+
+.footer-dev__name {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--ft-name-color);
+  text-shadow: 0 0 14px rgba(212,175,55,0.4);
+  letter-spacing: 0.02em;
+}
+
+/* ── نص العلامة التجارية ── */
+.footer-brand {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  direction: ltr;
+  animation: ft-text-in 0.6s cubic-bezier(0.22,1,0.36,1) 0.3s both;
+}
+
+.footer-brand__dot {
+  color: var(--ft-dot-color);
+  font-size: 0.7rem;
+  text-shadow: 0 0 10px rgba(212,175,55,0.5);
+  animation: ft-dot-spin 8s linear infinite;
+}
+
+@keyframes ft-dot-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.footer-brand__text {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--ft-brand-color) !important;
+  letter-spacing: 0.08em;
+  background: none !important;
+  text-shadow: var(--ft-brand-shadow) !important;
+  -webkit-text-stroke: none !important;
+}
+
+@keyframes ft-text-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

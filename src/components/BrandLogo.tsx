@@ -18,7 +18,7 @@ const sizeClass: Record<LogoSize, string> = {
 export function BrandLogo({ size = "md", className = "" }: BrandLogoProps) {
   return (
     <img
-      src="/logo-outline.svg"
+      src="/logo.png"
       alt="شعار شركة فجر الوادي لتجارة السيارات"
       className={`brand-logo-img brand-logo-outline ${sizeClass[size]} ${className}`.trim()}
       draggable={false}

@@ -1,0 +1,390 @@
+/* ============================================================
+   🚗 نظام إدارة المعرض — فجر الوادي (Showroom System)
+   ============================================================ */
+
+/* #region 1. متغيرات الألوان (Color Variables) */
+:root {
+  /* ─── الألوان الأساسية (Core Colors) ─── */
+  --car-accent: var(--gold);           /* اللون الأساسي للتوهج والعناوين */
+  --car-accent-light: var(--gold-light);
+  --car-bg-page: rgba(255, 0, 0, 0);             /* خلفية صفحة المعرض */
+  --car-bg-card: var(--backkground-secondary); /* خلفية البطاقات والمربعات */
+  --car-border: rgba(255, 255, 255, 0.08);  /* الحدود العامة */
+  --car-border-light: rgba(255, 255, 255, 0.05);
+
+  /* ─── حالات السيارة (Car Status Colors) ─── */
+  --car-status-available-bg: rgba(208, 132, 9, 0.851);
+  --car-status-available-text: #d8a85a;
+  --car-status-sold-bg: rgba(239, 68, 68, 0.12);
+  --car-status-sold-text: #fca5a5;
+
+  /* ─── ألوان أزرار الدفع (Payment Type Colors) ─── */
+  --car-btn-cash: #10b981;        /* كاش */
+  --car-btn-delivery: #8b5cf6;    /* موعد تسليم */
+  --car-btn-installment: #3b82f6; /* أقساط */
+  
+  /* ─── ألوان التفاعل (Interaction Colors) ─── */
+  --car-row-hover: rgba(216, 168, 90, 0.05);
+  --car-row-selected: rgba(216, 168, 90, 0.12);
+  --car-btn-delete: #f43f5e;
+  --car-bg-inactive: rgba(255, 255, 255, 0.03);
+  --car-bg-inactive-hover: rgba(255, 255, 255, 0.07);
+}
+/* #endregion */
+
+/* #region 2. الخطوط والأحجام (Typography & Sizing) */
+:root {
+  /* ─── أحجام النصوص (Font Sizes) ─── */
+  --car-fs-title: var(--font-size);      /* عناوين الأقسام */
+  --car-fs-label: var(--font-size);     /* تسميات الحقول */
+  --car-fs-body: var(--font-size);      /* نصوص الجداول */
+  --car-fs-button: var(--font-size);       /* نصوص الأزرار */
+  --car-fs-plate: var(--font-size);      /* رقم اللوحة */
+  
+  /* ─── ألوان النصوص (Text Colors) ─── */
+  --car-text-label: var(--font-lable-color);
+  --car-text-primary: var(--font-color);
+  
+  /* ─── أوزان الخطوط (Font Weights) ─── */
+  --car-fw-bold: 700;
+  --car-fw-medium: 500;
+
+  /* ─── المسافات بين المستطيلات (Gaps) ─── */
+  --car-gap-x: 0.35rem;            /* المسافة الأفقية بين المربع والذي بجانبه */
+  --car-gap-y: 2rem;             /* المسافة العمودية بين المربع والذي تحته */
+}
+/* #endregion */
+
+/* #region 3. هيكل صفحة المعرض (Layout & Toolbar) */
+.cars-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--car-bg-page);
+  color: #fff;
+}
+
+.cars-tabs {
+  display: flex !important;
+  gap: 12px !important;
+  margin-bottom: 0 !important;
+}
+
+/* شارة عدد السيارات في التبويب */
+.cars-tab__count {
+  font-size: 0.8em;
+  opacity: 0.7;
+  margin-right: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+/* #endregion */
+
+/* #region 4. تنسيقات الجداول (Showroom & Sold Tables) */
+.cars-data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 4px; /* مسافة بين الصفوف */
+}
+
+.cars-tr {
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.cars-tr:hover {
+  background: var(--car-row-hover) !important;
+}
+
+.cars-tr--selected {
+  background: var(--car-row-selected) !important;
+  box-shadow: inset 3px 0 0 var(--car-accent);
+}
+
+/* تنسيق رقم اللوحة والمحافظة */
+.ct-plate {
+  font-family: var(--title-font-family);
+  font-weight: var(--car-fw-bold);
+  font-size: var(--car-fs-plate);
+  color: var(--car-accent-light);
+}
+
+.ct-province {
+  margin-right: 8px;
+  padding: 2px 8px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 6px;
+  font-size: 1.3rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* تنسيق الأسعار والأرباح */
+.ct-price {
+  font-weight: var(--car-fw-bold);
+}
+
+.ct-profit {
+  font-weight: var(--car-fw-bold);
+  color: #10b981;
+}
+
+.ct-profit-pct {
+  font-size: 1.3rem;
+  opacity: 0.8;
+}
+/* #endregion */
+
+/* #region 5. نموذج إدخال السيارة (Car Form Panel) */
+:root {
+  /* ─── أبعاد ومسافات النموذج (Form Layout) ─── */
+  --car-form-padding: 1.25rem;  /* الحشوة الداخلية للنموذج */
+  
+  /* ─── إعدادات الكونر (Containers Customization) ─── */
+  /* يمكنك تخصيص كل كونر (مربع) بشكل مستقل من هنا */
+  
+  /* 1. كونر مواصفات المركبة (Specs) */
+  --car-specs-bg: var(--backkground-secondary);
+  --car-specs-radius: var(--all-radius);
+  
+  /* 2. كونر تفاصيل الشراء (Purchase) */
+  --car-purchase-bg: var(--backkground-secondary);
+  --car-purchase-radius: var(--all-radius);
+  
+  /* 3. كونر مصاريف السيارة (Expenses) */
+  --car-expenses-bg: var(--backkground-secondary);
+  --car-expenses-radius: var(--all-radius);
+  
+  /* 4. كونر نوع الدفع (Payment Type) */
+  --car-payment-bg: var(--backkground-secondary);
+  --car-payment-radius: var(--all-radius);
+  
+  /* 5. كونر تفاصيل البيع والعميل (Sale) */
+  --car-sale-bg: var(--backkground-secondary);
+  --car-sale-radius: var(--all-radius);
+}
+
+.car-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: var(--car-gap-x);
+}
+
+.car-form-card {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  backdrop-filter: blur(var(--backkground-secondary-blur)) saturate(var(--backkground-secondary-saturate));
+  border: var(--hidod);
+  color: var(--car-text-primary);
+}
+
+.modal-dialog--car label,
+.modal-dialog--car .car-form-label,
+.modal-dialog--car .app-input-label,
+.car-form-card label,
+.car-form-card .car-form-label,
+.car-form-card .app-input-label,
+.car-form-group-title {
+  color: var(--font-lable-color) !important;
+  font-size: var(--font-size) !important;
+}
+
+.modal-dialog--car .input,
+.modal-dialog--car .combo-input,
+.modal-dialog--car .unified-date-field,
+.modal-dialog--car .year-scroll-field,
+.modal-dialog--car .price-input input,
+.modal-dialog--car .date-seg,
+.modal-dialog--car .price-currency-select,
+.modal-dialog--car select,
+.modal-dialog--car input,
+.modal-dialog--car .app-input-field,
+.modal-dialog--car .app-input-field-sm,
+.car-form-card .input,
+.car-form-card .combo-input,
+.car-form-card .unified-date-field,
+.car-form-card .year-scroll-field,
+.car-form-card .price-input input,
+.car-form-card .date-seg,
+.car-form-card .price-currency-select,
+.car-form-card select,
+.car-form-card input,
+.car-form-card .app-input-field,
+.car-form-card .app-input-field-sm,
+.car-form-card button {
+  font-size: var(--font-size) !important;
+  color: var(--font-color) !important;
+}
+
+.car-form-card input::placeholder,
+.car-form-card .textarea::placeholder,
+.car-form-card .app-input-field::placeholder {
+  color: var(--font-lable-color) !important;
+  opacity: 0.7;
+  font-size: var(--font-size) !important;
+}
+
+/* ربط كل كونر بمتغيراته الخاصة */
+.car-form-card--specs    { background: var(--car-specs-bg);    border-radius: var(--car-specs-radius); }
+.car-form-card--purchase { background: var(--car-purchase-bg); border-radius: var(--car-purchase-radius); }
+.car-form-card--expenses { background: var(--car-expenses-bg); border-radius: var(--car-expenses-radius); }
+.car-form-card--payment  { background: var(--car-payment-bg);  border-radius: var(--car-payment-radius); }
+.car-form-card--sale     { background: var(--car-sale-bg);     border-radius: var(--car-sale-radius); }
+
+/* ═══════════════════════════════════════════════════════════════
+   📐 أبعاد مربعات الإدخال — غير height و width لكل مربع
+   ═══════════════════════════════════════════════════════════════ */
+/* ── مواصفات المركبة ── */
+
+/* نوع السيارة */
+.car-form-card .app-input-wrapper:has(#car-model) {
+  height: 42px !important;
+  width: 100% !important;
+}
+
+/* الموديل */
+.car-form-card .app-input-wrapper:has(#car-year) {
+  height: 42px !important;
+  width: 100% !important;
+}
+.car-form-card .grid > div:has(#car-year) {
+  max-width: 500px !important;
+  min-width: 120px !important;
+}
+
+/* اللون */
+.car-form-card .app-input-wrapper:has(#car-color) {
+  height: 42px !important;
+  width: 100% !important;
+}
+
+/* رقم اللوحة */
+.car-form-card .app-input-wrapper:has(#car-num) {
+  height: 42px !important;
+  width: 100% !important;
+}
+
+/* رقم الشاصي */
+.car-form-card .app-input-wrapper:has(#car-chassis) {
+  height: 42px !important;
+  width: 100% !important;
+}
+
+/* ── تفاصيل الشراء ── */
+
+/* سعر الشراء */
+.car-form-card .app-input-wrapper:has(#car-purchase) {
+  height: 42px !important;
+  width: 100% !important;
+}
+
+/* ── تفاصيل البيع ── */
+
+/* سعر البيع */
+.car-form-card .app-input-wrapper:has(#car-selling) {
+  height: 42px !important;
+  width: 100% !important;
+}
+
+/* اسم المشتري */
+.car-form-card .app-input-wrapper:has(#buyer-name) {
+  height: 42px !important;
+  width: 100% !important;
+}
+
+/* رقم الهاتف */
+.car-form-card .app-input-wrapper:has(#buyer-phone) {
+  height: 42px !important;
+  width: 100% !important;
+}
+
+/* المقدمة المستلمة */
+.car-form-card .app-input-wrapper:has(#amount-paid) {
+  height: 42px !important;
+  width: 100% !important;
+}
+
+/* المتبقي */
+.car-form-card .app-input-wrapper:has(#amount-remaining) {
+  height: 42px !important;
+  width: 100% !important;
+}
+
+/* موعد التسليم / تاريخ القسط الأول */
+.car-form-card .app-input-wrapper:has(#first-payment-date) {
+  height: 42px !important;
+  width: 100% !important;
+}
+
+/* الأشهر (عدد الأقساط) */
+.car-form-card .app-input-wrapper:has(#installment-months) {
+  height: 42px !important;
+  width: 100% !important;
+}
+
+.partner-form-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  padding: 20px;
+}
+
+/* تنسيق حقول الإدخال عند الخطأ */
+.input--error {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2) !important;
+}
+
+/* عناوين المجموعات داخل النموذج */
+.car-form-group-title {
+  text-align: center;
+  background: var(--red);
+  font-size: var(--car-fs-title);
+  font-weight: var(--car-fw-bold);
+  color: #fff !important;
+  margin: -12px -12px 12px -12px;
+  padding: 10px 12px;
+  border-radius: var(--all-radius) var(--all-radius) 0 0;
+}
+
+/* تخصيص أزرار أنواع الدفع */
+.payment-type-btn {
+  flex: 1;
+  padding: 10px;
+  border-radius: 10px;
+  font-weight: var(--car-fw-bold);
+  font-size: var(--font-size) !important;
+  transition: all 0.2s;
+  background: var(--car-bg-inactive);
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.payment-type-btn--active {
+  color: #fff !important;
+  transform: scale(1.02);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.payment-type-btn--green.payment-type-btn--active { background: var(--car-btn-cash) !important; }
+.payment-type-btn--purple.payment-type-btn--active { background: var(--account-mostathmir) !important; }
+.payment-type-btn--blue.payment-type-btn--active { background: var(--account-mumawil) !important; }
+.payment-type-btn--orange.payment-type-btn--active { background: var(--account-sharika) !important; }
+
+.payment-type-btn--purple:hover:not(.payment-type-btn--active) { background: color-mix(in srgb, var(--account-mostathmir) 20%, transparent) !important; }
+.payment-type-btn--blue:hover:not(.payment-type-btn--active) { background: color-mix(in srgb, var(--account-mumawil) 20%, transparent) !important; }
+.payment-type-btn--orange:hover:not(.payment-type-btn--active) { background: color-mix(in srgb, var(--account-sharika) 20%, transparent) !important; }
+/* #endregion */
+
+/* #region 6. نافذة البحث (Search Popup) — الكود في searching.css */
+/* #endregion */
+
+/* #region 7. التوافقية (Responsive) */
+@media (max-width: 1024px) {
+  .cars-page .data-table th:nth-child(6),
+  .cars-page .data-table td:nth-child(6) {
+    display: none; /* إخفاء الشاصي في الشاشات الصغيرة */
+  }
+}
+/* #endregion */
