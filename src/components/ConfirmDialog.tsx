@@ -1,4 +1,6 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
+import { ActionButton } from "./ui/ActionButton";
+import { GoldFxButton } from "./ui/GoldFxButton";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -23,42 +25,55 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Enter" && !loading) {
+        e.preventDefault();
+        onConfirm();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [open, loading, onConfirm]);
+
   if (!open) return null;
 
   return (
-    <div className="modal-overlay" role="presentation" onClick={onCancel}>
+    <div className="fx-confirm-overlay" role="presentation" onClick={onCancel}>
       <div
-        className="modal-dialog"
+        className="fx-confirm-dialog"
         role="alertdialog"
         aria-labelledby="confirm-title"
         aria-describedby="confirm-message"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 id="confirm-title" className="modal-dialog__title">
+        <h3 id="confirm-title" className="fx-confirm-title">
           {title}
         </h3>
-        <p id="confirm-message" className="modal-dialog__message">
+        <p id="confirm-message" className="fx-confirm-message">
           {message}
         </p>
-        <div className="modal-dialog__actions">
-          <button
+        <div className="fx-confirm-actions">
+          <GoldFxButton
             type="button"
-            className={`btn ${danger ? "btn--danger-solid" : "btn--primary"}`}
+            variant={danger ? "red" : "green"}
             onClick={onConfirm}
             disabled={loading}
           >
-            {loading ? "جاري التنفيذ..." : confirmLabel}
-          </button>
-          <button
+            <span className="gold-fx-btn__label">{loading ? "جاري التنفيذ..." : confirmLabel}</span>
+          </GoldFxButton>
+          <ActionButton
             type="button"
-            className="btn btn--ghost"
+            variant="ghost"
             onClick={onCancel}
             disabled={loading}
           >
             {cancelLabel}
-          </button>
+          </ActionButton>
         </div>
       </div>
     </div>
   );
 }
+

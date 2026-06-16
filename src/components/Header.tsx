@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import type { TabId } from "../types";
 import { BrandLogo } from "./BrandLogo";
-import { ActionButton } from "./ui/ActionButton";
+import { GoldFxButton } from "./ui/GoldFxButton";
 
 interface HeaderProps {
   activeTab: TabId;
@@ -11,6 +11,15 @@ interface HeaderProps {
   onAgenciesSearchToggle?: () => void;
   onDeposit?: () => void;
   onWithdraw?: () => void;
+  depositLabel?: string;
+  withdrawLabel?: string;
+  onAddAccount?: () => void;
+  onAddCar?: () => void;
+  onAddAgency?: () => void;
+  onAddExpense?: () => void;
+  onAddDistribute?: () => void;
+  onSaveCar?: () => void;
+  onCancelCar?: () => void;
 }
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
@@ -19,6 +28,7 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: "partners-financial", label: "حسابات العمــلاء", icon: "❖" },
   { id: "agencies", label: "الوكـــــــــــــــــــــــــــالات", icon: "✉" },
   { id: "expenses", label: "المصروفــــــــــــــــــات", icon: "◉" },
+  { id: "profit-distribution", label: "توزيـــــــع الاربـــــــاح", icon: "⚖" },
   { id: "financial-accounts", label: "القاصــــــــــــــــــــــــــــــــة", icon: "♢" },
   { id: "financial-transactions", label: "سجــل المعاملات", icon: "⇄" },
 ];
@@ -31,6 +41,15 @@ export function Header({
   onAgenciesSearchToggle,
   onDeposit,
   onWithdraw,
+  depositLabel = "إيداع",
+  withdrawLabel = "سحب",
+  onAddAccount,
+  onAddCar,
+  onAddAgency,
+  onAddExpense,
+  onAddDistribute,
+  onSaveCar,
+  onCancelCar,
 }: HeaderProps) {
   // track double-click on cars tab
   const lastCarsClickAt = useRef(0);
@@ -99,22 +118,99 @@ export function Header({
         ))}
       </nav>
 
-      {onDeposit && onWithdraw && (
-        <div className="sidebar-quick-actions">
-          <ActionButton
-            variant="success"
-            onClick={onDeposit}
-            className="w-full justify-center sidebar-action-btn"
-          >
-            إيداع
-          </ActionButton>
-          <ActionButton
-            variant="secondary"
-            onClick={onWithdraw}
-            className="w-full justify-center sidebar-action-btn"
-          >
-            سحب
-          </ActionButton>
+      {/* ── خط فاصل + أزرار العمليات ── */}
+      {(onAddAccount || onAddCar || onAddAgency || onAddExpense || onAddDistribute || (onDeposit && onWithdraw) || (onSaveCar && onCancelCar)) && (
+        <div className="sidebar-actions-area">
+          <div className="sidebar-divider" />
+          {onAddAccount && !onDeposit && (
+              <GoldFxButton
+                type="button"
+                variant="gold"
+                onClick={onAddAccount}
+              >
+                <span className="gold-fx-btn__icon">+</span>
+                <span className="gold-fx-btn__label">إضافة حساب</span>
+              </GoldFxButton>
+          )}
+          {onAddCar && !onSaveCar && (
+             <GoldFxButton
+                type="button"
+                variant="gold"
+                onClick={onAddCar}
+              >
+                <span className="gold-fx-btn__icon">+</span>
+                <span className="gold-fx-btn__label">إضافة سيارة</span>
+              </GoldFxButton>
+          )}
+          {onSaveCar && onCancelCar && (
+            <div className="sidebar-action-btns">
+              <GoldFxButton
+                type="button"
+                variant="green"
+                onClick={onSaveCar}
+              >
+
+                <span className="gold-fx-btn__label">حفظ</span>
+              </GoldFxButton>
+              <GoldFxButton
+                type="button"
+                variant="red"
+                onClick={onCancelCar}
+              >
+                <span className="gold-fx-btn__label">إلغاء الأمر</span>
+              </GoldFxButton>
+            </div>
+          )}
+          {onAddAgency && (
+            <GoldFxButton
+              type="button"
+              variant="gold"
+              onClick={onAddAgency}
+            >
+              <span className="gold-fx-btn__icon">+</span>
+              <span className="gold-fx-btn__label">إضافة وكالة</span>
+            </GoldFxButton>
+          )}
+          {onAddExpense && (
+            <GoldFxButton
+              type="button"
+              variant="gold"
+              onClick={onAddExpense}
+            >
+              <span className="gold-fx-btn__icon">+</span>
+              <span className="gold-fx-btn__label">إضافة مصروف</span>
+            </GoldFxButton>
+          )}
+          {onAddDistribute && (
+            <GoldFxButton
+              type="button"
+              variant="green"
+              onClick={onAddDistribute}
+            >
+              <span className="gold-fx-btn__icon">⚖</span>
+              <span className="gold-fx-btn__label">توزيع الأرباح</span>
+            </GoldFxButton>
+          )}
+          {onDeposit && onWithdraw && (
+            <div className="sidebar-action-btns">
+              <GoldFxButton
+                type="button"
+                variant="green"
+                onClick={onDeposit}
+              >
+                <span className="gold-fx-btn__icon">↓</span>
+                <span className="gold-fx-btn__label">{depositLabel}</span>
+              </GoldFxButton>
+              <GoldFxButton
+                type="button"
+                variant="red"
+                onClick={onWithdraw}
+              >
+                <span className="gold-fx-btn__icon">↑</span>
+                <span className="gold-fx-btn__label">{withdrawLabel}</span>
+              </GoldFxButton>
+            </div>
+          )}
         </div>
       )}
     </aside>

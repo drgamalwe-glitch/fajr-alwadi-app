@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { callTauri } from "../api/tauri";
 import type { Agency, AgencyTransaction } from "../types";
-import { ActionButton, NumberInput, PriceDisplay, PriceInput, TextInput } from "@/components/ui";
+import { NumberInput, PriceDisplay, PriceInput, TextInput } from "@/components/ui";
 import { YearScrollField } from "./YearScrollField";
 import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
@@ -9,16 +9,14 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { UnifiedDateField } from "./UnifiedDateField";
 import { englishKeyboardToArabic } from "../utils/keyboardLayout";
 import { toEnglishDigits } from "../utils/numberInput";
-import "../styles/partners.css";
-import "../styles/cards.css";
-import "../styles/cars.css";
-import "../styles/agencies.css";
-import "../styles/searching.css";
+import { todayIsoDate } from "../utils/dateSegments";
+import { GoldFxButton } from "./ui/GoldFxButton";
 
 interface AgenciesTabProps {
   onRefresh: () => Promise<void>;
   agenciesSearchOpen?: boolean;
   onAgenciesSearchClose?: () => void;
+  onAddAgencyChange?: (onAddAgency: { action: () => void } | null) => void;
 }
 
 const AGENCIES_TABS: { id: "list" | "details"; label: string }[] = [
@@ -26,7 +24,7 @@ const AGENCIES_TABS: { id: "list" | "details"; label: string }[] = [
   { id: "details", label: "تفاصيل" },
 ];
 
-export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClose }: AgenciesTabProps) {
+export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClose, onAddAgencyChange }: AgenciesTabProps) {
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
@@ -39,7 +37,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   const [saving, setSaving] = useState(false);
   const [showTxModal, setShowTxModal] = useState(false);
 
-  const [txForm, setTxForm] = useState({ type: "ايداع" as string, amount: 0, date: new Date().toISOString().slice(0, 10), notes: "", currency: "IQD" as string });
+  const [txForm, setTxForm] = useState({ type: "ايداع" as string, amount: 0, date: todayIsoDate(), notes: "", currency: "IQD" as string });
   const [txCurrency, setTxCurrency] = useState<"IQD" | "USD">("IQD");
 
   const [deleteTxConfirm, setDeleteTxConfirm] = useState<AgencyTransaction | null>(null);
@@ -60,68 +58,100 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   }, []);
 
   const handleAddNewAgency = useCallback(async () => {
-    try {
-      const newId = await callTauri<number>("add_agency", {
-        oldAgentName: "",
-        carNumber: "",
-        carModel: "",
-        color: "",
-        newAgentName: "",
-        phone: "",
-        amountUsd: 0,
-        amountIqd: 0,
-        notes: "",
-      });
-      const today = new Date().toISOString().slice(0, 10);
-      const newAgency: Agency = {
-        id: newId,
-        old_agent_name: "",
-        car_number: "",
-        car_model: "",
-        color: "",
-        new_agent_name: "",
-        phone: "",
-        amount_usd: 0,
-        amount_iqd: 0,
-        notes: "",
-        date: today,
-        time: "",
-      };
-      setSelectedAgency(newAgency);
-      setAgenciesTab("details");
-      await fetchAgencies();
-    } catch (err) {
-      console.error("Failed to create agency:", err);
-    }
-  }, [fetchAgencies]);
-
-  const handleAutoSave = useCallback((updatedAgency: Agency) => {
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    saveTimeoutRef.current = setTimeout(async () => {
-      try {
-        await callTauri("update_agency", {
-          id: updatedAgency.id,
-          oldAgentName: updatedAgency.old_agent_name,
-          newAgentName: updatedAgency.new_agent_name,
-          carNumber: updatedAgency.car_number,
-          carModel: updatedAgency.car_model,
-          color: updatedAgency.color,
-          phone: toEnglishDigits(updatedAgency.phone),
-          amountIqd: Number(updatedAgency.amount_iqd) || 0,
-          amountUsd: Number(updatedAgency.amount_usd) || 0,
-          notes: updatedAgency.notes
-        });
-        const data = await callTauri<Agency[]>("get_agencies");
-        if (data) setAgencies(data);
-      } catch (err) {
-        console.error("Auto-save failed:", err);
-      }
-    }, 1000);
+    const today = todayIsoDate();
+    const newAgency: Agency = {
+      id: -Date.now(),
+      old_agent_name: "",
+      car_type: "",
+      car_number: "",
+      car_model: "",
+      color: "",
+      new_agent_name: "",
+      phone: "",
+      amount_usd: 0,
+      amount_iqd: 0,
+      notes: "",
+      date: today,
+      time: "",
+    };
+    setSelectedAgency(newAgency);
+    setAgenciesTab("details");
   }, []);
+
+  const handleSaveAgency = async () => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    if (selectedAgency) {
+      try {
+        if (selectedAgency.id < 0) {
+          const newId = await callTauri<number>("add_agency", {
+            oldAgentName: selectedAgency.old_agent_name,
+            carType: selectedAgency.car_type,
+            carNumber: selectedAgency.car_number,
+            carModel: selectedAgency.car_model,
+            color: selectedAgency.color,
+            newAgentName: selectedAgency.new_agent_name,
+            phone: toEnglishDigits(selectedAgency.phone),
+            amountIqd: Number(selectedAgency.amount_iqd) || 0,
+            amountUsd: Number(selectedAgency.amount_usd) || 0,
+            notes: selectedAgency.notes,
+          });
+          selectedAgency.id = newId;
+        } else {
+          await callTauri("update_agency", {
+            id: selectedAgency.id,
+            oldAgentName: selectedAgency.old_agent_name,
+            carType: selectedAgency.car_type,
+            newAgentName: selectedAgency.new_agent_name,
+            carNumber: selectedAgency.car_number,
+            carModel: selectedAgency.car_model,
+            color: selectedAgency.color,
+            phone: toEnglishDigits(selectedAgency.phone),
+            amountIqd: Number(selectedAgency.amount_iqd) || 0,
+            amountUsd: Number(selectedAgency.amount_usd) || 0,
+            notes: selectedAgency.notes,
+          });
+        }
+        await fetchAgencies();
+      } catch (err) {
+        console.error("Final save failed:", err);
+      }
+    }
+    setSelectedAgency(null);
+    setAgenciesTab("list");
+  };
+
+  const handleCancelAgency = async () => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    if (selectedAgency) {
+      if (selectedAgency.id > 0 && !selectedAgency.old_agent_name.trim() && !selectedAgency.new_agent_name.trim()) {
+        try {
+          await callTauri("delete_agency", { id: selectedAgency.id });
+          await fetchAgencies();
+        } catch (err) {
+          console.error("Failed to delete empty agency on cancel:", err);
+        }
+      }
+    }
+    setSelectedAgency(null);
+    setAgenciesTab("list");
+  };
 
   useEffect(() => {
     void fetchAgencies();
   }, [fetchAgencies]);
+
+  useEffect(() => {
+    onAddAgencyChange?.({ action: handleAddNewAgency });
+    return () => {
+      onAddAgencyChange?.(null);
+    };
+  }, [onAddAgencyChange, handleAddNewAgency]);
 
   const filteredAgencies = useMemo(() => {
     if (!agenciesSearch.trim()) return agencies;
@@ -159,7 +189,9 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
     if (!deleteAgencyConfirm) return;
     setSaving(true);
     try {
-      await callTauri("delete_agency", { id: deleteAgencyConfirm.id });
+      if (deleteAgencyConfirm.id > 0) {
+        await callTauri("delete_agency", { id: deleteAgencyConfirm.id });
+      }
       if (selectedAgency?.id === deleteAgencyConfirm.id) {
         setSelectedAgency(null);
         setAgenciesTab("list");
@@ -175,7 +207,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   };
 
   const resetTxForm = (type: string) => {
-    setTxForm({ type, amount: 0, date: new Date().toISOString().slice(0, 10), notes: "", currency: "IQD" });
+    setTxForm({ type, amount: 0, date: todayIsoDate(), notes: "", currency: "IQD" });
   };
 
   const handleAddTransaction = async (e: React.FormEvent) => {
@@ -183,7 +215,17 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
     if (!selectedAgency) return;
     const dateStr = txForm.date?.trim() || "";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr) || !Number.isFinite(txForm.amount) || txForm.amount <= 0) {
-      alert("الرجاء إدخال مبلغ صحيح والتاريخ");
+      // تمييز الحقل الفارغ
+      const formEl = (e.target as HTMLElement).closest?.('.form') || document.querySelector('.modal-dialog .form');
+      if (formEl) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+          const dateInput = formEl.querySelector('input[type="text"]') as HTMLElement;
+          if (dateInput) { dateInput.classList.add("input--error"); dateInput.focus(); }
+        } else {
+          const amountInput = formEl.querySelector('input[inputmode]') as HTMLElement;
+          if (amountInput) { amountInput.classList.add("input--error"); amountInput.focus(); }
+        }
+      }
       return;
     }
     setSaving(true);
@@ -244,14 +286,27 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
           onAgenciesSearchClose?.();
           return;
         }
-        setShowTxModal(false);
-        setDeleteTxConfirm(null);
-        setDeleteAgencyConfirm(null);
+        if (showTxModal) {
+          setShowTxModal(false);
+          return;
+        }
+        if (deleteTxConfirm) {
+          setDeleteTxConfirm(null);
+          return;
+        }
+        if (deleteAgencyConfirm) {
+          setDeleteAgencyConfirm(null);
+          return;
+        }
+        if (agenciesTab === "details") {
+          void handleCancelAgency();
+          return;
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [agenciesSearchOpen, onAgenciesSearchClose]);
+  }, [agenciesSearchOpen, onAgenciesSearchClose, agenciesTab, showTxModal, deleteTxConfirm, deleteAgencyConfirm]);
 
   return (
     <div className="customers-page agencies-page">
@@ -369,15 +424,15 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                           <td className="col-phone">{agency.phone || "—"}</td>
                           <td className="col-money cell-bold">
                             <div style={{ display: "flex", gap: "10px" }}>
-  {agency.amount_usd > 0 && (
-    <span style={{ color: "#10b981", fontSize: "var(--fs-xs)", direction: "ltr", display: "inline-block" }}>
-      <PriceDisplay amount={agency.amount_usd} currency="USD" noColor />
-    </span>
-  )}
-  {agency.amount_iqd > 0 && (
-    <span style={{ color: "#d8a85a", fontSize: "var(--fs-xs)", direction: "ltr", display: "inline-block" }}>
-      <PriceDisplay amount={agency.amount_iqd} noColor />
-    </span>
+                              {agency.amount_usd > 0 && (
+                                <span style={{ color: "var(--green)", fontSize: "var(--fs-xs)", direction: "ltr", display: "inline-block" }}>
+                                  <PriceDisplay amount={agency.amount_usd} currency="USD" noColor />
+                                </span>
+                              )}
+                              {agency.amount_iqd > 0 && (
+                                <span style={{ color: "var(--gold)", fontSize: "var(--fs-xs)", direction: "ltr", display: "inline-block" }}>
+                                  <PriceDisplay amount={agency.amount_iqd} noColor />
+                                </span>
                               )}
                               {agency.amount_usd <= 0 && agency.amount_iqd <= 0 && <span style={{ color: "rgba(255,255,255,0.3)" }}>—</span>}
                             </div>
@@ -418,19 +473,17 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
           </section>
         </>
       ) : agenciesTab === "details" && selectedAgency ? (
-        <div className="agency-unified-details">
+        <div className="agency-unified-details" onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void handleSaveAgency(); } }}>
 
-          {/* ── صف 1: الوكيلان والتاريخ ── */}
+          {/* ── صف 1: الوكيلان والهاتف ── */}
           <div className="agency-section">
-            <div className="agency-section__title">بيانات الوكالة</div>
             <div className="agency-fields-row">
               <div className="agency-field agency-field--lg">
                 <label className="agency-label">الوكيل القديم</label>
                 <TextInput
                   inputSize="sm"
                   value={selectedAgency.old_agent_name}
-                  onChange={(e) => { const next = { ...selectedAgency, old_agent_name: englishKeyboardToArabic(e.target.value) }; setSelectedAgency(next); handleAutoSave(next); }}
-                  placeholder="اسم الوكيل القديم"
+                  onChange={(e) => { setSelectedAgency({ ...selectedAgency, old_agent_name: englishKeyboardToArabic(e.target.value) }); }}
                 />
               </div>
               <div className="agency-field agency-field--lg">
@@ -438,42 +491,33 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                 <TextInput
                   inputSize="sm"
                   value={selectedAgency.new_agent_name}
-                  onChange={(e) => { const next = { ...selectedAgency, new_agent_name: englishKeyboardToArabic(e.target.value) }; setSelectedAgency(next); handleAutoSave(next); }}
-                  placeholder="اسم الوكيل الجديد"
+                  onChange={(e) => { setSelectedAgency({ ...selectedAgency, new_agent_name: englishKeyboardToArabic(e.target.value) }); }}
                 />
               </div>
-              <div className="agency-field agency-field--md">
+              <div className="agency-field agency-field--lg">
                 <label className="agency-label">رقم الهاتف</label>
                 <TextInput
                   inputSize="sm"
                   value={selectedAgency.phone || ""}
                   autoComplete="new-password"
                   dir="ltr"
-                  placeholder="07XX XXX XXXX"
-                  onInput={(e: React.FormEvent<HTMLInputElement>) => { const v = toEnglishDigits((e.target as HTMLInputElement).value); const next = { ...selectedAgency, phone: v }; setSelectedAgency(next); handleAutoSave(next); }}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => { const v = toEnglishDigits(e.target.value); const next = { ...selectedAgency, phone: v }; setSelectedAgency(next); handleAutoSave(next); }}
-                  onBlur={(e: React.FocusEvent<HTMLInputElement>) => { const v = toEnglishDigits(e.target.value); const next = { ...selectedAgency, phone: v }; setSelectedAgency(next); handleAutoSave(next); }}
+                  onInput={(e: React.FormEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, phone: toEnglishDigits((e.target as HTMLInputElement).value) }); }}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, phone: toEnglishDigits(e.target.value) }); }}
+                  onBlur={(e: React.FocusEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, phone: toEnglishDigits(e.target.value) }); }}
                 />
               </div>
             </div>
           </div>
 
-          {/* ── صف 2: بيانات السيارة ── */}
+          {/* ── صف 2: نوع السيارة والموديل ── */}
           <div className="agency-section">
-            <div className="agency-section__title">بيانات السيارة</div>
             <div className="agency-fields-row">
-              <div className="agency-field agency-field--sm">
-                <label className="agency-label">رقم اللوحة</label>
+              <div className="agency-field agency-field--lg">
+                <label className="agency-label">نوع السيارة</label>
                 <TextInput
                   inputSize="sm"
-                  type="text"
-                  inputMode="decimal"
-                  value={selectedAgency.car_number}
-                  dir="ltr"
-                  onInput={(e: React.FormEvent<HTMLInputElement>) => { const v = toEnglishDigits((e.target as HTMLInputElement).value).replace(/\D/g, ""); const next = { ...selectedAgency, car_number: v }; setSelectedAgency(next); handleAutoSave(next); }}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => { const v = toEnglishDigits(e.target.value).replace(/\D/g, ""); const next = { ...selectedAgency, car_number: v }; setSelectedAgency(next); handleAutoSave(next); }}
-                  onBlur={(e: React.FocusEvent<HTMLInputElement>) => { const v = toEnglishDigits(e.target.value).replace(/\D/g, ""); const next = { ...selectedAgency, car_number: v }; setSelectedAgency(next); handleAutoSave(next); }}
-                  placeholder="12345"
+                  value={selectedAgency.car_type || ""}
+                  onChange={(e) => { setSelectedAgency({ ...selectedAgency, car_type: e.target.value }); }}
                 />
               </div>
               <div className="agency-field agency-field--sm">
@@ -481,7 +525,26 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                 <YearScrollField
                   id="agency-car-year"
                   value={selectedAgency.car_model}
-                  onChange={(year) => { const next = { ...selectedAgency, car_model: year }; setSelectedAgency(next); handleAutoSave(next); }}
+                  onChange={(year) => { setSelectedAgency({ ...selectedAgency, car_model: year }); }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* ── صف 3: رقم اللوحة واللون ── */}
+          <div className="agency-section">
+            <div className="agency-fields-row">
+              <div className="agency-field agency-field--md">
+                <label className="agency-label">رقم اللوحة</label>
+                <TextInput
+                  inputSize="sm"
+                  type="text"
+                  inputMode="decimal"
+                  value={selectedAgency.car_number}
+                  dir="ltr"
+                  onInput={(e: React.FormEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits((e.target as HTMLInputElement).value).replace(/\D/g, "") }); }}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits(e.target.value).replace(/\D/g, "") }); }}
+                  onBlur={(e: React.FocusEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits(e.target.value).replace(/\D/g, "") }); }}
                 />
               </div>
               <div className="agency-field agency-field--md">
@@ -489,33 +552,51 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                 <TextInput
                   inputSize="sm"
                   value={selectedAgency.color || ""}
-                  onChange={(e) => { const next = { ...selectedAgency, color: e.target.value }; setSelectedAgency(next); handleAutoSave(next); }}
-                  placeholder="اللون"
+                  onChange={(e) => { setSelectedAgency({ ...selectedAgency, color: e.target.value }); }}
                 />
               </div>
             </div>
           </div>
 
-          {/* ── صف 3: المبالغ ── */}
+          {/* ── صف 4: المبالغ ── */}
           <div className="agency-section">
-            <div className="agency-section__title">المبالغ المالية</div>
             <div className="agency-fields-row">
               <div className="agency-field agency-field--lg">
                 <label className="agency-label">المبلغ (دينار عراقي)</label>
                 <PriceInput
                   value={String(selectedAgency.amount_iqd)}
-                  onChange={(val) => { const next = { ...selectedAgency, amount_iqd: Number(val) || 0 }; setSelectedAgency(next); handleAutoSave(next); }}
+                  onChange={(val) => { setSelectedAgency({ ...selectedAgency, amount_iqd: Number(val) || 0 }); }}
                 />
               </div>
               <div className="agency-field agency-field--lg">
                 <label className="agency-label">المبلغ (دولار أمريكي)</label>
                 <PriceInput
                   value={String(selectedAgency.amount_usd)}
-                  onChange={(val) => { const next = { ...selectedAgency, amount_usd: Number(val) || 0 }; setSelectedAgency(next); handleAutoSave(next); }}
+                  onChange={(val) => { setSelectedAgency({ ...selectedAgency, amount_usd: Number(val) || 0 }); }}
                   currency="USD"
                 />
               </div>
             </div>
+          </div>
+
+          {/* ── أزرار العمليات ── */}
+          <div style={{ display: "flex", gap: "12px", marginTop: "24px", justifyContent: "flex-start", direction: "rtl" }}>
+            <GoldFxButton
+              type="button"
+              variant="green"
+              style={{ flex: 1, margin: 0 }}
+              onClick={handleSaveAgency}
+            >
+              <span className="gold-fx-btn__label">حفظ</span>
+            </GoldFxButton>
+            <GoldFxButton
+              type="button"
+              variant="gray"
+              style={{ flex: 1, margin: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.7)" }}
+              onClick={handleCancelAgency}
+            >
+              <span className="gold-fx-btn__label">إلغاء الأمر</span>
+            </GoldFxButton>
           </div>
 
         </div>
@@ -626,7 +707,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                         >
                           <div className="search-popup__item-main">
                             <span className="search-popup__item-model">{highlight(agency.old_agent_name)}</span>
-                            <span style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.75rem" }}>→ {agency.new_agent_name}</span>
+                            <span style={{ color: "rgba(255,255,255,0.4)", fontSize: "var(--fs-xs)" }}>→ {agency.new_agent_name}</span>
                           </div>
                           <div className="search-popup__item-sub">
                             <span className="search-popup__item-plate">{highlight(agency.car_number)}</span>
@@ -696,18 +777,31 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                   className="input"
                   value={txForm.notes}
                   onChange={(e) => setTxForm({ ...txForm, notes: e.target.value })}
+                  onFocus={(e) => setTimeout(() => e.target.select(), 0)}
                   placeholder="اختياري"
                   rows={2}
                   style={{ resize: "none", width: "100%" }}
                 />
               </div>
-              <div className="modal-dialog__actions">
-                <ActionButton type="button" variant="ghost" onClick={() => setShowTxModal(false)}>
-                  إلغاء
-                </ActionButton>
-                <ActionButton type="submit" variant={txForm.type === "ايداع" ? "success" : "secondary"} disabled={saving}>
-                  {saving ? "جاري الحفظ..." : "إضافة"}
-                </ActionButton>
+              {/* ── أزرار العمليات ── */}
+              <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
+                <GoldFxButton
+                  type="submit"
+                  variant="green"
+                  style={{ flex: 1, margin: 0 }}
+                  disabled={saving}
+                >
+
+                  <span className="gold-fx-btn__label">{saving ? "جاري الحفظ..." : "حفظ"}</span>
+                </GoldFxButton>
+                <GoldFxButton
+                  type="button"
+                  variant="red"
+                  style={{ flex: 1, margin: 0 }}
+                  onClick={() => setShowTxModal(false)}
+                >
+                  <span className="gold-fx-btn__label">إلغاء الأمر</span>
+                </GoldFxButton>
               </div>
             </form>
           </div>

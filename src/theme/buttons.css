@@ -1,0 +1,1061 @@
+/* ═══════════════════════════════════════════════════════════════════════════════
+   🎨  لوحة ألوان الأزرار — BUTTON COLOR PALETTE
+   ═══════════════════════════════════════════════════════════════════════════════
+   غيّر القيم في هذا القسم لتغيير ألوان جميع الأزرار في البرنامج دفعة واحدة
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ الإعدادات العامة للأزرار — Base Button Settings
+     ───────────────────────────────────────────────────────────────────────────── */
+  --btn-height: 44px;
+  --btn-min-width: 120px;
+  --btn-padding: 0 20px;
+  --btn-radius: var(--all-radius);
+  --btn-font: var(--font-family);
+  --btn-font-size: var(--font-size);
+  --btn-font-weight: 700;
+  --btn-gap: 8px;
+  --shared-height: 60px;
+  --shared-width: 240px;
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 1. الزر الأساسي (أحمر) — Primary "#btn-primary"
+        للاستخدام: إجراء رئيسي، تأكيد مهم
+     ───────────────────────────────────────────────────────────────────────────── */
+  --btn-primary-bg: var(--red);
+  --btn-primary-color: var(--white);
+  --btn-primary-border: 1px solid color-mix(in srgb, var(--white) 10%, transparent);
+  --btn-primary-shadow: 0 4px 18px color-mix(in srgb, var(--red) 30%, transparent), inset 0 1px 0 color-mix(in srgb, var(--white) 20%, transparent);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 2. زر النجاح / الحفظ (أخضر) — Success "#btn-success"
+        للاستخدام: حفظ، تأكيد، إيداع
+     ───────────────────────────────────────────────────────────────────────────── */
+  --btn-success-bg: color-mix(in srgb, var(--green) 85%, black);
+  --btn-success-color: var(--white);
+  --btn-success-border: 1px solid color-mix(in srgb, var(--green) 40%, transparent);
+  --btn-success-shadow: 0 4px 20px color-mix(in srgb, var(--green) 25%, transparent), inset 0 1px 0 color-mix(in srgb, var(--white) 20%, transparent);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 3. زر الخطر / الحذف (أحمر غامق) — Danger "#btn-danger"
+        للاستخدام: حذف، إلغاء أمر خطير
+     ───────────────────────────────────────────────────────────────────────────── */
+  --btn-danger-bg: #aa0000;
+  --btn-danger-color: var(--white);
+  --btn-danger-border: 1px solid #960000;
+  --btn-danger-shadow: 0 4px 20px color-mix(in srgb, var(--red) 25%, transparent), inset 0 1px 0 color-mix(in srgb, var(--white) 15%, transparent);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 4. زر الإضافة (ذهبي) — Add/Gold "#btn-gold"
+        للاستخدام: إضافة حساب، سيارة، وكالة، مصروف
+     ───────────────────────────────────────────────────────────────────────────── */
+  --btn-gold-bg-start: #d8a85a;
+  --btn-gold-bg-mid: #c4943a;
+  --btn-gold-bg-end: #a07830;
+  --btn-gold-bg: var(--btn-gold-bg-mid);
+  --btn-gold-color: var(--white);
+  --btn-gold-border: 1px solid rgba(216, 168, 90, 0.4);
+  --btn-gold-shadow: 0 4px 20px rgba(216, 168, 90, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  --btn-gold-pulse-glow: rgba(216, 168, 90, 0.6);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 5. زر الحفظ (أخضر زمردي) — Save Green "#btn-green"
+        للاستخدام: حفظ، تأكيد، موافقة
+     ───────────────────────────────────────────────────────────────────────────── */
+  --btn-green-bg-start: #2ecc71;
+  --btn-green-bg-mid: #27ae60;
+  --btn-green-bg-end: #1e824c;
+  --btn-green-bg: var(--btn-green-bg-mid);
+  --btn-green-color: var(--white);
+  --btn-green-border: 1px solid rgba(46, 204, 113, 0.4);
+  --btn-green-shadow: 0 4px 20px rgba(46, 204, 113, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  --btn-green-pulse-glow: rgba(46, 204, 113, 0.6);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 6. زر الإلغاء (رمادي) — Cancel Gray "#btn-gray"
+        للاستخدام: إلغاء أمر، رجوع، لا
+     ───────────────────────────────────────────────────────────────────────────── */
+  --btn-gray-bg-start: #7f8c8d;
+  --btn-gray-bg-mid: #5a6364;
+  --btn-gray-bg-end: #3e4445;
+  --btn-gray-bg: var(--btn-gray-bg-mid);
+  --btn-gray-color: var(--white);
+  --btn-gray-border: 1px solid rgba(127, 140, 141, 0.4);
+  --btn-gray-shadow: 0 4px 20px rgba(127, 140, 141, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  --btn-gray-pulse-glow: rgba(127, 140, 141, 0.6);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 7. زر الإيداع (أخضر) — Deposit "#btn-deposit"
+        للاستخدام: إيداع نقدي
+     ───────────────────────────────────────────────────────────────────────────── */
+  --btn-deposit-bg: var(--green);
+  --btn-deposit-color: var(--white);
+  --btn-deposit-border: 1px solid color-mix(in srgb, var(--green) 40%, transparent);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 8. زر السحب (أحمر) — Withdraw "#btn-withdraw"
+        للاستخدام: سحب نقدي
+     ───────────────────────────────────────────────────────────────────────────── */
+  --btn-withdraw-bg: var(--red);
+  --btn-withdraw-color: var(--white);
+  --btn-withdraw-border: 1px solid color-mix(in srgb, var(--red) 40%, transparent);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 9. الزر الثانوي (نصف شفاف) — Secondary "#btn-secondary"
+        للاستخدام: إجراءات ثانوية
+     ───────────────────────────────────────────────────────────────────────────── */
+  --btn-secondary-bg: rgba(255, 255, 255, 0.1);
+  --btn-secondary-color: var(--white);
+  --btn-secondary-border: 1px solid rgba(255, 255, 255, 0.3);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 10. الزر الشفاف — Ghost "#btn-ghost"
+         للاستخدام: إجراءات خفيفة
+     ───────────────────────────────────────────────────────────────────────────── */
+  --btn-ghost-bg: transparent;
+  --btn-ghost-color: rgba(255, 255, 255, 0.55);
+  --btn-ghost-border: 1px solid rgba(255, 255, 255, 0.3);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 11. الزر الصغير — Small Button
+         للاستخدام: أزرار جانبية صغيرة
+     ───────────────────────────────────────────────────────────────────────────── */
+  --sbtn-color: color-mix(in srgb, var(--labletext) 65%, transparent);
+  --sbtn-bg: transparent;
+  --sbtn-border: 1px solid color-mix(in srgb, var(--black) 6%, transparent);
+  --sbtn-hover-bg: color-mix(in srgb, var(--black) 3%, transparent);
+  --sbtn-active-bg: var(--red);
+  --sbtn-active-border: 1px solid color-mix(in srgb, var(--red) 25%, transparent);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 12. زر التبويب الأول — Tab 1 Button
+         للاستخدام: تبويبات القسم الأول
+     ───────────────────────────────────────────────────────────────────────────── */
+  --t1-bg: var(--lable-bg);
+  --t1-color: var(--labletext);
+  --t1-border: 1px solid var(--bg2);
+  --t1-active-bg: var(--lable-bg);
+  --t1-active-color: var(--labletext);
+  --t1-active-border: 1px solid var(--bg2);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 13. زر التبويب الثاني — Tab 2 Button
+         للاستخدام: تبويبات القسم الثاني
+     ───────────────────────────────────────────────────────────────────────────── */
+  --t2-bg: var(--lable-bg);
+  --t2-color: var(--labletext);
+  --t2-border: 1px solid var(--bg2);
+  --t2-active-bg: var(--lable-bg);
+  --t2-active-color: var(--labletext);
+  --t2-active-border: 1px solid var(--bg2);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 14. أزرار القائمة الجانبية — Sidebar Navigation Buttons
+         للاستخدام: التنقل في الشريط الجانبي
+     ───────────────────────────────────────────────────────────────────────────── */
+  --sb-btn-color: color-mix(in srgb, var(--white) 58%, transparent);
+  --sb-btn-bg: transparent;
+  --sb-btn-radius: 12px;
+  --sb-btn-height: 46px;
+  --sb-btn-font: var(--font-size2);
+  --sb-btn-icon-size: 18px;
+  --sb-btn-gap: 10px;
+  --sb-btn-hover-bg: color-mix(in srgb, var(--red) 4%, transparent);
+  --sb-btn-hover-color: color-mix(in srgb, var(--white) 88%, transparent);
+  --sb-btn-hover-border: 1px solid color-mix(in srgb, var(--red) 12%, transparent);
+  --sb-btn-active-bg: color-mix(in srgb, var(--red) 8%, transparent);
+  --sb-btn-active-color: var(--white);
+  --sb-btn-active-border: 1px solid color-mix(in srgb, var(--red) 25%, transparent);
+  --sb-btn-active-shadow: 0 4px 12px color-mix(in srgb, var(--red) 10%, transparent), inset 0 1px 0 color-mix(in srgb, var(--white) 50%, transparent);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 15. ألوان أيقونات القائمة الجانبية — Sidebar Icon Colors
+     ───────────────────────────────────────────────────────────────────────────── */
+  --sb-icon-dashboard: var(--gold);
+  --sb-icon-cars: var(--red);
+  --sb-icon-partners: var(--green);
+  --sb-icon-agencies: var(--gold);
+  --sb-icon-expenses: var(--red);
+  --sb-icon-accounts: var(--gold);
+  --sb-icon-transactions: var(--red);
+  --sb-active-bar-color: var(--red);
+  --sb-active-bar-width: 3px;
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 16. زر تسوية القسط — Settle Installment Button
+         للاستخدام: تسوية أقساط الشركاء
+     ───────────────────────────────────────────────────────────────────────────── */
+  --btn-settle-bg: rgba(16, 185, 129, 0.1);
+  --btn-settle-color: #10b981;
+  --btn-settle-border: 1px solid rgba(16, 185, 129, 0.2);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 17. أزرار الدفع — Payment Type Buttons
+         للاستخدام: اختيار طريقة الدفع (قاصة، ماستر، خارجي)
+     ───────────────────────────────────────────────────────────────────────────── */
+  --btn-payment-qasa-bg: #d8a85a;
+  --btn-payment-master-bg: #818cf8;
+  --btn-payment-external-bg: #fb923c;
+  --btn-payment-green-bg: var(--green);
+  --btn-payment-purple-bg: #a855f7;
+  --btn-payment-blue-bg: #3b82f6;
+  --btn-payment-orange-bg: #f97316;
+  --btn-payment-cyan-bg: #06b6d4;
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 18. أزرار المودال (monbathiqa) — Modal Buttons
+         للاستخدام: تأكيد، خطر، إلغاء في النوافذ المنبثقة
+     ───────────────────────────────────────────────────────────────────────────── */
+  --mb-btn-confirm-bg: var(--green);
+  --mb-btn-confirm-text: var(--white);
+  --mb-btn-confirm-border: 1px solid color-mix(in srgb, var(--green) 30%, transparent);
+  --mb-btn-confirm-shadow: 0 4px 16px color-mix(in srgb, var(--green) 25%, transparent);
+
+  --mb-btn-danger-bg: var(--red);
+  --mb-btn-danger-text: var(--white);
+  --mb-btn-danger-border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
+  --mb-btn-danger-shadow: 0 4px 16px color-mix(in srgb, var(--red) 25%, transparent);
+
+  --mb-btn-cancel-bg: rgba(255, 255, 255, 0.06);
+  --mb-btn-cancel-text: rgba(255, 255, 255, 0.7);
+  --mb-btn-cancel-border: 1px solid rgba(255, 255, 255, 0.1);
+  --mb-btn-cancel-hover-bg: rgba(255, 255, 255, 0.1);
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+     ◆ 19. أزرار الشركاء حسب النوع — Partner Kind Buttons
+         للاستخدام: أزرار تصفية الشركاء (شريك، ممول، مقترض، مستثمر، شركة)
+     ───────────────────────────────────────────────────────────────────────────── */
+  --btn-partner-sharik-bg: #10b981;
+  --btn-partner-mumuol-bg: #3b82f6;
+  --btn-partner-moqtarid-bg: #f59e0b;
+  --btn-partner-mustathmir-bg: #8b5cf6;
+  --btn-partner-sharika-bg: #ec4899;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   أنماط الأزرار — BUTTON STYLES
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ◆ Sidebar Button (.sidebar-btn)
+   ───────────────────────────────────────────────────────────────────────────── */
+.sidebar-btn {
+  display: flex !important;
+  align-items: center !important;
+  gap: 20px !important;
+  width: 100% !important;
+  padding: 12px 18px !important;
+  margin-bottom: 15px !important;
+  border-radius: var(--all-radius) !important;
+  cursor: pointer !important;
+  font-family: var(--btn-font) !important;
+  font-size: var(--font-size) !important;
+  font-weight: var(--fw-bold) !important;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, filter 0.15s ease !important;
+  color: var(--sbtn-color) !important;
+  background: var(--sbtn-bg) !important;
+  border: var(--sbtn-border) !important;
+  box-shadow: none !important;
+}
+
+.sidebar-btn__icon {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 28px !important;
+  height: 28px !important;
+  font-size: 1.1rem !important;
+  border-radius: var(--all-radius) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.sidebar-btn:hover {
+  color: var(--labletext) !important;
+  background: var(--sbtn-hover-bg) !important;
+  border-color: rgba(255, 255, 255, 0.25) !important;
+  transform: translateX(-4px);
+}
+
+.sidebar-btn:hover .sidebar-btn__icon {
+  color: var(--gold) !important;
+  border-color: rgba(215, 168, 0, 0.3) !important;
+}
+
+.sidebar-btn--active {
+  color: var(--labletext) !important;
+  background: var(--sbtn-active-bg) !important;
+  border-color: var(--sbtn-active-border) !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ◆ Top Tab Button 1 (.top-btn-one)
+   ───────────────────────────────────────────────────────────────────────────── */
+.top-btn-one {
+  width: var(--shared-width) !important;
+  height: var(--shared-height) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 6px !important;
+  cursor: pointer;
+  font-family: var(--btn-font);
+  font-size: var(--font-size2);
+  font-weight: var(--fw-bold);
+  text-align: center;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  background: color-mix(in srgb, var(--lable-bg) calc(var(--lable-opacity-inactive) * 100%), transparent) !important;
+  color: var(--labletext) !important;
+  border: var(--t1-border) !important;
+  flex: none !important;
+  white-space: nowrap !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.top-btn-one::before {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  transform: scaleX(0);
+  transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.top-btn-one:hover {
+  background: color-mix(in srgb, var(--lable-bg) calc(var(--lable-opacity-hover) * 100%), transparent) !important;
+  color: var(--labletext) !important;
+  border-color: var(--bg2) !important;
+}
+
+.top-btn-one:hover::before {
+  transform: scaleX(1);
+}
+
+.top-btn-one:active {
+  transition: all 0.1s ease;
+}
+
+.top-btn-one--active {
+  background: color-mix(in srgb, var(--lable-bg) 100%, transparent) !important;
+  color: var(--labletext) !important;
+  border-color: var(--bg2) !important;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--white) 10%, transparent) !important;
+}
+
+.top-btn-one--active:hover {
+  background: color-mix(in srgb, var(--lable-bg) 100%, transparent) !important;
+  border-color: var(--bg2) !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ◆ Top Tab Button 2 (.top-btn-two)
+   ───────────────────────────────────────────────────────────────────────────── */
+.top-btn-two {
+  width: var(--shared-width) !important;
+  height: var(--shared-height) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 6px !important;
+  cursor: pointer;
+  font-family: var(--btn-font);
+  font-size: var(--font-size2);
+  font-weight: var(--fw-bold);
+  text-align: center;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  background: color-mix(in srgb, var(--lable-bg) calc(var(--lable-opacity-inactive) * 100%), transparent) !important;
+  color: var(--labletext) !important;
+  border: var(--t2-border) !important;
+  flex: none !important;
+  white-space: nowrap !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.top-btn-two::before {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  transform: scaleX(0);
+  transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.top-btn-two:hover {
+  background: color-mix(in srgb, var(--lable-bg) calc(var(--lable-opacity-hover) * 100%), transparent) !important;
+  color: var(--labletext) !important;
+  border-color: var(--bg2) !important;
+}
+
+.top-btn-two:hover::before {
+  transform: scaleX(1);
+}
+
+.top-btn-two:active {
+  transition: all 0.1s ease;
+}
+
+.top-btn-two--active {
+  background: color-mix(in srgb, var(--lable-bg) 100%, transparent) !important;
+  color: var(--labletext) !important;
+  border-color: var(--bg2) !important;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--white) 10%, transparent) !important;
+}
+
+.top-btn-two--active:hover {
+  background: color-mix(in srgb, var(--lable-bg) 100%, transparent) !important;
+  border-color: var(--bg2) !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ◆ Currency Card (.currency-card)
+   ───────────────────────────────────────────────────────────────────────────── */
+.currency-card {
+  flex: none !important;
+  white-space: nowrap !important;
+}
+
+.currency-card:hover {
+  transform: translateY(-2px);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ◆ General Button (.btn, .act-btn)
+   ───────────────────────────────────────────────────────────────────────────── */
+.btn,
+.act-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--btn-gap);
+  height: var(--btn-height);
+  min-width: var(--btn-min-width);
+  padding: var(--btn-padding);
+  border-radius: var(--btn-radius);
+  font-family: var(--btn-font);
+  font-size: var(--btn-font-size);
+  font-weight: var(--btn-font-weight);
+  cursor: pointer;
+  background: #18181b;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  color: #ffffff;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.btn-horizon {
+}
+
+.act-btn:hover {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.btn:disabled,
+.act-btn:disabled {
+  opacity: 0.42 !important;
+  cursor: not-allowed !important;
+  pointer-events: none !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ◆ Action Button Variants (act-btn--primary / success / danger / secondary / ghost)
+   ───────────────────────────────────────────────────────────────────────────── */
+.act-btn--primary,
+.btn--primary {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-color);
+  border: var(--btn-primary-border);
+  box-shadow: var(--btn-primary-shadow);
+}
+
+.act-btn--primary:hover:not(:disabled),
+.btn--primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+  box-shadow: 0 6px 28px color-mix(in srgb, var(--red) 35%, transparent), inset 0 1px 0 color-mix(in srgb, var(--white) 25%, transparent);
+}
+
+.act-btn--success,
+.btn--success {
+  background: var(--btn-success-bg);
+  color: var(--btn-success-color);
+  border: var(--btn-success-border);
+  box-shadow: var(--btn-success-shadow);
+}
+
+.act-btn--success:hover:not(:disabled),
+.btn--success:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--green) 100%, black);
+  border-color: rgba(255, 255, 255, 0.43);
+  box-shadow: 0 6px 28px color-mix(in srgb, var(--green) 35%, transparent), inset 0 1px 0 color-mix(in srgb, var(--white) 25%, transparent);
+}
+
+.act-btn--danger,
+.btn--danger,
+.btn--danger-solid {
+  background: var(--btn-danger-bg);
+  color: var(--btn-danger-color);
+  border: var(--btn-danger-border);
+  box-shadow: var(--btn-danger-shadow);
+}
+
+.act-btn--danger:hover:not(:disabled),
+.btn--danger:hover:not(:disabled),
+.btn--danger-solid:hover:not(:disabled) {
+  background: #cc0000;
+  border-color: rgba(255, 255, 255, 0.43);
+  box-shadow: 0 6px 28px color-mix(in srgb, var(--red) 35%, transparent), inset 0 1px 0 color-mix(in srgb, var(--white) 20%, transparent);
+}
+
+.act-btn--secondary,
+.btn--secondary {
+  background: var(--btn-secondary-bg);
+  color: var(--btn-secondary-color);
+  border: var(--btn-secondary-border);
+  box-shadow: none;
+}
+
+.act-btn--secondary:hover:not(:disabled),
+.btn--secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.43);
+}
+
+.act-btn--ghost,
+.btn--ghost {
+  background: var(--btn-ghost-bg);
+  color: var(--btn-ghost-color);
+  border: var(--btn-ghost-border);
+  min-width: auto;
+}
+
+.act-btn--ghost:hover:not(:disabled),
+.btn--ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.43);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ◆ Gold FX Buttons (gold-fx-btn)
+     - gold-fx-btn--gold    : إضافة (ذهبي)
+     - gold-fx-btn--green   : حفظ/تأكيد (أخضر)
+     - gold-fx-btn--red     : حذف/خطر (أحمر)
+     - gold-fx-btn--gray    : إلغاء (رمادي)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* تعريفات الألوان لكل نوع */
+.gold-fx-btn--gold {
+  --gold-fx-bg-start: var(--btn-gold-bg-start);
+  --gold-fx-bg-mid: var(--btn-gold-bg-mid);
+  --gold-fx-bg-end: var(--btn-gold-bg-end);
+  --gold-fx-text: var(--btn-gold-color);
+  --gold-fx-border: var(--btn-gold-border);
+  --gold-fx-shadow: var(--btn-gold-shadow);
+  --gold-fx-pulse-glow: var(--btn-gold-pulse-glow);
+}
+
+.gold-fx-btn--green {
+  --gold-fx-bg-start: var(--btn-green-bg-start);
+  --gold-fx-bg-mid: var(--btn-green-bg-mid);
+  --gold-fx-bg-end: var(--btn-green-bg-end);
+  --gold-fx-text: var(--btn-green-color);
+  --gold-fx-border: var(--btn-green-border);
+  --gold-fx-shadow: var(--btn-green-shadow);
+  --gold-fx-pulse-glow: var(--btn-green-pulse-glow);
+}
+
+.gold-fx-btn--red {
+  --gold-fx-bg-start: #e74c3c;
+  --gold-fx-bg-mid: #c0392b;
+  --gold-fx-bg-end: #962d22;
+  --gold-fx-text: #ffffff;
+  --gold-fx-border: 1px solid rgba(231, 76, 60, 0.4);
+  --gold-fx-shadow: 0 4px 20px rgba(231, 76, 60, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  --gold-fx-pulse-glow: rgba(231, 76, 60, 0.6);
+}
+
+.gold-fx-btn--gray {
+  --gold-fx-bg-start: var(--btn-gray-bg-start);
+  --gold-fx-bg-mid: var(--btn-gray-bg-mid);
+  --gold-fx-bg-end: var(--btn-gray-bg-end);
+  --gold-fx-text: var(--btn-gray-color);
+  --gold-fx-border: var(--btn-gray-border);
+  --gold-fx-shadow: var(--btn-gray-shadow);
+  --gold-fx-pulse-glow: var(--btn-gray-pulse-glow);
+}
+
+/* الهيكل الأساسي */
+.gold-fx-btn {
+  width: 100%;
+  height: var(--btn-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+  border-radius: 6px;
+  background: var(--gold-fx-bg-mid, var(--gold));
+  border: var(--gold-fx-border, 1px solid rgba(216, 168, 90, 0.4));
+  color: var(--gold-fx-text, var(--white));
+  font-size: var(--gold-fx-font-size, var(--btn-font-size));
+  font-family: inherit;
+  font-weight: var(--gold-fx-font-weight, var(--btn-font-weight));
+  cursor: pointer;
+  box-shadow: var(--gold-fx-shadow, none);
+  text-decoration: none;
+  z-index: 1;
+  direction: rtl;
+  margin-top: 4px;
+}
+
+.gold-fx-btn:hover {
+  filter: brightness(1.08);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.gold-fx-btn__icon {
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.gold-fx-btn__label {
+  letter-spacing: 0.5px;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.2);
+}
+
+/* الأشكال الخاصة */
+.gold-fx-btn.gold-fx-back-btn {
+  width: var(--shared-height, 60px) !important;
+  height: var(--shared-height, 60px) !important;
+  min-width: var(--shared-height, 60px) !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: 12px !important;
+  font-size: 1.4rem !important;
+  font-weight: 800 !important;
+  flex-shrink: 0 !important;
+  justify-content: center !important;
+}
+
+.gold-fx-btn.gold-fx-back-btn .gold-fx-btn__label {
+  display: none !important;
+}
+
+.gold-fx-btn.gold-fx-back-btn .gold-fx-btn__icon {
+  font-size: 1.5rem !important;
+  margin: 0 !important;
+}
+
+.gold-fx-btn.gold-fx-btn--sidebar-action {
+  width: 180px !important;
+  height: 46px !important;
+  margin: 0 !important;
+  border-radius: 12px !important;
+  font-size: var(--font-size) !important;
+  font-weight: 800 !important;
+  justify-content: center !important;
+}
+
+.sidebar-actions-area {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sidebar-actions-area .gold-fx-btn {
+  width: 270px !important;
+  margin: 0 auto !important;
+  margin-bottom: 15px !important;
+}
+
+.sidebar-action-btns {
+  display: flex;
+  gap: 10px;
+  width: 290px;
+  margin: 0 auto !important;
+  justify-content: space-between;
+}
+
+.sidebar-action-btns .gold-fx-btn {
+  width: 180px !important;
+  margin: 0 !important;
+  margin-bottom: 15px !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ◆ New Car Button (.btn-new-car)
+   ───────────────────────────────────────────────────────────────────────────── */
+.btn-new-car {
+  min-width: 160px;
+  height: var(--btn-height);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ◆ Settle Installment Button (.btn-settle-installment)
+   ───────────────────────────────────────────────────────────────────────────── */
+.btn-settle-installment {
+  padding: 4px 12px;
+  height: 32px;
+  min-width: auto;
+  background: var(--btn-settle-bg);
+  color: var(--btn-settle-color);
+  border: var(--btn-settle-border);
+  border-radius: 8px;
+  font-size: var(--fs-xs);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ◆ Sidebar Navigation Buttons (.app-sidebar .nav-btn)
+   ───────────────────────────────────────────────────────────────────────────── */
+.app-sidebar .nav-btn[data-tab="dashboard"] {
+  --sb-btn-icon-color: var(--sb-icon-dashboard);
+}
+
+.app-sidebar .nav-btn[data-tab="cars"] {
+  --sb-btn-icon-color: var(--sb-icon-cars);
+}
+
+.app-sidebar .nav-btn[data-tab="partners-financial"] {
+  --sb-btn-icon-color: var(--sb-icon-partners);
+}
+
+.app-sidebar .nav-btn[data-tab="agencies"] {
+  --sb-btn-icon-color: var(--sb-icon-agencies);
+}
+
+.app-sidebar .nav-btn[data-tab="expenses"] {
+  --sb-btn-icon-color: var(--sb-icon-expenses);
+}
+
+.app-sidebar .nav-btn[data-tab="accounts"] {
+  --sb-btn-icon-color: var(--sb-icon-accounts);
+}
+
+.app-sidebar .nav-btn[data-tab="transactions"] {
+  --sb-btn-icon-color: var(--sb-icon-transactions);
+}
+
+.app-sidebar .nav-btn[data-tab="financial-accounts"] {
+  --sb-btn-icon-color: var(--sb-icon-accounts);
+}
+
+.app-sidebar .nav-btn[data-tab="financial-transactions"] {
+  --sb-btn-icon-color: var(--sb-icon-transactions);
+}
+
+.app-sidebar .nav-btn::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 20%;
+  height: 60%;
+  width: var(--sb-active-bar-width);
+  border-radius: 10px 0 0 10px;
+  background: var(--sb-btn-icon-color, var(--sb-active-bar-color));
+  opacity: 0;
+  transform: scaleY(0.4);
+  transition: opacity 0.22s, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.app-sidebar .nav-btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(ellipse at 80% 50%, var(--sb-btn-hover-bg) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.25s;
+  pointer-events: none;
+}
+
+.app-sidebar .nav-btn:hover::after {
+  opacity: 1;
+}
+
+.app-sidebar .nav-btn:hover {
+  background: color-mix(in srgb, var(--lable-bg) calc(var(--lable-opacity-hover) * 100%), transparent) !important;
+  border: 1px solid var(--bg2) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: var(--labletext) !important;
+}
+
+.app-sidebar .nav-btn--active {
+  background: color-mix(in srgb, var(--lable-bg) 100%, transparent) !important;
+  color: var(--labletext) !important;
+  border: 1px solid var(--bg2) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10) !important;
+  transform: none;
+}
+
+.app-sidebar .nav-btn--active:hover {
+  background: color-mix(in srgb, var(--lable-bg) 100%, transparent) !important;
+  color: var(--labletext) !important;
+  border: 1px solid var(--bg2) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+}
+
+.app-sidebar .nav-btn__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  font-size: 1.3rem;
+  color: var(--labletext) !important;
+  transition: color 0.22s;
+}
+
+.app-sidebar .nav-btn--active .nav-btn__icon,
+.app-sidebar .nav-btn:hover .nav-btn__icon {
+  color: var(--labletext) !important;
+}
+
+.app-sidebar .nav-btn__label {
+  flex: 1;
+  text-align: right;
+  letter-spacing: 0.02em;
+  font-size: var(--font-size2);
+  font-weight: 700;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ◆ Tab Count Badge (.cars-tab__count)
+   ───────────────────────────────────────────────────────────────────────────── */
+.cars-tab__count {
+  font-size: 0.8em;
+  opacity: 0.7;
+  margin-right: 4px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ◆ Partner Modal Actions (.partner-modal-actions)
+   ───────────────────────────────────────────────────────────────────────────── */
+.partner-modal-actions {
+  display: flex !important;
+  gap: 12px !important;
+  direction: rtl;
+  padding: 15px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: 15px;
+  justify-content: flex-start;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ◆ Payment Type Buttons (.payment-type-btn)
+     للاستخدام: اختيار طريقة الدفع
+   ───────────────────────────────────────────────────────────────────────────── */
+.payment-type-btn {
+  flex: 1;
+  padding: 10px;
+  border-radius: 10px;
+  font-weight: var(--car-fw-bold);
+  font-size: var(--font-size) !important;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+  background: var(--car-bg-inactive);
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.payment-type-btn--active {
+  color: #fff !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.payment-type-btn--qasa.payment-type-btn--active {
+  background: var(--btn-payment-qasa-bg) !important;
+  color: #000 !important;
+}
+
+.payment-type-btn--master.payment-type-btn--active {
+  background: var(--btn-payment-master-bg) !important;
+  color: #fff !important;
+}
+
+.payment-type-btn--external.payment-type-btn--active {
+  background: var(--btn-payment-external-bg) !important;
+  color: #fff !important;
+}
+
+.payment-type-btn--green.payment-type-btn--active {
+  background: var(--btn-payment-green-bg) !important;
+}
+
+.payment-type-btn--purple.payment-type-btn--active {
+  background: var(--btn-payment-purple-bg) !important;
+}
+
+.payment-type-btn--blue.payment-type-btn--active {
+  background: var(--btn-payment-blue-bg) !important;
+}
+
+.payment-type-btn--orange.payment-type-btn--active {
+  background: var(--btn-payment-orange-bg) !important;
+}
+
+.payment-type-btn--cyan.payment-type-btn--active {
+  background: var(--btn-payment-cyan-bg) !important;
+}
+
+.payment-type-btn--purple:hover:not(.payment-type-btn--active) {
+  background: color-mix(in srgb, var(--btn-payment-purple-bg) 20%, transparent) !important;
+}
+
+.payment-type-btn--blue:hover:not(.payment-type-btn--active) {
+  background: color-mix(in srgb, var(--btn-payment-blue-bg) 20%, transparent) !important;
+}
+
+.payment-type-btn--orange:hover:not(.payment-type-btn--active) {
+  background: color-mix(in srgb, var(--btn-payment-orange-bg) 20%, transparent) !important;
+}
+
+.payment-type-btn--cyan:hover:not(.payment-type-btn--active) {
+  background: color-mix(in srgb, var(--btn-payment-cyan-bg) 20%, transparent) !important;
+}
+
+/* Payment type — partner kinds */
+.payment-type-btn--partner-شريك.payment-type-btn--active {
+  background: var(--btn-partner-sharik-bg) !important;
+  color: var(--gold) !important;
+  font-weight: var(--fw-extrabold) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.2) !important;
+}
+
+.payment-type-btn--partner-شريك:hover:not(.payment-type-btn--active) {
+  background: rgba(16, 185, 129, 0.08) !important;
+  color: var(--btn-partner-sharik-bg) !important;
+  border-color: rgba(16, 185, 129, 0.25) !important;
+}
+
+.payment-type-btn--partner-ممول.payment-type-btn--active {
+  background: var(--btn-partner-mumuol-bg) !important;
+  color: #ffffff !important;
+  font-weight: var(--fw-extrabold) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.2) !important;
+}
+
+.payment-type-btn--partner-ممول:hover:not(.payment-type-btn--active) {
+  background: rgba(59, 130, 246, 0.08) !important;
+  color: var(--btn-partner-mumuol-bg) !important;
+  border-color: rgba(59, 130, 246, 0.25) !important;
+}
+
+.payment-type-btn--partner-مقترض.payment-type-btn--active {
+  background: var(--btn-partner-moqtarid-bg) !important;
+  color: #ffffff !important;
+  font-weight: var(--fw-extrabold) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.2) !important;
+}
+
+.payment-type-btn--partner-مقترض:hover:not(.payment-type-btn--active) {
+  background: rgba(245, 158, 11, 0.08) !important;
+  color: var(--btn-partner-moqtarid-bg) !important;
+  border-color: rgba(245, 158, 11, 0.25) !important;
+}
+
+.payment-type-btn--partner-مستثمر.payment-type-btn--active {
+  background: var(--btn-partner-mustathmir-bg) !important;
+  color: #ffffff !important;
+  font-weight: var(--fw-extrabold) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.2) !important;
+}
+
+.payment-type-btn--partner-مستثمر:hover:not(.payment-type-btn--active) {
+  background: rgba(139, 92, 246, 0.08) !important;
+  color: var(--btn-partner-mustathmir-bg) !important;
+  border-color: rgba(139, 92, 246, 0.25) !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ◆ Modal Buttons (.mb-btn)
+     للاستخدام: أزرار النوافذ المنبثقة (monbathiqa)
+   ───────────────────────────────────────────────────────────────────────────── */
+.mb-btn {
+  flex: 1;
+  height: var(--mb-btn-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--mb-btn-gap);
+  padding: 0 18px;
+  border-radius: var(--mb-btn-radius);
+  font-family: inherit;
+  font-size: var(--font-size, 1rem);
+  font-weight: var(--mb-btn-font-weight);
+  cursor: pointer;
+  border: none;
+  white-space: nowrap;
+}
+
+.mb-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.mb-btn__icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.mb-btn--confirm {
+  background: var(--mb-btn-confirm-bg);
+  color: var(--mb-btn-confirm-text);
+  border: var(--mb-btn-confirm-border);
+  box-shadow: var(--mb-btn-confirm-shadow);
+}
+
+.mb-btn--confirm:hover:not(:disabled) {
+  filter: brightness(1.1);
+  box-shadow: 0 6px 20px rgba(var(--mb-success-rgb), 0.35);
+}
+
+.mb-btn--danger {
+  background: var(--mb-btn-danger-bg);
+  color: var(--mb-btn-danger-text);
+  border: var(--mb-btn-danger-border);
+  box-shadow: var(--mb-btn-danger-shadow);
+}
+
+.mb-btn--danger:hover:not(:disabled) {
+  filter: brightness(1.1);
+  box-shadow: 0 6px 20px rgba(var(--mb-danger-rgb), 0.35);
+}
+
+.mb-btn--cancel {
+  background: var(--mb-btn-cancel-bg);
+  color: var(--mb-btn-cancel-text);
+  border: var(--mb-btn-cancel-border);
+}
+
+.mb-btn--cancel:hover:not(:disabled) {
+  background: var(--mb-btn-cancel-hover-bg);
+  color: #fff;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ◆ Sidebar Divider
+   ───────────────────────────────────────────────────────────────────────────── */
+.sidebar-divider {
+  height: 2px;
+  background: linear-gradient(90deg, rgba(212, 175, 55, 0) 0%, rgba(212, 175, 55, 0.85) 50%, rgba(212, 175, 55, 0) 100%);
+  margin: 16px 8px;
+  position: relative;
+  border: none;
+  box-shadow: 0 0 6px rgba(212, 175, 55, 0.6), 0 0 12px rgba(212, 175, 55, 0.3);
+}

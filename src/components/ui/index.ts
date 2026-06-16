@@ -1,6 +1,9 @@
 export { ActionButton } from "./ActionButton";
 export type { ActionButtonProps, ActionButtonVariant } from "./ActionButton";
 
+export { GoldFxButton } from "./GoldFxButton";
+export type { GoldFxButtonProps, GoldFxVariant } from "./GoldFxButton";
+
 export { PriceInput } from "./PriceInput";
 export type { Currency, PriceInputProps } from "./PriceInput";
 

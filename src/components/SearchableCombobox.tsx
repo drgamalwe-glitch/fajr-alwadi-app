@@ -119,10 +119,13 @@ export function SearchableCombobox({
             setHighlightedIndex(-1);
             if (!isOpen) handleOpenChange(true);
           }}
-          onFocus={() => {
+          onFocus={(e) => {
             isFocusingRef.current = true;
             handleOpenChange(true);
-            setTimeout(() => { isFocusingRef.current = false; }, 150);
+            setTimeout(() => {
+              (e.target as HTMLInputElement).select();
+              isFocusingRef.current = false;
+            }, 150);
           }}
           onClick={() => {
             if (!isFocusingRef.current) handleOpenChange(!isOpen);

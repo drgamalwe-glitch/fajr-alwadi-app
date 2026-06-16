@@ -1,4 +1,8 @@
 import type { Config } from "tailwindcss";
+import plugin from "tailwindcss/plugin";
+import { COLORS } from "./src/theme/tokens/colors";
+import { RADIUS } from "./src/theme/tokens/radius";
+import { SHADOWS } from "./src/theme/tokens/shadows";
 
 export default {
   content: ["./src/**/*.{ts,tsx}", "./index.html"],
@@ -6,33 +10,24 @@ export default {
     extend: {
       fontFamily: {
         sans: [
-          "Cairo",
           "Tajawal",
-          "IBM Plex Sans Arabic",
-          "Segoe UI",
-          "system-ui",
-          "sans-serif",
         ],
         arabic: [
-          "Cairo",
           "Tajawal",
-          "IBM Plex Sans Arabic",
-          "Segoe UI",
-          "system-ui",
-          "sans-serif",
         ],
       },
       colors: {
-        page: "#0d0f14",
-        card: "rgba(16, 24, 39, 0.54)",
-        input: "rgba(13, 15, 20, 0.58)",
-        subtle: "rgba(255, 255, 255, 0.055)",
-        border: "rgba(255, 255, 255, 0.10)",
-        "border-light": "rgba(255, 255, 255, 0.065)",
+        page: COLORS.background.page,
+        card: COLORS.background.card,
+        input: COLORS.background.input,
+        subtle: COLORS.background.subtle,
+        border: COLORS.border.DEFAULT,
+        "border-light": COLORS.border.light,
         primary: {
-          DEFAULT: "#61030b",
-          dark: "#3d0207",
-          deeper: "#100306",
+          DEFAULT: COLORS.primary.DEFAULT,
+          light: COLORS.primary.light,
+          dark: COLORS.primary.dark,
+          deeper: COLORS.primary.deeper,
         },
         gold: {
           DEFAULT: "#d8a85a",
@@ -40,40 +35,43 @@ export default {
           pale: "rgba(216, 168, 90, 0.13)",
         },
         brand: {
-          red: "#61030b",
-          "red-soft": "#8b0713",
-          wine: "#100306",
+          red: COLORS.primary.DEFAULT,
+          "red-soft": COLORS.primary.light,
+          wine: COLORS.primary.deeper,
           black: "#090b10",
         },
         text: {
-          primary: "#ffffff",
-          secondary: "#dde3ec",
-          muted: "#aab4c8",
+          primary: COLORS.text.primary,
+          secondary: COLORS.text.secondary,
+          muted: COLORS.text.muted,
         },
         status: {
-          green: "#55f5aa",
-          red: "#ff6b6b",
-          amber: "#ffd27b",
-          blue: "#3fcfff",
-          slate: "#aab4c8",
+          success: COLORS.status.success,
+          danger: COLORS.status.danger,
+          warning: COLORS.status.warning,
+          info: COLORS.status.info,
         },
       },
       borderRadius: {
-        xs: "8px",
-        sm: "12px",
-        md: "16px",
-        lg: "20px",
-        pill: "999px",
+        xs: RADIUS.sm,
+        sm: RADIUS.md,
+        md: RADIUS.lg,
+        lg: RADIUS.xl,
+        xl: RADIUS["2xl"],
+        "2xl": "28px",
+        pill: RADIUS.full,
       },
       boxShadow: {
-        soft: "0 18px 54px rgba(0, 0, 0, 0.18), inset 0 1px 1px rgba(255,255,255,0.10)",
-        glass:
-          "0 24px 80px rgba(0, 0, 0, 0.24), 0 0 44px rgba(97, 3, 11, 0.055), inset 0 1px 1px rgba(255,255,255,0.10)",
-        glow: "0 34px 110px rgba(0, 0, 0, 0.34), inset 0 1px 1px rgba(255,255,255,0.12)",
-        "focus-glow": "0 0 0 3px rgba(216, 168, 90, 0.20), 0 0 20px rgba(216, 168, 90, 0.10)",
+        soft: SHADOWS.sm,
+        glass: SHADOWS.glass,
+        glow: SHADOWS.glow,
+        "focus-glow": SHADOWS.focus,
+        card: SHADOWS.card,
+        modal: SHADOWS.modal,
+        sidebar: SHADOWS.sidebar,
       },
       backdropBlur: {
-        glass: "20px",
+        glass: COLORS.glass.blur,
       },
       keyframes: {
         "fade-up": {
@@ -88,13 +86,72 @@ export default {
           "0%": { opacity: "1", transform: "translateY(0) scale(1)" },
           "100%": { opacity: "0", transform: "translateY(-6px) scale(0.98)" },
         },
+        "fade-in": {
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
+        },
+        "scale-in": {
+          "0%": { opacity: "0", transform: "scale(0.95) translateY(8px)" },
+          "100%": { opacity: "1", transform: "scale(1) translateY(0)" },
+        },
       },
       animation: {
         "fade-up": "fade-up 0.35s cubic-bezier(0.16, 1, 0.3, 1)",
         "slide-down": "slide-down 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
         "slide-up": "slide-up 0.18s cubic-bezier(0.16, 1, 0.3, 1)",
+        "fade-in": "fade-in 0.2s ease-out",
+        "scale-in": "scale-in 0.2s cubic-bezier(0.22, 1, 0.36, 1)",
       },
     },
   },
-  plugins: [],
+  plugins: [
+    plugin(function ({ addUtilities, addComponents }) {
+      addUtilities({
+        ".bg-glass": {
+          background: COLORS.glass.bg,
+          "backdrop-filter": `blur(${COLORS.glass.blur}) saturate(${COLORS.glass.saturation})`,
+          "-webkit-backdrop-filter": `blur(${COLORS.glass.blur}) saturate(${COLORS.glass.saturation})`,
+          border: `1px solid ${COLORS.glass.border}`,
+        },
+        ".card-glass": {
+          background: COLORS.glass.bg,
+          "backdrop-filter": `blur(${COLORS.glass.blur}) saturate(${COLORS.glass.saturation})`,
+          "-webkit-backdrop-filter": `blur(${COLORS.glass.blur}) saturate(${COLORS.glass.saturation})`,
+          border: `1px solid ${COLORS.glass.border}`,
+          "box-shadow": SHADOWS.card,
+        },
+        ".modal-glass": {
+          background: COLORS.glass.bgStrong,
+          "backdrop-filter": `blur(24px) saturate(${COLORS.glass.saturation})`,
+          "-webkit-backdrop-filter": `blur(24px) saturate(${COLORS.glass.saturation})`,
+          border: `1px solid ${COLORS.glass.border}`,
+          "box-shadow": SHADOWS.modal,
+        },
+        ".sidebar-glass": {
+          background: COLORS.glass.bgStrong,
+          "backdrop-filter": `blur(${COLORS.glass.blur}) saturate(${COLORS.glass.saturation})`,
+          "-webkit-backdrop-filter": `blur(${COLORS.glass.blur}) saturate(${COLORS.glass.saturation})`,
+          "border-right": `1px solid ${COLORS.glass.border}`,
+          "box-shadow": SHADOWS.sidebar,
+        },
+        ".table-glass": {
+          background: COLORS.glass.bg,
+          "backdrop-filter": `blur(${COLORS.glass.blur}) saturate(${COLORS.glass.saturation})`,
+          "-webkit-backdrop-filter": `blur(${COLORS.glass.blur}) saturate(${COLORS.glass.saturation})`,
+        },
+      });
+      addComponents({
+        ".financial-card": {
+          background: COLORS.glass.bg,
+          "backdrop-filter": `blur(${COLORS.glass.blur}) saturate(${COLORS.glass.saturation})`,
+          "-webkit-backdrop-filter": `blur(${COLORS.glass.blur}) saturate(${COLORS.glass.saturation})`,
+          border: `1px solid ${COLORS.glass.border}`,
+          "border-radius": RADIUS.lg,
+          "box-shadow": SHADOWS.card,
+          transition: "filter 200ms ease, box-shadow 200ms ease",
+        },
+      });
+    }),
+  ],
 } satisfies Config;
+

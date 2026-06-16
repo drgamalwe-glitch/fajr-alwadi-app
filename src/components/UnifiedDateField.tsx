@@ -182,7 +182,7 @@ export function UnifiedDateField({ value, onChange, disabled, id, tabIndex }: Un
           ref={inputRef}
           id={id}
           type="text"
-          className="app-input-field w-full min-w-0 bg-transparent text-xl font-bold text-white placeholder:text-white/35 outline-none text-center flex-1 unified-date-field"
+          className="app-input-field w-full min-w-0 bg-transparent text-xl font-bold outline-none text-center flex-1 unified-date-field"
           dir="ltr"
           disabled={disabled}
           tabIndex={tabIndex}

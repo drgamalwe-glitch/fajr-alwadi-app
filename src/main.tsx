@@ -1,7 +1,16 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import "./styles/colors.css";
+import "./theme/globals.css";
+import "./theme/buttons.css";
+import "./theme/qasa.css";
+import "./theme/capital.css";
+import "./theme/profit.css";
+import "./theme/inventory.css";
+import { syncThemeToCSS } from "./theme";
+
+// Synchronize design system tokens to CSS custom properties
+syncThemeToCSS();
 
 /** تحويل الأرقام العربية/الشرقية إلى أرقام إنجليزية غربية */
 function toWesternDigits(str: string): string {

@@ -2,16 +2,19 @@ import { useEffect, useMemo, useState } from "react";
 import { callTauri } from "../api/tauri";
 import { todayIsoDate } from "../utils/dateSegments";
 import { UnifiedDateField } from "./UnifiedDateField";
-import type { ExpenseEntry, Partner } from "../types";
-import { ActionButton, TextInput, PriceInput, PriceDisplay } from "@/components/ui";
+import type { ExpenseEntry } from "../types";
+import { TextInput, PriceInput, PriceDisplay } from "@/components/ui";
 import type { Currency } from "@/components/ui";
 import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
-import "../styles/expenses.css";
-import "../styles/cards.css";
-import "../styles/agencies.css";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { GoldFxButton } from "./ui/GoldFxButton";
 
-export function ExpensesTab() {
+interface ExpensesTabProps {
+  onAddExpenseChange?: (onAddExpense: { action: () => void } | null) => void;
+}
+
+export function ExpensesTab({ onAddExpenseChange }: ExpensesTabProps) {
   const [entries, setEntries] = useState<ExpenseEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
@@ -22,6 +25,9 @@ export function ExpensesTab() {
   const [notes, setNotes] = useState("");
   const [page, setPage] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<ExpenseEntry | null>(null);
+  const [deleteExpenseConfirm, setDeleteExpenseConfirm] = useState<ExpenseEntry | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     const lastPage = Math.max(0, Math.ceil(entries.length / PAGE_SIZE) - 1);
@@ -44,74 +50,94 @@ export function ExpensesTab() {
     void load();
   }, []);
 
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!description.trim() || !amount) return;
-    await callTauri("add_expense", {
-      description: description.trim(),
-      amount: Number(amount),
-      date,
-      notes: notes.trim() || null,
-      currency,
-    });
-
-    // ═══════════════════════════════════════════════
-    //  توزيع المصروف تلقائياً على الشركاء كـ سحب مصروف
-    // ═══════════════════════════════════════════════
-    const expenseAmount = Number(amount) || 0;
-    if (expenseAmount > 0) {
-      try {
-        const allPartners = await callTauri<Partner[]>("get_partners");
-        const kindPartners = allPartners.filter((p) => p.kind === "شريك");
-        const totalPartnerCapital = kindPartners.reduce((sum, p) => sum + p.total_amount, 0);
-
-        if (kindPartners.length > 0) {
-          for (const partner of kindPartners) {
-            let partnerShare = 0;
-            if (totalPartnerCapital > 0) {
-              partnerShare = (partner.total_amount / totalPartnerCapital) * expenseAmount;
-            } else {
-              partnerShare = expenseAmount / kindPartners.length;
-            }
-
-            partnerShare = Math.round(partnerShare);
-
-            if (partnerShare > 0) {
-              const formattedShare = currency === "USD"
-                ? `${partnerShare.toLocaleString("en-US")} USD`
-                : `${partnerShare.toLocaleString("en-US")} IQ`;
-
-              const note = `سحب مصروف بقيمة ${formattedShare} لـ ${description.trim()}`;
-
-              await callTauri("add_partner_transaction", {
-                partnerName: partner.partner_name,
-                kind: "شريك",
-                type: "سحب مصروف",
-                amount: partnerShare,
-                date: date,
-                notes: note,
-                currency: currency,
-                paymentType: "قاصه",
-                payment_type: "قاصه",
-              });
-            }
-          }
-        }
-      } catch (err) {
-        console.error("فشل توزيع المصروف على الشركاء:", err);
+  useEffect(() => {
+    if (!showAddModal) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        handleCloseModal();
       }
-    }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [showAddModal]);
 
+  const handleCloseModal = () => {
     setDescription("");
     setAmount("");
-    setNotes("");
     setDate(todayIsoDate());
+    setNotes("");
+    setCurrency("IQD");
+    setEditingExpense(null);
+    setShowAddModal(false);
+  };
+
+  const handleRowClick = (expense: ExpenseEntry) => {
+    setEditingExpense(expense);
+    setDescription(expense.description);
+    setAmount(String(expense.amount));
+    setDate(expense.date);
+    setNotes(expense.notes || "");
+    setCurrency((expense.currency as Currency) || "IQD");
+    setShowAddModal(true);
+  };
+
+  useEffect(() => {
+    onAddExpenseChange?.({
+      action: () => {
+        handleCloseModal();
+        setShowAddModal(true);
+      },
+    });
+    return () => {
+      onAddExpenseChange?.(null);
+    };
+  }, [onAddExpenseChange]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!description.trim() || !amount) return;
+
+    if (editingExpense) {
+      await callTauri("update_expense", {
+        id: editingExpense.id,
+        description: description.trim(),
+        amount: Number(amount),
+        date,
+        notes: notes.trim() || null,
+        currency,
+      });
+    } else {
+      await callTauri("add_expense", {
+        description: description.trim(),
+        amount: Number(amount),
+        date,
+        notes: notes.trim() || null,
+        currency,
+      });
+    }
+
+
+
+    handleCloseModal();
     void load();
   };
 
-  const handleDelete = async (id: number) => {
-    await callTauri("delete_expense", { id });
-    void load();
+  const handleDeleteClick = (expense: ExpenseEntry) => {
+    setDeleteExpenseConfirm(expense);
+  };
+
+  const executeDelete = async () => {
+    if (!deleteExpenseConfirm) return;
+    setDeleting(true);
+    try {
+      await callTauri("delete_expense", { id: deleteExpenseConfirm.id });
+      setDeleteExpenseConfirm(null);
+      void load();
+    } catch (err) {
+      console.error("Failed to delete expense:", err);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const handleSort = (key: string) => {
@@ -156,9 +182,6 @@ export function ExpensesTab() {
       {/* ── شريط الأدوات الموحد في الأعلى ── */}
       <div className="cars-page__toolbar unified-toolbar">
         <div className="unified-toolbar__right">
-          <ActionButton type="button" variant="primary" className="btn-new-car" onClick={() => setShowAddModal(true)}>
-            + إضافة مصروف
-          </ActionButton>
         </div>
         <div className="unified-toolbar__center"></div>
         <div className="unified-toolbar__left">
@@ -173,7 +196,7 @@ export function ExpensesTab() {
 
       {/* ── نافذة إضافة مصروف منبثقة ── */}
       {showAddModal && (
-        <div className="modal-overlay" role="presentation" onClick={() => setShowAddModal(false)}>
+        <div className="modal-overlay" role="presentation" onClick={handleCloseModal}>
           <div
             className="modal-dialog modal-dialog--has-header"
             role="dialog"
@@ -182,68 +205,70 @@ export function ExpensesTab() {
           >
             {/* رأس النافذة */}
             <div className="modal-dialog__header">
-              <h2 className="modal-dialog__header-title">
-                <span style={{ fontSize: "1.2rem", background: "none" }}>💸</span>
-                إضافة مصروف جديد
+              <h2 className="modal-dialog__header-title" style={{ color: "var(--labletext)" }}>
+                {editingExpense ? "تعديل المصروف" : "إضافة مصروف جديد"}
               </h2>
-              <button type="button" className="modal-dialog__close" onClick={() => setShowAddModal(false)}>×</button>
+              <button type="button" className="modal-dialog__close" onClick={handleCloseModal}>×</button>
             </div>
 
             <form
               className="modal-dialog__body"
               onSubmit={(e) => {
-                void handleAdd(e);
-                setShowAddModal(false);
+                void handleSubmit(e);
               }}
             >
-              {/* ── قسم البيان والمبلغ ── */}
-              <div className="agency-section">
-                <div className="agency-section__title">تفاصيل المصروف</div>
-                <div className="agency-fields-row" style={{ alignItems: "flex-start" }}>
-                  <div className="agency-field agency-field--lg" style={{ flex: "2 1 220px" }}>
-                    <label className="agency-label">البيان *</label>
-                    <TextInput
-                      value={description}
-                      onChange={(e) => setDescription(e.target.value)}
-                      required
-                      placeholder="وصف المصروف"
-                      autoFocus
-                    />
-                  </div>
-                  <div className="agency-field agency-field--lg" style={{ flex: "1 1 160px" }}>
-                    <label className="agency-label">المبلغ *</label>
-                    <PriceInput
-                      value={amount}
-                      onChange={setAmount}
-                      required
-                      currency={currency}
-                      onCurrencyChange={setCurrency}
-                    />
-                  </div>
+              <div className="agency-fields-row" style={{ alignItems: "flex-start" }}>
+                <div className="agency-field agency-field--lg" style={{ flex: "2 1 220px" }}>
+                  <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>وصف المصروف</label>
+                  <TextInput
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    required
+                    autoFocus
+                  />
+                </div>
+                <div className="agency-field agency-field--lg" style={{ flex: "1 1 160px" }}>
+                  <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>المبلغ</label>
+                  <PriceInput
+                    value={amount}
+                    onChange={setAmount}
+                    required
+                    currency={currency}
+                    onCurrencyChange={setCurrency}
+                  />
+                </div>
+                <div className="agency-field agency-field--md">
+                  <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>التاريخ</label>
+                  <UnifiedDateField value={date} onChange={setDate} />
+                </div>
+                <div className="agency-field agency-field--lg">
+                  <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>ملاحظة</label>
+                  <TextInput
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                  />
                 </div>
               </div>
 
-              {/* ── قسم التاريخ والملاحظة ── */}
-              <div className="agency-section">
-                <div className="agency-section__title">معلومات إضافية</div>
-                <div className="agency-fields-row" style={{ alignItems: "flex-start" }}>
-                  <div className="agency-field agency-field--md">
-                    <label className="agency-label">التاريخ</label>
-                    <UnifiedDateField value={date} onChange={setDate} />
-                  </div>
-                  <div className="agency-field agency-field--lg">
-                    <label className="agency-label">ملاحظة</label>
-                    <TextInput
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                      placeholder="اختياري"
-                    />
-                  </div>
-                </div>
-              </div>
+              {/* ── أزرار العمليات ── */}
+              <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
+                <GoldFxButton
+                  type="submit"
+                  variant="green"
+                  style={{ flex: 1, margin: 0 }}
+                >
 
-              {/* زر submit مخفي — الإرسال بضغط Enter */}
-              <button type="submit" style={{ display: "none" }} />
+                  <span className="gold-fx-btn__label">{editingExpense ? "حفظ" : "حفظ"}</span>
+                </GoldFxButton>
+                <GoldFxButton
+                  type="button"
+                  variant="gray"
+                  style={{ flex: 1, margin: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.7)" }}
+                  onClick={handleCloseModal}
+                >
+                  <span className="gold-fx-btn__label">إلغاء الأمر</span>
+                </GoldFxButton>
+              </div>
             </form>
           </div>
         </div>
@@ -277,7 +302,7 @@ export function ExpensesTab() {
                 <th className={sortConfig?.key === "date" ? "th--sorted" : ""} onClick={() => handleSort("date")} style={{ width: "110px", cursor: "pointer" }}>التاريخ</th>
                 <th className={sortConfig?.key === "time" ? "th--sorted" : ""} onClick={() => handleSort("time")} style={{ width: "60px", cursor: "pointer" }}>الساعة</th>
                 <th className={sortConfig?.key === "description" ? "th--sorted" : ""} onClick={() => handleSort("description")} style={{ cursor: "pointer" }}>البيان</th>
-                <th className={`col-money ${sortConfig?.key === "amount" ? "th--sorted" : ""}`} onClick={() => handleSort("amount")} style={{ width: 200 ,cursor: "pointer" }}>المبلغ</th>
+                <th className={`col-money ${sortConfig?.key === "amount" ? "th--sorted" : ""}`} onClick={() => handleSort("amount")} style={{ width: 200, cursor: "pointer" }}>المبلغ</th>
                 <th className={sortConfig?.key === "notes" ? "th--sorted" : ""} onClick={() => handleSort("notes")} style={{ cursor: "pointer" }}>ملاحظات</th>
                 <th style={{ width: "50px" }}></th>
               </tr>
@@ -289,7 +314,12 @@ export function ExpensesTab() {
                 <tr><td colSpan={7} className="empty-cell">لا توجد مصروفات بعد</td></tr>
               ) : (
                 pageEntries.map((entry) => (
-                  <tr key={entry.id}>
+                  <tr
+                    key={entry.id}
+                    onClick={() => handleRowClick(entry)}
+                    style={{ cursor: "pointer" }}
+                    className="clickable-row"
+                  >
                     <td className="cell-num">{entry.id}</td>
                     <td style={{ whiteSpace: "nowrap" }}>{entry.date}</td>
                     <td style={{ whiteSpace: "nowrap", fontSize: "var(--fs-sm)", textAlign: "center" }}>{entry.time}</td>
@@ -300,7 +330,10 @@ export function ExpensesTab() {
                       <button
                         type="button"
                         className="partner-inline-delete-btn"
-                        onClick={() => handleDelete(entry.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteClick(entry);
+                        }}
                         title="حذف"
                         aria-label="حذف المصروف"
                       >
@@ -325,6 +358,18 @@ export function ExpensesTab() {
           </table>
         </div>
       </section>
+
+      <ConfirmDialog
+        open={!!deleteExpenseConfirm}
+        title="تأكيد حذف المصروف"
+        message={`هل أنت متأكد من حذف المصروف «${deleteExpenseConfirm?.description || ""}» بقيمة (${deleteExpenseConfirm ? `${deleteExpenseConfirm.amount.toLocaleString()} ${deleteExpenseConfirm.currency}` : ""}) نهائياً؟ لا يمكن التراجع عن هذا الإجراء.`}
+        confirmLabel="نعم، احذف"
+        cancelLabel="إلغاء"
+        danger
+        loading={deleting}
+        onConfirm={() => void executeDelete()}
+        onCancel={() => setDeleteExpenseConfirm(null)}
+      />
     </div>
   );
 }

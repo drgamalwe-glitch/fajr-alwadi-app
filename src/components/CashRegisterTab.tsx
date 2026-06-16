@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { callTauri } from "../api/tauri";
 import type { CashRegisterEntry } from "../types";
 import { PriceDisplay } from "@/components/ui";
-import "../styles/qasa.css";
 
 import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";

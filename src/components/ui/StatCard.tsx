@@ -50,7 +50,7 @@ export function StatCard({
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
         <span style={{
           fontSize: "var(--fs-sm)",
-          color: "var(--gray)",
+          color: "var(--bg2)",
           fontWeight: "700",
           letterSpacing: "0.03em",
         }}>

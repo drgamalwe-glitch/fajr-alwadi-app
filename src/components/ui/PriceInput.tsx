@@ -143,12 +143,16 @@ export function PriceInput({
     (e.target as HTMLInputElement).select();
   };
 
+  const handleInputFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    setTimeout(() => e.target.select(), 0);
+  };
+
   return (
     <div className={cn("relative flex flex-col gap-1.5", containerClassName)}>
       {label && (
         <label
           htmlFor={id}
-          className="app-input-label text-xs font-bold tracking-wide text-text-muted text-right block w-full"
+          className="app-input-label text-xs font-bold tracking-wide text-right block w-full"
         >
           {label}
         </label>
@@ -226,7 +230,8 @@ export function PriceInput({
             tabIndex={tabIndex}
             onKeyDown={handleKeyDown}
             onClick={handleInputClick}
-            className="app-input-field w-full min-w-0 bg-transparent text-xl font-bold text-white placeholder:text-white/35 outline-none py-0 px-4 text-center flex-1"
+            onFocus={handleInputFocus}
+            className="app-input-field w-full min-w-0 bg-transparent text-xl font-bold placeholder:text-white/35 outline-none py-0 px-4 text-center flex-1"
             dir="ltr"
           />
         </div>

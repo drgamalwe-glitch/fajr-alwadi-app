@@ -1,9 +1,7 @@
-import { useEffect, useState } from "react";
-import type { Car, Partner, CashRegisterEntry, UnifiedAccount } from "../types";
-import "../styles/colors.css";
+import { useEffect, useRef, useState } from "react";
+import type { Car, Partner, UnifiedAccount, FinancialSummary } from "../types";
 import { callTauri } from "../api/tauri";
 import {
-  PriceDisplay,
   TextInput,
   PriceInput,
   SelectMenu,
@@ -11,29 +9,28 @@ import {
   SelectMenuItem,
   SelectMenuTrigger,
   SelectMenuValue,
-  StatCard,
   ActionButton,
 } from "@/components/ui";
 
 import { todayIsoDate } from "../utils/dateSegments";
 import {
-  Coins,
-  CreditCard,
-  TrendingUp,
   Car as CarIcon,
-  Plus,
   Landmark,
   Calendar,
   CheckCircle2,
   PartyPopper,
   Phone,
 } from "lucide-react";
-import "../styles/dashboard.css";
+import { CompanyStatusTab } from "./CompanyStatusTab";
+import { QasaCard } from "./dashboard/QasaCard";
+import { CapitalCard } from "./dashboard/CapitalCard";
+import { ProfitCard } from "./dashboard/ProfitCard";
+import { InventoryCard } from "./dashboard/InventoryCard";
 
 // ── نظام الألوان مُستمَد من colors.css ──────────────────
 // --red:   #4d000a   (أحمر داكن — للتحذيرات / المصاريف / الأخطار)
 // --gold:  #d7a800   (ذهبي     — التوكيد الرئيسي / العناصر المميزة)
-// --gray:  #7a7a7a   (رمادي    — النصوص الثانوية / الحدود)
+// --bg2:  #ffffff18   (خلفية    — النصوص الثانوية / الحدود)
 // --black: #0e0e0e   (أسود    — الخلفية الرئيسية)
 // --white: #ffffff   (أبيض    — النص الأساسي)
 
@@ -42,6 +39,7 @@ interface DashboardProps {
   partners: Partner[];
   onRefresh: () => Promise<void>;
   onOpenCarForm: (mode: "new" | "edit", car?: Car) => void;
+  onNavigateToPartner?: (partnerName: string) => void;
 }
 
 interface InstallmentAlert {
@@ -58,110 +56,22 @@ interface InstallmentAlert {
   partnerKind?: string;
 }
 
-// ── مكون زر الإجراء السريع ────────────────────────────
-function QuickBtn({
-  icon: Icon,
-  label,
-  sublabel,
-  onClick,
-  variant = "gold",
-  className = "",
-  iconColor,
-}: {
-  icon: React.ComponentType<{ className?: string; size?: number; style?: React.CSSProperties; strokeWidth?: number }>;
-  label: string;
-  sublabel?: string;
-  onClick: () => void;
-  variant?: "gold" | "red" | "gray";
-  className?: string;
-  iconColor?: string;
-}) {
-  const variantMap = {
-    gold: {
-      bg: "color-mix(in srgb, var(--smiles-bg), transparent 92%)",
-      hover: "color-mix(in srgb, var(--smiles-bg), transparent 84%)",
-      border: "color-mix(in srgb, var(--smiles-bg), transparent 65%)",
-      icon: iconColor || "var(--smiles)",
-      iconBg: "color-mix(in srgb, var(--smiles-bg), transparent 88%)",
-      shadow: "color-mix(in srgb, var(--smiles-bg), transparent 85%)"
-    },
-    red: {
-      bg: "rgba(77,0,10,0.18)",
-      hover: "rgba(77,0,10,0.32)",
-      border: "transparent",
-      icon: iconColor || "var(--smiles)",
-      iconBg: "color-mix(in srgb, var(--smiles-bg), transparent 80%)",
-      shadow: "rgba(77,0,10,0.35)"
-    },
-    gray: {
-      bg: "rgba(122,122,122,0.07)",
-      hover: "rgba(122,122,122,0.14)",
-      border: "rgba(122,122,122,0.3)",
-      icon: iconColor || "var(--smiles)",
-      iconBg: "color-mix(in srgb, var(--smiles-bg), transparent 90%)",
-      shadow: "rgba(122,122,122,0.15)"
-    },
-  };
-  const v = variantMap[variant];
-  const ic = iconColor || v.icon;
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`quick-btn ${className}`}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "0.4rem",
-        flex: 1,
-        minWidth: "140px",
-        cursor: "pointer",
-        color: "var(--white)",
-        fontFamily: "inherit",
-        backdropFilter: "blur(10px)",
-      } as React.CSSProperties}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: "44px",
-          height: "44px",
-          borderRadius: "12px",
-          background: `color-mix(in srgb, ${ic} 14%, transparent)`,
-          color: ic,
-          marginBottom: "0.2rem",
-          border: `1px solid color-mix(in srgb, ${ic} 30%, transparent)`,
-          boxShadow: `0 0 16px color-mix(in srgb, ${ic} 20%, transparent)`,
-          transition: "box-shadow 0.25s",
-        }}
-      >
-        <Icon size={20} strokeWidth={2.2} />
-      </div>
-      <span style={{ fontSize: "var(--fs-sm)", fontWeight: "var(--fw-bold)", color: "var(--white)" }}>{label}</span>
-      {sublabel && <span style={{ fontSize: "var(--fs-xs)", color: "var(--gray)" }}>{sublabel}</span>}
-    </button>
-  );
-}
-
 // ── مكون صف قسط ─────────────────────────────────────
 function InstallmentRow({
   alert,
   onPay,
+  onViewAccount,
 }: {
   alert: InstallmentAlert;
   onPay: (a: InstallmentAlert) => void;
+  onViewAccount?: (name: string) => void;
 }) {
   const isOverdue = alert.status === "overdue";
-  const isToday   = alert.status === "due_today";
+  const isToday = alert.status === "due_today";
 
   // ألوان الحالة — مشتقة من متغيرات colors.css
-  const borderColor = isOverdue ? "#c0001a" /* أحمر داكن مشتق من --red */ : isToday ? "var(--gold)" : "var(--gray)";
-  const bgColor     = isOverdue ? "rgba(77,0,10,0.1)" : isToday ? "rgba(215,168,0,0.06)" : "rgba(122,122,122,0.05)";
+  const borderColor = isOverdue ? "#c0001a" /* أحمر داكن مشتق من --red */ : isToday ? "var(--gold)" : "var(--bg2)";
+  const bgColor = isOverdue ? "rgba(77,0,10,0.1)" : isToday ? "rgba(215,168,0,0.06)" : "rgba(122,122,122,0.05)";
 
   const currencyName = alert.currency === "USD" ? "دولار أمريكي" : "دينار عراقي";
   const waText = `السيد ${alert.buyerName} المحترم،\nنود تذكيركم بأن قسط السيارة المستحق بتاريخ ${alert.dueDate} والبالغ (${alert.amount.toLocaleString("en-US")}) ${currencyName} قد حان موعد سداده.\nنرجو التفضل بتسديد القسط في أقرب وقت ممكن.\nشاكرين لكم حسن تعاونكم، ونتطلع دائماً لخدمتكم.\nمع التقدير والاحترام،\nفجر الوادي لتجارة السيارات`;
@@ -196,11 +106,11 @@ function InstallmentRow({
 
       {/* معلومات المشتري */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: "var(--fw-bold)", fontSize: "var(--fs-sm)", color: "var(--white)", marginBottom: "0.15rem" }}>
+        <div style={{ fontWeight: "var(--fw-bold)", fontSize: "var(--fs-base)", color: "var(--white)", marginBottom: "0.15rem" }}>
           {alert.buyerName}
         </div>
-        <div style={{ fontSize: "var(--fs-xs)", color: "var(--gray)", display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
+        <div style={{ fontSize: "var(--fs-sm)", color: "var(--bg2)", display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", color: "var(--white)" }}>
             <Calendar size={12} />
             {alert.dueDate}
           </span>
@@ -222,7 +132,7 @@ function InstallmentRow({
       </div>
 
       {/* المبلغ */}
-      <div style={{ fontWeight: "var(--fw-extrabold)", fontSize: "var(--fs-base)", color: borderColor, flexShrink: 0 }}>
+      <div style={{ fontWeight: "var(--fw-extrabold)", fontSize: "var(--fs-lg)", color: borderColor, flexShrink: 0 }}>
         {alert.amount.toLocaleString("en-US")} {alert.currency === "USD" ? "USD" : "IQ"}
       </div>
 
@@ -230,13 +140,13 @@ function InstallmentRow({
       <div style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
         <button
           type="button"
-          onClick={() => onPay(alert)}
+          onClick={() => onViewAccount ? onViewAccount(alert.buyerName) : onPay(alert)}
           style={{
             padding: "0.35rem 0.75rem",
             background: "linear-gradient(135deg, rgba(215,168,0,0.9), rgba(180,130,0,0.95))",
             border: "none",
             borderRadius: "8px",
-            color: "var(--black)",
+            color: "var(--white)",
             fontSize: "var(--fs-xs)",
             fontWeight: "var(--fw-extrabold)",
             cursor: "pointer",
@@ -289,11 +199,19 @@ function InstallmentRow({
 function CreditorRow({
   creditor,
   onPay,
+  onViewAccount,
 }: {
   creditor: UnifiedAccount;
   onPay: (name: string) => void;
+  onViewAccount?: (name: string) => void;
 }) {
-  const totalDebt = Math.abs(creditor.usd_balance);
+  const isFinancier = creditor.kind === "ممول" || creditor.kind === "شركة";
+  const showUsd = isFinancier ? creditor.usd_balance > 0 : creditor.usd_balance < 0;
+  const showIqd = isFinancier ? creditor.iqd_balance > 0 : creditor.iqd_balance < 0;
+
+  const cleanPhone = (creditor.phone || "").replace(/\D/g, "").replace(/^0+/, "");
+  const waLink = `https://wa.me/${cleanPhone}`;
+
   return (
     <div
       style={{
@@ -310,21 +228,51 @@ function CreditorRow({
     >
       <Landmark size={18} style={{ color: "var(--smiles)", flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: "var(--fw-bold)", fontSize: "var(--fs-sm)", color: "var(--white)" }}>{creditor.partner_name}</div>
+        <div style={{ fontWeight: "var(--fw-bold)", fontSize: "var(--fs-base)", color: "var(--white)" }}>{creditor.partner_name}</div>
         {creditor.phone && (
-          <div style={{ fontSize: "var(--fs-xs)", color: "var(--gray)", display: "flex", alignItems: "center", gap: "0.25rem" }}>
+          <div style={{ fontSize: "var(--fs-sm)", color: "var(--white)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
             <Phone size={12} />
             <span>{creditor.phone}</span>
+            {cleanPhone && (
+              <button
+                type="button"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  const text = encodeURIComponent(`بخصوص حساب ${creditor.partner_name}`);
+                  try {
+                    await callTauri("open_whatsapp", { phone: cleanPhone, text });
+                  } catch {
+                    window.open(`${waLink}?text=${encodeURIComponent(text)}`, "_blank");
+                  }
+                }}
+                style={{
+                  padding: "0.2rem 0.4rem",
+                  background: "linear-gradient(135deg, #25D366, #128C7E)",
+                  borderRadius: "6px",
+                  color: "var(--white)",
+                  border: "none",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  transition: "opacity 0.15s",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.85")}
+                onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+                title="مراسلة واتساب"
+              >
+                <svg viewBox="0 0 24 24" width={14} height={14} fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12c0 2.137.56 4.146 1.54 5.92L.06 23.94l6.02-1.48A11.93 11.93 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.6c-1.96 0-3.82-.6-5.36-1.6l-.38-.24-4.06 1 .86-4.2-.24-.4C1.8 14.6 1.2 12.8 1.2 10.8 1.2 5.84 5.84 1.2 12 1.2s10.8 4.64 10.8 10.8-4.64 10.8-10.8 10.8zm5.92-6.84c-.32-.16-1.88-.92-2.16-1.04-.28-.12-.5-.16-.72.16-.22.32-.84 1.04-1.04 1.24-.2.2-.4.24-.72.08s-1.4-.52-2.68-1.64c-.98-.88-1.64-1.96-1.84-2.28-.2-.32-.02-.5.14-.66.14-.14.32-.36.48-.56.16-.2.22-.32.32-.56.1-.24.06-.44-.02-.6-.08-.16-.72-1.72-.98-2.36-.26-.64-.52-.56-.72-.56-.18 0-.4-.04-.62-.04s-.56.08-.86.4c-.3.32-1.14 1.12-1.14 2.72s1.18 3.16 1.34 3.4c.16.24 2.32 3.52 5.62 4.92.78.34 1.4.54 1.88.7.78.24 1.5.2 2.06.12.64-.08 1.88-.76 2.14-1.5.26-.74.26-1.38.18-1.5-.08-.12-.28-.2-.6-.36z" /></svg>
+              </button>
+            )}
           </div>
         )}
       </div>
       <div style={{ textAlign: "left", flexShrink: 0 }}>
-        {creditor.usd_balance < 0 && (
+        {showUsd && (
           <div style={{ fontWeight: "var(--fw-extrabold)", fontSize: "var(--fs-base)", color: "#e05070" }}>
-            {totalDebt.toLocaleString("ar-IQ")} USD
+            {Math.abs(creditor.usd_balance).toLocaleString("ar-IQ")} USD
           </div>
         )}
-        {creditor.iqd_balance < 0 && (
+        {showIqd && (
           <div style={{ fontWeight: "var(--fw-medium)", fontSize: "var(--fs-sm)", color: "#c08090" }}>
             {Math.abs(creditor.iqd_balance).toLocaleString("ar-IQ")} IQ
           </div>
@@ -332,13 +280,13 @@ function CreditorRow({
       </div>
       <button
         type="button"
-        onClick={() => onPay(creditor.partner_name)}
+        onClick={() => onViewAccount ? onViewAccount(creditor.partner_name) : onPay(creditor.partner_name)}
         style={{
           padding: "0.35rem 0.85rem",
           background: "linear-gradient(135deg, rgba(215,168,0,0.9), rgba(180,130,0,0.95))",
           border: "none",
           borderRadius: "8px",
-          color: "var(--black)",
+          color: "var(--white)",
           fontSize: "var(--fs-xs)",
           fontWeight: "var(--fw-extrabold)",
           cursor: "pointer",
@@ -358,23 +306,23 @@ function CreditorRow({
 // ════════════════════════════════════════════════════════
 // ── المكون الرئيسي: لوحة التحكم ─────────────────────
 // ════════════════════════════════════════════════════════
-export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: DashboardProps) {
+export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigateToPartner }: DashboardProps) {
 
-  const [safeEntries,     setSafeEntries]     = useState<CashRegisterEntry[]>([]);
-  const [masterEntries,   setMasterEntries]   = useState<CashRegisterEntry[]>([]);
+  const [activeSubTab, setActiveSubTab] = useState<"dashboard" | "company-status">("dashboard");
+  const [summary, setSummary] = useState<FinancialSummary | null>(null);
   const [unifiedAccounts, setUnifiedAccounts] = useState<UnifiedAccount[]>([]);
-  const [installments,    setInstallments]    = useState<InstallmentAlert[]>([]);
-  const [loadingAction,   setLoadingAction]   = useState(false);
+  const [installments, setInstallments] = useState<InstallmentAlert[]>([]);
+  const [loadingAction, setLoadingAction] = useState(false);
+  const [loadingPanels, setLoadingPanels] = useState(true);
+  const hasLoadedRef = useRef(false);
 
   const loadBalances = async () => {
     try {
-      const [safe, master, unified] = await Promise.all([
-        callTauri<CashRegisterEntry[]>("get_cash_register_entries", { paymentType: "قاصه" }),
-        callTauri<CashRegisterEntry[]>("get_cash_register_entries", { paymentType: "ماستر" }),
+      const [sumData, unified] = await Promise.all([
+        callTauri<FinancialSummary>("get_financial_summary", { paymentType: "قاصه" }),
         callTauri<UnifiedAccount[]>("get_unified_accounts"),
       ]);
-      setSafeEntries(safe || []);
-      setMasterEntries(master || []);
+      setSummary(sumData || null);
       setUnifiedAccounts(unified || []);
     } catch (e) {
       console.error(e);
@@ -393,8 +341,44 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
           partnerName: debtor.partner_name,
           kind: debtor.kind,
         });
-        for (const tx of txs || []) {
-          if (tx.type_ !== "سحب") continue;
+        if (!txs || txs.length === 0) return;
+
+        // للمقترض: حساب الأقساط المدفوعة لاستبعادها
+        const paidIds = new Set<number>();
+        if (debtor.kind === "مقترض") {
+          const paymentTxs = txs.filter((tx: any) =>
+            tx.type_.startsWith("تسديد") ||
+            tx.type_.startsWith("استلام قسط") ||
+            ((tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع")) && (tx.notes || "").includes("قسط"))
+          );
+          const totalPaid = paymentTxs.reduce((sum: number, t: any) => sum + t.amount, 0);
+
+          const installmentTxs = txs
+            .filter((tx: any) =>
+              (tx.type_ === "سحب" || tx.type_.startsWith("باقي")) &&
+              ((tx.notes || "").includes("قسط") || tx.type_.startsWith("باقي")) &&
+              tx.amount > 0
+            )
+            .sort((a: any, b: any) => {
+              const dateDiff = new Date(a.date).getTime() - new Date(b.date).getTime();
+              return dateDiff !== 0 ? dateDiff : a.id - b.id;
+            });
+
+          let remaining = totalPaid;
+          for (const inst of installmentTxs) {
+            if (remaining >= inst.amount) {
+              paidIds.add(inst.id);
+              remaining -= inst.amount;
+            } else {
+              break;
+            }
+          }
+        }
+
+        for (const tx of txs) {
+          if (tx.type_ !== "سحب" && !tx.type_.startsWith("باقي")) continue;
+          if (debtor.kind === "مقترض" && paidIds.has(tx.id)) continue;
+
           const cleanDate = (tx.date || "").replace(/\//g, "-").trim();
           const parts = cleanDate.split("-");
           let due = new Date();
@@ -432,49 +416,48 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
     setInstallments(alerts.sort((a, b) => a.dueDate.localeCompare(b.dueDate)));
   };
 
-  useEffect(() => { void loadBalances();    }, [partners]);
-  useEffect(() => { void loadInstallments(); }, [partners]);
+  useEffect(() => {
+    if (!hasLoadedRef.current) setLoadingPanels(true);
+    void Promise.all([loadBalances(), loadInstallments()]).finally(() => {
+      setLoadingPanels(false);
+      hasLoadedRef.current = true;
+    });
+  }, [partners, cars]);
 
-  // حسابات الأرصدة
-  const computeIqdBalance = (list: CashRegisterEntry[]) =>
-    list.filter((e) => e.currency !== "USD").reduce((s, e) => s + e.amount, 0);
-  const computeUsdBalance = (list: CashRegisterEntry[]) =>
-    list.filter((e) => e.currency === "USD").reduce((s, e)  => s + e.amount, 0);
-
-  const safeIqd    = computeIqdBalance(safeEntries);
-  const safeUsd    = computeUsdBalance(safeEntries);
-  const masterIqd  = computeIqdBalance(masterEntries);
-  const masterUsd  = computeUsdBalance(masterEntries);
-
-  const inventoryValue = cars
-    .filter((c) => c.status === "متوفرة")
-    .reduce((s, c) => s + (c.purchase_price || 0), 0);
-
-  const currentMonthStr = new Date().toISOString().slice(0, 7);
-  const monthlyProfits  = cars.reduce((total, car) => {
-    if (car.status === "مبيوعة" && car.sale_date?.startsWith(currentMonthStr)) {
-      return total + ((car.selling_price || 0) - (car.purchase_price || 0));
-    }
-    return total;
-  }, 0);
-
-  const creditors = unifiedAccounts.filter((a) => a.iqd_balance < 0 || a.usd_balance < 0);
+  const creditors = unifiedAccounts.filter((a) => {
+    if (a.iqd_balance < 0 || a.usd_balance < 0) return true;
+    if ((a.kind === "ممول" || a.kind === "شركة") && (a.iqd_balance > 0 || a.usd_balance > 0)) return true;
+    return false;
+  });
   const filteredInstallments = installments.filter(
     (a) => a.status === "overdue" || a.status === "due_today"
   );
 
   // ── نوافذ الإجراءات السريعة ──
-  const [showQuickSale,    setShowQuickSale]    = useState(false);
+  const [showQuickSale, setShowQuickSale] = useState(false);
   const [showQuickExpense, setShowQuickExpense] = useState(false);
 
-  const [expenseDesc,     setExpenseDesc]     = useState("");
-  const [expenseAmt,      setExpenseAmt]      = useState("");
+  const [expenseDesc, setExpenseDesc] = useState("");
+  const [expenseAmt, setExpenseAmt] = useState("");
   const [expenseCurrency, setExpenseCurrency] = useState<"IQD" | "USD">("IQD");
-  const [expenseCar,      setExpenseCar]      = useState("");
+  const [expenseCar, setExpenseCar] = useState("");
 
   const handleExpenseSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!expenseDesc.trim() || !Number(expenseAmt)) return;
+    if (!expenseDesc.trim() || !Number(expenseAmt)) {
+      // تمييز الحقل الفارغ
+      const formEl = (e.target as HTMLElement).closest?.('.modal-dialog__body') || document.querySelector('.modal-dialog__body');
+      if (formEl) {
+        if (!expenseDesc.trim()) {
+          const descInput = formEl.querySelector('input') as HTMLElement;
+          if (descInput) { descInput.classList.add("input--error"); descInput.focus(); }
+        } else {
+          const amtInput = formEl.querySelector('input[inputmode]') as HTMLElement;
+          if (amtInput) { amtInput.classList.add("input--error"); amtInput.focus(); }
+        }
+      }
+      return;
+    }
     setLoadingAction(true);
     try {
       await callTauri("add_expense", {
@@ -494,9 +477,9 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
 
   // ── تسديد قسط ──
   const [showPayInstallmentModal, setShowPayInstallmentModal] = useState(false);
-  const [selectedInstallment,     setSelectedInstallment]     = useState<InstallmentAlert | null>(null);
-  const [payAmount,  setPayAmount]  = useState("");
-  const [payMethod,  setPayMethod]  = useState<"قاصه" | "ماستر">("قاصه");
+  const [selectedInstallment, setSelectedInstallment] = useState<InstallmentAlert | null>(null);
+  const [payAmount, setPayAmount] = useState("");
+  const [payMethod, setPayMethod] = useState<"قاصه" | "خارج القاصة" | "ماستر">("قاصه");
 
   const handleOpenPayInstallment = (alert: InstallmentAlert) => {
     setSelectedInstallment(alert);
@@ -521,7 +504,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
       });
 
       const paidNum = Number(payAmount);
-      const dueNum  = selectedInstallment.amount;
+      const dueNum = selectedInstallment.amount;
       if (paidNum > dueNum) {
         const txs = await callTauri<any[]>("get_partner_transactions", {
           partnerName: selectedInstallment.buyerName,
@@ -532,7 +515,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
           .sort((a, b) => a.date.localeCompare(b.date));
 
         if (futureInstallments.length > 0) {
-          const excess    = paidNum - dueNum;
+          const excess = paidNum - dueNum;
           const distribute = excess / futureInstallments.length;
           for (const fut of futureInstallments) {
             const nextAmount = Math.max(0, fut.amount - distribute);
@@ -567,12 +550,12 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
 
   // ── تسديد الممولين ──
   const [showPayCreditorModal, setShowPayCreditorModal] = useState(false);
-  const [selectedCreditor,     setSelectedCreditor]     = useState("");
-  const [creditorAmount,       setCreditorAmount]       = useState("");
-  const [creditorCurrency,     setCreditorCurrency]     = useState<"IQD" | "USD">("USD");
-  const [courierName,          setCourierName]          = useState("");
-  const [creditorCommission,   setCreditorCommission]   = useState("");
-  const [commissionCurrency,   setCommissionCurrency]   = useState<"IQD" | "USD">("USD");
+  const [selectedCreditor, setSelectedCreditor] = useState("");
+  const [creditorAmount, setCreditorAmount] = useState("");
+  const [creditorCurrency, setCreditorCurrency] = useState<"IQD" | "USD">("USD");
+  const [courierName, setCourierName] = useState("");
+  const [creditorCommission, setCreditorCommission] = useState("");
+  const [commissionCurrency, setCommissionCurrency] = useState<"IQD" | "USD">("USD");
 
   const handleOpenPayCreditor = (name?: string) => {
     if (name) setSelectedCreditor(name);
@@ -583,12 +566,12 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
     // تنظيف الاسم والبيانات المحددة فوراً
     const cleanCreditorName = selectedCreditor.trim();
     if (!cleanCreditorName || !Number(creditorAmount)) return;
-    
+
     setLoadingAction(true);
     try {
       const amountNum = Number(creditorAmount);
       const commissionNum = Number(creditorCommission) || 0;
-      
+
       // العثور على الحساب الفعلي للممول المختار في النظام لمعرفة نوع حسابه الحقيقي بدقة (ممول أو مطلوب)
       const matchingPartner = partners.find(
         (p) => p.partner_name.trim() === cleanCreditorName && (p.kind === "ممول" || p.kind === "مطلوب")
@@ -614,7 +597,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
       setCreditorAmount("");
       setCourierName("");
       setCreditorCommission("");
-      
+
       // تحديث كامل للواجهة والقوائم
       await onRefresh();
       await loadBalances();
@@ -635,7 +618,24 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
 
       {/* ── شريط الأدوات الموحد ── */}
       <div className="cars-page__toolbar unified-toolbar">
-        <div className="unified-toolbar__right" />
+        <div className="unified-toolbar__right">
+          <div className="cars-tabs financial-tabs">
+            <button
+              type="button"
+              className={`top-btn-one ${activeSubTab === "dashboard" ? "top-btn-one--active" : ""}`}
+              onClick={() => setActiveSubTab("dashboard")}
+            >
+              لوحة التحكم
+            </button>
+            <button
+              type="button"
+              className={`top-btn-two ${activeSubTab === "company-status" ? "top-btn-two--active" : ""}`}
+              onClick={() => setActiveSubTab("company-status")}
+            >
+              وضع الشركة
+            </button>
+          </div>
+        </div>
         <div
           className="unified-toolbar__center"
           style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}
@@ -644,109 +644,31 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
             className="unified-toolbar__title"
             style={{
               fontSize: "var(--fs-title)",
-              color: "var(--smiles)",
+              color: "var(--labletext)",
               letterSpacing: "0.02em",
             }}
           >
             البرنامج الحسابي لشركة فجر الوادي
           </h2>
-          <span style={{ color: "var(--gray)", fontSize: "var(--fs-sm)", fontWeight: "var(--fw-medium)" }}>
+          <span style={{ color: "var(--labletext)", fontSize: "var(--fs-sm)", fontWeight: "var(--fw-medium)" }}>
             بإدارة امير الزجراوي ومنتصر الحيدري
           </span>
         </div>
         <div className="unified-toolbar__left" />
       </div>
 
-      {/* ═══════════════════════════════════════════════════
-          بطاقات الملخص المالي
-      ═══════════════════════════════════════════════════ */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "1rem", marginBottom: "1.25rem" }}>
-
-        <StatCard icon={Coins} label="رصيد القاصة النقدية" variant="safe">
-          <div style={{ fontSize: "var(--fs-md)", fontWeight: "800", color: "var(--dc-safe-accent)" }}>
-            <PriceDisplay amount={safeIqd} />
-          </div>
-          {safeUsd > 0 && (
-            <div style={{ fontSize: "var(--fs-base)", color: "var(--gray)", marginTop: "0.2rem" }}>
-              <PriceDisplay amount={safeUsd} currency="USD" />
-            </div>
-          )}
-        </StatCard>
-
-        <StatCard icon={CreditCard} label="رصيد حساب الماستر" variant="master">
-          <div style={{ fontSize: "var(--fs-md)", fontWeight: "800", color: "var(--dc-master-accent)" }}>
-            <PriceDisplay amount={masterIqd} />
-          </div>
-          {masterUsd > 0 && (
-            <div style={{ fontSize: "var(--fs-base)", color: "var(--gray)", marginTop: "0.2rem" }}>
-              <PriceDisplay amount={masterUsd} currency="USD" />
-            </div>
-          )}
-        </StatCard>
-
-        <StatCard icon={TrendingUp} label={`أرباح ${monthName}`} variant="profit" isLoss={monthlyProfits < 0}>
-          <div style={{
-            fontSize: "var(--fs-lg)",
-            fontWeight: "800",
-            color: monthlyProfits >= 0 ? "var(--dc-profit-accent)" : "var(--dc-loss-accent)",
-          }}>
-            <PriceDisplay amount={Math.abs(monthlyProfits)} />
-          </div>
-          {monthlyProfits < 0 && (
-            <div style={{ fontSize: "var(--fs-xs)", color: "var(--dc-loss-accent)", marginTop: "0.2rem" }}>خسارة</div>
-          )}
-        </StatCard>
-
-        <StatCard icon={CarIcon} label="قيمة مخزون المعرض" variant="inventory">
-          <div style={{ fontSize: "var(--fs-lg)", fontWeight: "800", color: "var(--dc-inventory-accent)" }}>
-            <PriceDisplay amount={inventoryValue} />
-          </div>
-          <div style={{ fontSize: "var(--fs-xs)", color: "var(--gray)", marginTop: "0.2rem" }}>
-            {cars.filter((c) => c.status === "متوفرة").length} سيارة
-          </div>
-        </StatCard>
-      </div>
-
-      {/* ═══════════════════════════════════════════════════
-          شريط الإجراءات السريعة
-      ═══════════════════════════════════════════════════ */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "1rem", marginBottom: "1.25rem" }}>
-        <QuickBtn
-          icon={Plus}
-          label="شراء سيارة"
-          sublabel="تسجيل سيارة جديدة"
-          onClick={() => onOpenCarForm("new")}
-          variant="gold"
-          className="quick-btn--colored quick-btn--buy"
-          iconColor="var(--dc-buy-accent)"
-        />
-        <QuickBtn
-          icon={CarIcon}
-          label="بيع سيارة"
-          sublabel="إتمام عملية بيع"
-          onClick={() => setShowQuickSale(true)}
-          variant="gold"
-          className="quick-btn--colored quick-btn--sell"
-          iconColor="var(--dc-sell-accent)"
-        />
-        <QuickBtn
-          icon={Coins}
-          label="تسجيل مصروف"
-          sublabel="مصروف يومي أو خاص"
-          onClick={() => setShowQuickExpense(true)}
-          variant="red"
-          className="quick-btn--colored quick-btn--expense"
-          iconColor="var(--dc-expense-accent)"
-        />
-        <QuickBtn
-          icon={Landmark}
-          label="سحب ممول"
-          sublabel="سداد دين للجهة الممولة"
-          onClick={() => handleOpenPayCreditor()}
-          variant="gray"
-          className="quick-btn--colored quick-btn--creditor"
-          iconColor="var(--dc-creditor-accent)"
-        />
+      {activeSubTab === "company-status" ? (
+        <CompanyStatusTab />
+      ) : (
+        <>
+          {/* ═══════════════════════════════════════════════════
+              بطاقات الملخص المالي
+          ═══════════════════════════════════════════════════ */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "1rem", marginBottom: "1.25rem", marginTop: "1.5rem" }}>
+        <QasaCard cashIqd={summary?.cash_iqd || 0} cashUsd={summary?.cash_usd || 0} />
+        <InventoryCard valueIqd={summary?.inventory_value_iqd || 0} valueUsd={summary?.inventory_value_usd || 0} availableCarsCount={cars.filter((c) => c.status === "متوفرة").length} />
+        <CapitalCard capitalIqd={summary?.total_partner_capital_iqd || 0} capitalUsd={summary?.total_partner_capital_usd || 0} />
+        <ProfitCard profitIqd={summary?.monthly_profits_iqd || 0} profitUsd={summary?.monthly_profits_usd || 0} monthName={monthName} />
       </div>
 
       {/* ═══════════════════════════════════════════════════
@@ -759,10 +681,9 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
           className="dashboard-panel dashboard-panel--install"
           style={{ display: "flex", flexDirection: "column", gap: "0.85rem", minHeight: 0 }}
         >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div className="dashboard-panel__header">
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <Calendar size={18} style={{ color: "var(--dc-install-accent)" }} />
-              <span style={{ fontWeight: "var(--fw-bold)", fontSize: "var(--fs-base)", color: "var(--white)" }}>
+              <span style={{ fontWeight: "var(--fw-bold)", fontSize: "var(--fs-base)", color: "var(--labletext)" }}>
                 الأقساط والمستحقات
               </span>
               {filteredInstallments.length > 0 && (
@@ -782,7 +703,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
                 </span>
               )}
             </div>
-            <span style={{ fontSize: "var(--fs-xs)", color: "var(--gray)" }}>
+            <span style={{ fontSize: "var(--fs-xs)", color: "var(--bg2)" }}>
               {installments.length} إجمالي
             </span>
           </div>
@@ -791,14 +712,19 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
             className="dashboard-scroll-list"
             style={{ display: "flex", flexDirection: "column", gap: "0.55rem", flex: 1, overflowY: "auto", minHeight: 0 }}
           >
-            {filteredInstallments.length > 0 ? (
+            {loadingPanels ? (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, textAlign: "center" }}>
+                <div className="spinner" style={{ width: 24, height: 24, marginBottom: "0.5rem" }} />
+                <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-xs)", opacity: 0.6 }}>جاري التحميل...</div>
+              </div>
+            ) : filteredInstallments.length > 0 ? (
               filteredInstallments.map((alert) => (
-                <InstallmentRow key={alert.id} alert={alert} onPay={handleOpenPayInstallment} />
+                <InstallmentRow key={alert.id} alert={alert} onPay={handleOpenPayInstallment} onViewAccount={onNavigateToPartner} />
               ))
             ) : (
-              <div style={{ textAlign: "center", padding: "2.5rem 1rem" }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, textAlign: "center", marginTop: "-2rem" }}>
                 <CheckCircle2 size={36} style={{ color: "var(--dc-install-accent)", margin: "0 auto 0.5rem auto", opacity: 0.6 }} />
-                <div style={{ color: "var(--gray)", fontSize: "var(--fs-sm)" }}>لا توجد أقساط متأخرة أو مستحقة</div>
+                <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-sm)" }}>لا توجد أقساط متأخرة أو مستحقة</div>
               </div>
             )}
           </div>
@@ -809,10 +735,9 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
           className="dashboard-panel dashboard-panel--fund"
           style={{ display: "flex", flexDirection: "column", gap: "0.85rem", minHeight: 0 }}
         >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div className="dashboard-panel__header">
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <Landmark size={18} style={{ color: "var(--dc-fund-accent)" }} />
-              <span style={{ fontWeight: "var(--fw-bold)", fontSize: "var(--fs-base)", color: "var(--white)" }}>
+              <span style={{ fontWeight: "var(--fw-bold)", fontSize: "var(--fs-base)", color: "var(--labletext)" }}>
                 الجهات الممولة (الدائنون)
               </span>
               {creditors.length > 0 && (
@@ -831,38 +756,25 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
                 </span>
               )}
             </div>
-            <button
-              type="button"
-              onClick={() => handleOpenPayCreditor()}
-              style={{
-                padding: "0.3rem 0.7rem",
-                background: "rgba(52,211,153,0.1)",
-                border: "1px solid rgba(52,211,153,0.28)",
-                borderRadius: "8px",
-                color: "var(--dc-fund-accent)",
-                fontSize: "var(--fs-xs)",
-                fontWeight: "var(--fw-bold)",
-                cursor: "pointer",
-                fontFamily: "inherit",
-                transition: "background 0.15s",
-              }}
-            >
-              + تسديد دفعة
-            </button>
           </div>
 
           <div
             className="dashboard-scroll-list"
             style={{ display: "flex", flexDirection: "column", gap: "0.55rem", flex: 1, overflowY: "auto", minHeight: 0 }}
           >
-            {creditors.length > 0 ? (
+            {loadingPanels ? (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, textAlign: "center" }}>
+                <div className="spinner" style={{ width: 24, height: 24, marginBottom: "0.5rem" }} />
+                <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-xs)", opacity: 0.6 }}>جاري التحميل...</div>
+              </div>
+            ) : creditors.length > 0 ? (
               creditors.map((c) => (
-                <CreditorRow key={`${c.partner_name}_${c.kind}`} creditor={c} onPay={handleOpenPayCreditor} />
+                <CreditorRow key={`${c.partner_name}_${c.kind}`} creditor={c} onPay={handleOpenPayCreditor} onViewAccount={onNavigateToPartner} />
               ))
             ) : (
-              <div style={{ textAlign: "center", padding: "2.5rem 1rem" }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, textAlign: "center", marginTop: "-2rem" }}>
                 <PartyPopper size={36} style={{ color: "var(--dc-fund-accent)", margin: "0 auto 0.5rem auto", opacity: 0.6 }} />
-                <div style={{ color: "var(--gray)", fontSize: "var(--fs-sm)" }}>لا توجد مديونيات للممولين حالياً</div>
+                <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-sm)" }}>لا توجد مديونيات للممولين حالياً</div>
               </div>
             )}
           </div>
@@ -885,7 +797,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                 {cars.filter((c) => c.status === "متوفرة").length === 0 ? (
-                  <div style={{ textAlign: "center", padding: "2rem", color: "var(--gray)" }}>لا توجد سيارات متوفرة للبيع</div>
+                  <div style={{ textAlign: "center", padding: "2rem", color: "var(--bg2)" }}>لا توجد سيارات متوفرة للبيع</div>
                 ) : (
                   cars.filter((c) => c.status === "متوفرة").map((c) => (
                     <button
@@ -972,6 +884,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
               <button type="button" className="modal-dialog__close" onClick={() => setShowPayInstallmentModal(false)}>×</button>
             </div>
             <div className="modal-dialog__body">
+              <form onSubmit={(e) => { e.preventDefault(); handlePayInstallment(); }}>
               {/* معلومات القسط */}
               <div className="modal-info-card" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
                 <div>
@@ -991,7 +904,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
               </div>
               <div className="form-group">
                 <label className="label">المبلغ المسدد</label>
-                <PriceInput value={payAmount} onChange={setPayAmount} currency={selectedInstallment.currency as "IQD" | "USD"} onCurrencyChange={() => {}} />
+                <PriceInput value={payAmount} onChange={setPayAmount} currency={selectedInstallment.currency as "IQD" | "USD"} onCurrencyChange={() => { }} />
                 {Number(payAmount) > selectedInstallment.amount && (
                   <div style={{ marginTop: "0.5rem", padding: "0.6rem 0.75rem", background: "rgba(212,175,55,0.07)", border: "1px solid rgba(212,175,55,0.2)", borderRadius: "8px", fontSize: "var(--fs-xs)", color: "#d4af37" }}>
                     ✨ الفائض <strong>{(Number(payAmount) - selectedInstallment.amount).toLocaleString("en-US")} {selectedInstallment.currency === "USD" ? "USD" : "IQ"}</strong> سيتم توزيعه على الأقساط القادمة تلقائياً
@@ -1001,17 +914,18 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
               <div className="form-group">
                 <label className="label">يدخل إلى</label>
                 <div className="payment-type-selector">
-                  {(["قاصه", "ماستر"] as const).map((opt) => (
-                    <button key={opt} type="button" className={`payment-type-btn payment-type-btn--${opt === "قاصه" ? "qasa" : "master"} ${payMethod === opt ? "payment-type-btn--active" : ""}`} onClick={() => setPayMethod(opt)}>{opt}</button>
+                  {(["قاصه", "خارج القاصة", "ماستر"] as const).map((opt) => (
+                    <button key={opt} type="button" className={`payment-type-btn payment-type-btn--${opt === "قاصه" ? "qasa" : opt === "خارج القاصة" ? "external" : "master"} ${payMethod === opt ? "payment-type-btn--active" : ""}`} onClick={() => setPayMethod(opt)}>{opt}</button>
                   ))}
                 </div>
               </div>
               <div className="modal-dialog__actions">
                 <ActionButton type="button" variant="ghost" onClick={() => setShowPayInstallmentModal(false)}>إلغاء</ActionButton>
-                <ActionButton type="button" variant="primary" disabled={loadingAction || !Number(payAmount)} onClick={handlePayInstallment}>
+                <ActionButton type="submit" variant="primary" disabled={loadingAction || !Number(payAmount)}>
                   {loadingAction ? "جاري التسديد..." : "تأكيد التسديد"}
                 </ActionButton>
               </div>
+              </form>
             </div>
           </div>
         </div>
@@ -1028,6 +942,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
               <button type="button" className="modal-dialog__close" onClick={() => setShowPayCreditorModal(false)}>×</button>
             </div>
             <div className="modal-dialog__body modal-dialog__body--scroll">
+              <form onSubmit={(e) => { e.preventDefault(); handlePayCreditor(); }}>
               <div className="form-group">
                 <label className="label">الجهة الممولة / الدائن *</label>
                 {creditors.length > 0 ? (
@@ -1089,13 +1004,16 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm }: Dashboar
               </div>
               <div className="modal-dialog__actions">
                 <ActionButton type="button" variant="ghost" onClick={() => setShowPayCreditorModal(false)}>إلغاء</ActionButton>
-                <ActionButton type="button" variant="primary" disabled={loadingAction || !selectedCreditor || !Number(creditorAmount)} onClick={handlePayCreditor}>
+                <ActionButton type="submit" variant="primary" disabled={loadingAction || !selectedCreditor || !Number(creditorAmount)}>
                   {loadingAction ? "جاري التسديد..." : "تأكيد التسديد"}
                 </ActionButton>
               </div>
+              </form>
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

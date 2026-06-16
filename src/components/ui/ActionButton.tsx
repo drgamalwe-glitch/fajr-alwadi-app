@@ -3,6 +3,7 @@
 import { type ButtonHTMLAttributes, forwardRef, type ReactNode } from "react";
 import { motion, type HTMLMotionProps } from "motion/react";
 import { cn } from "../../lib/utils";
+import { BUTTON_MOTION } from "../../theme/ui/buttons";
 
 type ActionButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "success";
 
@@ -45,14 +46,9 @@ const ActionButton = forwardRef<HTMLButtonElement, ActionButtonProps>(
       <motion.button
         ref={ref}
         disabled={disabled}
-        whileHover={disabled ? undefined : { scale: 1.03, filter: "brightness(1.08)" }}
-        whileTap={disabled ? undefined : { scale: 0.97 }}
-        transition={{
-          type: "spring",
-          stiffness: 400,
-          damping: 24,
-          mass: 0.5,
-        }}
+        whileHover={disabled ? undefined : BUTTON_MOTION.hoverScale}
+        whileTap={disabled ? undefined : BUTTON_MOTION.tapScale}
+        transition={BUTTON_MOTION.spring}
         className={cn(
           "act-btn",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/40 focus-visible:ring-offset-2 focus-visible:ring-offset-page",

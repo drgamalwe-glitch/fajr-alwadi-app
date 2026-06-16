@@ -42,7 +42,7 @@ const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
         {label && (
           <label
             htmlFor={id}
-            className="app-input-label text-xs font-bold tracking-wide text-text-muted"
+            className="app-input-label text-xs font-bold tracking-wide"
           >
             {label}
           </label>
@@ -90,6 +90,7 @@ const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
               spellCheck={false}
               onFocus={(e) => {
                 setIsFocused(true);
+                setTimeout(() => e.target.select(), 0);
                 props.onFocus?.(e);
               }}
               onBlur={(e) => {
@@ -97,7 +98,7 @@ const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
                 props.onBlur?.(e);
               }}
               className={cn(
-                "w-full bg-transparent text-white outline-none placeholder:text-white/35 text-center",
+                "w-full bg-transparent outline-none placeholder:text-white/35 text-center",
                 "file:mr-2 file:rounded-pill file:border-0 file:bg-white/10 file:px-3 file:py-1 file:text-xs file:font-bold file:text-text-secondary file:transition-colors hover:file:bg-white/20",
                 inputSize === "sm" ? "app-input-field-sm text-sm font-semibold" : "app-input-field text-xl font-bold",
                 className,

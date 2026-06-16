@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { callTauri } from "../api/tauri";
 import type { Car, CashRegisterEntry } from "../types";
 import { PriceDisplay } from "@/components/ui";
-import "../styles/transactions.css";
 
 import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
@@ -12,7 +11,7 @@ import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/paginat
  * مجمّعة في جدول واحد.
  */
 export function FinancialTransactionsTab() {
-  const [entries, setEntries] = useState<(CashRegisterEntry & { _source?: "قاصه" | "ماستر" | "مصرف" })[]>([]);
+  const [entries, setEntries] = useState<(CashRegisterEntry & { _source?: "قاصه" | "خارج القاصة" | "ماستر" | "مصرف" })[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
@@ -32,8 +31,8 @@ export function FinancialTransactionsTab() {
       }
 
       const all = (entriesData ?? []).map(entry => {
-        let source: "قاصه" | "ماستر" | "مصرف" = "قاصه";
-        
+        let source: "قاصه" | "خارج القاصة" | "ماستر" | "مصرف" = "قاصه";
+
         // التحقق مما إذا كانت الحركة متعلقة بسيارة
         const isCarEntry = [
           "شراء سيارة",
@@ -50,13 +49,13 @@ export function FinancialTransactionsTab() {
             const car = carsMap.get(carNum);
             if (car && car.purchase_payment_type) {
               const pType = car.purchase_payment_type.trim();
-              if (pType === "ماستر" || pType === "مصرف" || pType === "قاصه") {
+              if (pType === "ماستر" || pType === "مصرف" || pType === "قاصه" || pType === "خارج القاصة") {
                 source = pType as any;
               }
             }
           }
         }
-        
+
         return {
           ...entry,
           _source: source,
@@ -182,13 +181,14 @@ export function FinancialTransactionsTab() {
                         {entry.type_}
                       </td>
                       <td
-                        className={`col-money ${
-                          entry.currency === "USD"
-                            ? "tx-amount-usd"
-                            : entry.amount >= 0
-                            ? "tx-amount-iqd-pos"
-                            : "tx-amount-iqd-neg"
-                        }`}
+                        className={`col-money ${entry.type_ === "شراء بالتمويل"
+                            ? "tx-amount-iqd-neg"
+                            : entry.currency === "USD"
+                              ? "tx-amount-usd"
+                              : entry.amount >= 0
+                                ? "tx-amount-iqd-pos"
+                                : "tx-amount-iqd-neg"
+                          }`}
                       >
                         <PriceDisplay amount={entry.amount} currency={entry.currency} />
                       </td>

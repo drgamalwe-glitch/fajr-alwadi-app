@@ -1,99 +1,129 @@
-import os
+import re
+from pathlib import Path
 
-def export_selected_project_files(output_file="project_code.md"):
-    """
-    Export only the important Tauri + React + Rust source files:
-    
-    Included:
-    - src/
-    - src-tauri/src/
-    - package.json
-    - vite.config.ts
-    - tsconfig.json
-    - src-tauri/Cargo.toml
-    - src-tauri/tauri.conf.json
-    """
+OUTPUT_FILE = "project_architecture.md"
 
-    included_dirs = [
-        "src",
-        os.path.join("src-tauri", "src"),
-    ]
+RUST_FILES = [
+    "src-tauri/src/lib.rs",
+    "src-tauri/src/main.rs",
+]
 
-    included_files = [
-        "package.json",
-        "vite.config.ts",
-        "tsconfig.json",
-        os.path.join("src-tauri", "Cargo.toml"),
-        os.path.join("src-tauri", "tauri.conf.json"),
-    ]
-
-    with open(output_file, "w", encoding="utf-8") as md_file:
-        md_file.write("# Project Source Export\n\n")
-        md_file.write("Generated automatically from selected Tauri + React project files.\n\n")
-        md_file.write("---\n\n")
-
-        # =========================
-        # Export specific files
-        # =========================
-        for file_path in included_files:
-            if not os.path.exists(file_path):
-                print(f"⚠️ Not found: {file_path}")
-                continue
-
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-
-                extension = os.path.splitext(file_path)[1].replace(".", "").lower()
-
-                md_file.write(f"## File: `{file_path}`\n\n")
-                md_file.write(f"```{extension}\n")
-                md_file.write(content)
-                md_file.write("\n```\n\n")
-                md_file.write("---\n\n")
-
-                print(f"✅ Exported: {file_path}")
-
-            except Exception as e:
-                print(f"❌ Failed: {file_path} ({e})")
-
-        # =========================
-        # Export directories
-        # =========================
-        for directory in included_dirs:
-            if not os.path.exists(directory):
-                print(f"⚠️ Directory not found: {directory}")
-                continue
-
-            for root, _, files in os.walk(directory):
-                for file in files:
-                    file_path = os.path.join(root, file)
-
-                    try:
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            content = f.read()
-
-                        relative_path = os.path.relpath(file_path, ".")
-
-                        extension = os.path.splitext(file)[1].replace(".", "").lower()
-
-                        md_file.write(f"## File: `{relative_path}`\n\n")
-                        md_file.write(f"```{extension}\n")
-                        md_file.write(content)
-                        md_file.write("\n```\n\n")
-                        md_file.write("---\n\n")
-
-                        print(f"✅ Exported: {relative_path}")
-
-                    except UnicodeDecodeError:
-                        print(f"⏭️ Skipped binary file: {file_path}")
-
-                    except Exception as e:
-                        print(f"❌ Failed: {file_path} ({e})")
-
-    print(f"\n🎉 Export completed successfully!")
-    print(f"📄 Output file: {output_file}")
+TS_FILES = [
+    "src/types.ts",
+    "src/App.tsx",
+]
 
 
-if __name__ == "__main__":
-    export_selected_project_files()
+def extract_rust_architecture(content):
+    result = []
+
+    # Structs
+    structs = re.findall(
+        r"(?:#\[[^\]]+\]\s*)*(?:pub\s+)?struct\s+\w+\s*\{.*?\n\}",
+        content,
+        re.DOTALL,
+    )
+
+    # Enums
+    enums = re.findall(
+        r"(?:#\[[^\]]+\]\s*)*(?:pub\s+)?enum\s+\w+\s*\{.*?\n\}",
+        content,
+        re.DOTALL,
+    )
+
+    # Tauri commands
+    commands = re.findall(
+        r"#\[tauri::command\]\s*[\s\S]*?fn\s+(\w+)\s*\(",
+        content,
+    )
+
+    # CREATE TABLE statements
+    create_tables = re.findall(
+        r'CREATE TABLE IF NOT EXISTS[\s\S]*?\)',
+        content,
+        re.DOTALL,
+    )
+
+    if structs:
+        result.append("# Structs\n")
+        result.extend(structs)
+
+    if enums:
+        result.append("\n# Enums\n")
+        result.extend(enums)
+
+    if commands:
+        result.append("\n# Tauri Commands\n")
+        for cmd in commands:
+            result.append(f"- {cmd}")
+
+    if create_tables:
+        result.append("\n# Database Schema\n")
+        result.extend(create_tables)
+
+    return "\n\n".join(result)
+
+
+def extract_typescript_architecture(content):
+    result = []
+
+    interfaces = re.findall(
+        r"export\s+interface\s+\w+\s*\{.*?\n\}",
+        content,
+        re.DOTALL,
+    )
+
+    types = re.findall(
+        r"export\s+type\s+\w+\s*=.*?;",
+        content,
+        re.DOTALL,
+    )
+
+    if interfaces:
+        result.append("# Interfaces\n")
+        result.extend(interfaces)
+
+    if types:
+        result.append("\n# Types\n")
+        result.extend(types)
+
+    return "\n\n".join(result)
+
+
+with open(OUTPUT_FILE, "w", encoding="utf-8") as out:
+
+    out.write("# Project Architecture Export\n\n")
+
+    for file_path in RUST_FILES:
+
+        path = Path(file_path)
+
+        if not path.exists():
+            continue
+
+        content = path.read_text(encoding="utf-8")
+
+        extracted = extract_rust_architecture(content)
+
+        out.write(f"\n\n## {file_path}\n\n")
+        out.write("```rust\n")
+        out.write(extracted)
+        out.write("\n```\n")
+
+    for file_path in TS_FILES:
+
+        path = Path(file_path)
+
+        if not path.exists():
+            continue
+
+        content = path.read_text(encoding="utf-8")
+
+        extracted = extract_typescript_architecture(content)
+
+        out.write(f"\n\n## {file_path}\n\n")
+        out.write("```ts\n")
+        out.write(extracted)
+        out.write("\n```\n")
+
+print(f"✅ Generated: {OUTPUT_FILE}")

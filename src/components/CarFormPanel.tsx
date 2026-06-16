@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { CarFormState, Partner, CarExpenseRecord } from "../types";
 import { callTauri } from "../api/tauri";
-import "../styles/monsadilah.css";
 import { SearchableCombobox } from "./SearchableCombobox";
 
 import { arabicKeyboardToEnglish, englishKeyboardToArabic, toChassisText } from "../utils/keyboardLayout";
@@ -40,6 +39,7 @@ export function CarFormPanel({
   const [, setIsSelectOpen] = useState(false);
   // ── نظام الصفحتين: 0 = مواصفات السيارة، 1 = تفاصيل البيع ──
   const [formPage, setFormPage] = useState(0);
+  const [deletedExpenseIds, setDeletedExpenseIds] = useState<number[]>([]);
 
   useEffect(() => {
     callTauri<Partner[]>("get_partners")
@@ -58,6 +58,7 @@ export function CarFormPanel({
   };
 
   useEffect(() => {
+    setDeletedExpenseIds([]);
     loadCarExpenses();
   }, [form.num, form.province]);
 
@@ -65,39 +66,33 @@ export function CarFormPanel({
   useEffect(() => {
     if (prevPage.current === 0 && formPage === 1) {
       if (expenseDesc.trim() && Number(expenseAmt) > 0) {
-        void handleAddExpense();
+        handleAddExpense();
       }
     }
     prevPage.current = formPage;
   }, [formPage]);
 
-  const handleAddExpense = async () => {
-    if (!expenseDesc.trim() || !Number(expenseAmt) || !form.num) return;
+  const handleAddExpense = () => {
+    if (!expenseDesc.trim() || !Number(expenseAmt)) return;
     const carNumber = [form.num.trim(), form.province.trim()].filter(Boolean).join(" ");
-    try {
-      await callTauri("add_expense", {
-        description: expenseDesc.trim(),
-        amount: Number(expenseAmt) || 0,
-        date: todayIsoDate(),
-        notes: `مصروف مخصص للسيارة ${form.name || form.model || "سيارة"} رقم ${carNumber}`,
-        currency: expenseCurrency,
-        carNumber,
-      });
-      setExpenseDesc("");
-      setExpenseAmt("");
-      loadCarExpenses();
-    } catch (err) {
-      console.error(err);
-    }
+    const newExpense: CarExpenseRecord = {
+      id: -Date.now(), // Unique temporary negative ID
+      date: todayIsoDate(),
+      description: expenseDesc.trim(),
+      amount: Number(expenseAmt) || 0,
+      currency: expenseCurrency,
+      car_number: carNumber,
+    };
+    setCarExpenses((prev) => [...prev, newExpense]);
+    setExpenseDesc("");
+    setExpenseAmt("");
   };
 
-  const handleDeleteExpense = async (id: number) => {
-    try {
-      await callTauri("delete_car_expense_record", { id });
-      loadCarExpenses();
-    } catch (err) {
-      console.error(err);
+  const handleDeleteExpense = (id: number) => {
+    if (id > 0) {
+      setDeletedExpenseIds((prev) => [...prev, id]);
     }
+    setCarExpenses((prev) => prev.filter((exp) => exp.id !== id));
   };
 
   const hasSellingPrice = form.selling !== "" && Number(form.selling) > 0;
@@ -109,77 +104,6 @@ export function CarFormPanel({
   const monthly = form.paymentType === "اقساط" && installmentMonths > 0
     ? amountRemaining / installmentMonths : 0;
   const formRef = useRef<HTMLFormElement>(null);
-
-  // Find "فجر الوادي" partner entry
-  const fajrPartner = (form.carPartners || []).find(p => p.partner_name === "فجر الوادي");
-  // Find the other partner entry (first one that isn't "فجر الوادي")
-  const otherPartner = (form.carPartners || []).find(p => p.partner_name !== "فجر الوادي");
-
-  const handleFajrAmountChange = (amount: string) => {
-    const nextPartners = [...(form.carPartners || [])];
-    const idx = nextPartners.findIndex(p => p.partner_name === "فجر الوادي");
-    if (idx > -1) {
-      nextPartners[idx] = { ...nextPartners[idx], amount };
-    } else {
-      nextPartners.push({ partner_name: "فجر الوادي", amount, currency: form.currency });
-    }
-    onChange({ carPartners: nextPartners });
-  };
-
-  const handleFajrCurrencyChange = (currency: "IQD" | "USD") => {
-    const nextPartners = [...(form.carPartners || [])];
-    const idx = nextPartners.findIndex(p => p.partner_name === "فجر الوادي");
-    if (idx > -1) {
-      nextPartners[idx] = { ...nextPartners[idx], currency };
-    } else {
-      nextPartners.push({ partner_name: "فجر الوادي", amount: "", currency });
-    }
-    onChange({ carPartners: nextPartners });
-  };
-
-  const handleOtherPartnerNameChange = (name: string) => {
-    const nextPartners = (form.carPartners || []).filter(p => p.partner_name === "فجر الوادي");
-    if (name && name !== "no_other_partner") {
-      const existingOther = (form.carPartners || []).find(p => p.partner_name !== "فجر الوادي");
-      const amount = existingOther ? existingOther.amount : "";
-      const currency = existingOther ? existingOther.currency : form.currency;
-
-      const found = allPartners.find(p => p.partner_name === name);
-      const kind = found ? found.kind : "شريك";
-
-      nextPartners.push({ partner_name: name, amount, currency, kind });
-    }
-    onChange({ carPartners: nextPartners });
-  };
-
-  const handleOtherPartnerAmountChange = (amount: string) => {
-    const nextPartners = [...(form.carPartners || [])];
-    const idx = nextPartners.findIndex(p => p.partner_name !== "فجر الوادي");
-    if (idx > -1) {
-      nextPartners[idx] = { ...nextPartners[idx], amount };
-    } else {
-      const existingOtherName = otherPartner ? otherPartner.partner_name : "";
-      if (existingOtherName) {
-        nextPartners.push({ partner_name: existingOtherName, amount, currency: form.currency });
-      }
-    }
-    onChange({ carPartners: nextPartners });
-  };
-
-  const handleOtherPartnerCurrencyChange = (currency: "IQD" | "USD") => {
-    const nextPartners = [...(form.carPartners || [])];
-    const idx = nextPartners.findIndex(p => p.partner_name !== "فجر الوادي");
-    if (idx > -1) {
-      nextPartners[idx] = { ...nextPartners[idx], currency };
-    } else {
-      const existingOtherName = otherPartner ? otherPartner.partner_name : "";
-      if (existingOtherName) {
-        nextPartners.push({ partner_name: existingOtherName, amount: "", currency });
-      }
-    }
-    onChange({ carPartners: nextPartners });
-  };
-
 
   /* مزامنة حالة السيارة تلقائياً */
   useEffect(() => {
@@ -212,7 +136,7 @@ export function CarFormPanel({
     prevAutoType.current = pt;
   }, [form.paymentType]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const formEl = formRef.current;
     if (!formEl) return;
@@ -267,6 +191,32 @@ export function CarFormPanel({
       }
     }
 
+    // حفظ التغييرات في المصاريف بقاعدة البيانات SQLite فقط عند تأكيد الحفظ
+    try {
+      const carNumber = [form.num.trim(), form.province.trim()].filter(Boolean).join(" ");
+
+      // 1. حذف المصاريف التي حدد المستخدم حذفها
+      for (const id of deletedExpenseIds) {
+        await callTauri("delete_car_expense_record", { id });
+      }
+
+      // 2. إضافة المصاريف الجديدة
+      for (const exp of carExpenses) {
+        if (exp.id < 0) {
+          await callTauri("add_expense", {
+            description: exp.description,
+            amount: exp.amount,
+            date: exp.date,
+            notes: `مصروف مخصص للسيارة ${form.name || form.model || "سيارة"} رقم ${carNumber}`,
+            currency: exp.currency,
+            carNumber,
+          });
+        }
+      }
+    } catch (dbErr) {
+      console.error("Failed to save expenses to database:", dbErr);
+    }
+
     onSubmit(e);
   };
 
@@ -301,34 +251,28 @@ export function CarFormPanel({
         }
       }}
     >
-      <div className="flex flex-col h-full overflow-hidden p-4 gap-3">
-        {/* ── حالة السيارة ── */}
-        <div className="flex justify-center flex-shrink-0">
-          <span
-            className={`px-5 py-1.5 rounded-full text-sm font-bold tracking-wide transition-all duration-300 ${
-              isSold
-                ? "bg-red-500/15 text-red-400 border border-red-500/30 shadow-[0_0_12px_rgba(239,68,68,0.15)]"
-                : "bg-green-500/15 text-green-400 border border-green-500/30 shadow-[0_0_12px_rgba(34,197,94,0.15)]"
-            }`}
+      <div className="flex flex-col h-full overflow-hidden p-4 gap-3 relative">
+        {/* ── شارة حالة السيارة (الجانب الأيمن) ── */}
+        <div className="absolute right-4 top-10 -translate-y-1/2 z-10">
+          <div
+            className={`car-status-badge ${isSold ? "car-status-badge--sold" : "car-status-badge--available"}`}
           >
-            {isSold ? "مبــــاع" : "متــــوفر"}
-          </span>
+            <span className={`car-status-badge__dot ${isSold ? "" : "car-status-badge__dot--pulse"}`} />
+            <span className="car-status-badge__text">{isSold ? "مباع" : "متوفر"}</span>
+          </div>
         </div>
 
         {/* ── Tabs ── */}
-        <div className="flex justify-center gap-8 border-b border-[var(--car-border)] flex-shrink-0">
+        <div className="flex justify-center gap-4 border-b border-[var(--car-border)] pb-3 flex-shrink-0">
           {[
-            { page: 0, label: "🚗 مواصفات السيارة" },
-            { page: 1, label: "💰 تفاصيل البيع" },
+            { page: 0, label: "مواصفات السيارة" },
+            { page: 1, label: "تفاصيل البيع" },
           ].map(({ page, label }) => (
             <button
               key={page}
               type="button"
               onClick={() => { setFormPage(page); }}
-              className={`pb-2 text-[var(--car-fs-button)] font-bold transition-colors ${formPage === page
-                  ? "text-[var(--car-accent)] border-b-2 border-[var(--car-accent)]"
-                  : "text-[var(--car-text-muted)] border-b-2 border-transparent hover:text-gray-300"
-                }`}
+              className={`car-form-tab text-[var(--car-fs-button)] ${formPage === page ? "is-active" : ""}`}
             >
               {label}
             </button>
@@ -452,10 +396,10 @@ export function CarFormPanel({
                               display: "flex",
                               alignItems: "center",
                               padding: "0 0.75rem",
-                              background: "rgba(255,255,255,0.03)",
-                              border: "1px solid rgba(255,255,255,0.06)",
+                              background: "var(--textinputbg)",
+                              border: "1px solid var(--textinputborder)",
                               borderRadius: "8px",
-                              color: "#22c55e",
+                              color: "var(--textinputtext)",
                               fontWeight: 700,
                               fontSize: "var(--fs-base)",
                               direction: "ltr",
@@ -471,11 +415,11 @@ export function CarFormPanel({
                     <div className="col-span-2">
                       <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">طريقة الشراء</label>
                       <div className="payment-type-selector" style={{ display: "flex", gap: "4px" }}>
-                        {(["كاش", "شراكه", "تمويل", "شركة"] as const).map((opt) => (
+                        {(["كاش", "موجود", "تمويل", "شركة"] as const).map((opt) => (
                           <button
                             key={opt}
                             type="button"
-                            className={`payment-type-btn payment-type-btn--${opt === "كاش" ? "green" : opt === "شراكه" ? "purple" : opt === "تمويل" ? "blue" : "orange"} ${form.purchaseType === opt ? "payment-type-btn--active" : ""}`}
+                            className={`payment-type-btn payment-type-btn--${opt === "كاش" ? "green" : opt === "تمويل" ? "blue" : opt === "شركة" ? "orange" : "cyan"} ${form.purchaseType === opt ? "payment-type-btn--active" : ""}`}
                             onClick={() => onChange({ purchaseType: opt })}
                           >
                             {opt}
@@ -485,115 +429,29 @@ export function CarFormPanel({
                     </div>
                   </div>
 
-                {form.purchaseType && (
-                  <div className="bg-[var(--car-bg-card)] rounded-xl p-3">
-                    {form.purchaseType === "شراكه" && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                        {(() => {
-                          const totalPurchase = Number(form.purchase) || 0;
-                          const amt = Number(fajrPartner?.amount) || 0;
-                          const pct = totalPurchase > 0 ? ((amt / totalPurchase) * 100).toFixed(1) : "0";
-                          return (
-                            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                              <div style={{ flex: 1 }}>
-                                <div className="input flex items-center justify-between text-right" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(139,92,246,0.15)", borderRadius: "8px", height: "44px", padding: "0 0.75rem 0 2.2rem", color: "#fff", fontWeight: "var(--fw-bold)", fontSize: "var(--fs-base)" }}>
-                                  <span>فجر الوادي</span>
-                                  <span style={{ fontSize: "var(--fs-xs)", color: "#a78bfa", fontWeight: "var(--fw-bold)" }}>
-                                    {pct}%
-                                  </span>
-                                </div>
-                              </div>
-                              <div style={{ flex: 1 }}>
-                                <PriceInput
-                                  value={fajrPartner?.amount || ""}
-                                  onChange={handleFajrAmountChange}
-                                  currency={(fajrPartner?.currency || form.currency) as "IQD" | "USD"}
-                                  onCurrencyChange={handleFajrCurrencyChange}
-                                  className="h-[44px]"
-                                />
-                              </div>
-                            </div>
-                          );
-                        })()}
+                  {(form.purchaseType === "تمويل" || form.purchaseType === "شركة") && (
+                    <div className="bg-[var(--car-bg-card)] rounded-xl p-3">
+                      {form.purchaseType === "تمويل" && (
+                        <SearchableCombobox
+                          value={form.financerName}
+                          onChange={(name) => onChange({ financerName: name })}
+                          onOpenChange={setIsSelectOpen}
+                          placeholder="اختر الممول"
+                          options={allPartners.filter(p => (p.kind || "").trim().replace(/ة/g, "ه") === "ممول").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
+                        />
+                      )}
 
-                        {(() => {
-                          const totalPurchase = Number(form.purchase) || 0;
-                          const amt = Number(otherPartner?.amount) || 0;
-                          const pct = totalPurchase > 0 ? ((amt / totalPurchase) * 100).toFixed(1) : "0";
-                          const otherPartnerName = otherPartner?.partner_name || "";
-                          return (
-                            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                              <div style={{ flex: 1 }}>
-                                {(() => {
-                                  const opts = allPartners.filter((p) => {
-                                    const k = (p.kind || "").trim().replace(/ة/g, "ه");
-                                    return k === "مستثمر" && p.partner_name !== "فجر الوادي";
-                                  }).map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }));
-                                  return (
-                                <SearchableCombobox
-                                  value={otherPartnerName}
-                                  onChange={handleOtherPartnerNameChange}
-                                  onOpenChange={setIsSelectOpen}
-                                  placeholder="اختر الشريك الآخر"
-                                  options={opts}
-                                  suffix={otherPartnerName ? `${pct}%` : "0%"}
-                                  />
-                                  );
-                                })()}
-                              </div>
-                              <div style={{ flex: 1 }}>
-                                <PriceInput
-                                  value={otherPartner?.amount || ""}
-                                  onChange={handleOtherPartnerAmountChange}
-                                  currency={(otherPartner?.currency || form.currency) as "IQD" | "USD"}
-                                  onCurrencyChange={handleOtherPartnerCurrencyChange}
-                                  disabled={!otherPartnerName}
-                                  className="h-[44px]"
-                                />
-                              </div>
-                            </div>
-                          );
-                        })()}
-
-                        {Number(form.purchase) > 0 && (() => {
-                          const totalContrib = (form.carPartners || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
-                          const pct = (totalContrib / Number(form.purchase)) * 100;
-                          return (
-                            <div>
-                              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "var(--fs-xs)", marginBottom: "4px", opacity: 0.65 }}>
-                                <span>إجمالي المساهمات</span>
-                                <span>{Math.round(pct)}%</span>
-                              </div>
-                              <div style={{ height: "4px", background: "rgba(255,255,255,0.07)", borderRadius: "10px", overflow: "hidden" }}>
-                                <div style={{ height: "100%", width: `${Math.min(100, pct)}%`, background: pct >= 100 ? "linear-gradient(90deg,#22c55e,#16a34a)" : "linear-gradient(90deg,#8b5cf6,#a78bfa)", borderRadius: "10px", transition: "width 0.3s" }} />
-                              </div>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    )}
-
-                    {form.purchaseType === "تمويل" && (
-                      <SearchableCombobox
-                        value={form.financerName}
-                        onChange={(name) => onChange({ financerName: name })}
-                        onOpenChange={setIsSelectOpen}
-                        placeholder="اختر الممول"
-                        options={allPartners.filter(p => (p.kind || "").trim().replace(/ة/g, "ه") === "ممول").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
-                       />
-                    )}
-
-                    {form.purchaseType === "شركة" && (
-                      <SearchableCombobox
-                        value={form.financerName}
-                        onChange={(name) => onChange({ financerName: name })}
-                        onOpenChange={setIsSelectOpen}
-                        placeholder="اختر الشركة"
-                        options={allPartners.filter((p) => (p.kind || "").trim().replace(/ة/g, "ه") === "شركه").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
-                      />
-                    )}
-                  </div>
-                )}
+                      {form.purchaseType === "شركة" && (
+                        <SearchableCombobox
+                          value={form.financerName}
+                          onChange={(name) => onChange({ financerName: name })}
+                          onOpenChange={setIsSelectOpen}
+                          placeholder="اختر الشركة"
+                          options={allPartners.filter((p) => (p.kind || "").trim().replace(/ة/g, "ه") === "شركه").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -611,7 +469,7 @@ export function CarFormPanel({
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
-                        void handleAddExpense();
+                        handleAddExpense();
                       }
                     }}
                     containerClassName="flex-1"
@@ -625,12 +483,12 @@ export function CarFormPanel({
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           e.preventDefault();
-                          void handleAddExpense();
+                          handleAddExpense();
                         }
                       }}
                       onBlur={() => {
                         if (expenseDesc.trim() && Number(expenseAmt) > 0) {
-                          setTimeout(() => void handleAddExpense(), 150);
+                          setTimeout(() => handleAddExpense(), 150);
                         }
                       }}
                     />
@@ -694,157 +552,162 @@ export function CarFormPanel({
               <div className="flex mb-4" style={{ gap: "var(--car-gap-x)" }}>
                 {([
                   { label: "كاش", value: "كاش" as const, color: "emerald" },
-                  { label: "موعد تسليم", value: "موعد" as const, color: "violet" },
-                  { label: "اقساط", value: "اقساط" as const, color: "blue" },
+                  { label: "موعد تسليم", value: "موعد" as const, color: "gold" },
+                  { label: "اقساط", value: "اقساط" as const, color: "red" },
                 ]).map((opt) => (
                   <button
                     key={opt.value}
                     type="button"
                     onClick={() => onChange({ paymentType: opt.value })}
                     className={`flex-1 h-10 rounded-lg text-[var(--car-fs-button)] font-bold transition-all ${form.paymentType === opt.value
-                        ? opt.color === "emerald"
-                          ? "bg-[var(--car-btn-cash)] text-white shadow-md"
-                          : opt.color === "violet"
-                            ? "bg-[var(--car-btn-delivery)] text-white shadow-md"
-                            : "bg-[var(--car-btn-installment)] text-white shadow-md"
-                        : "bg-[var(--car-bg-inactive)] text-[var(--car-text-label)] hover:bg-[var(--car-bg-inactive-hover)]"
+                      ? opt.color === "emerald"
+                        ? "bg-[var(--car-btn-cash)] text-white shadow-md"
+                        : opt.color === "gold"
+                          ? "text-white shadow-md"
+                          : "text-white shadow-md"
+                      : "bg-[var(--car-bg-inactive)] text-[var(--car-text-label)] hover:bg-[var(--car-bg-inactive-hover)]"
                       }`}
+                    style={form.paymentType === opt.value && opt.color === "gold" ? { background: "#d8a85a" } : form.paymentType === opt.value && opt.color === "red" ? { background: "var(--red)" } : undefined}
                   >
                     {opt.label}
                   </button>
                 ))}
               </div>
-                <div className="grid grid-cols-3" style={{ columnGap: "var(--car-gap-x)", rowGap: "var(--car-gap-y)" }}>
-                  <div>
-                    <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">سعر البيع</label>
-                    <PriceInput
-                      id="car-selling"
-                      value={form.selling}
-                      onChange={(selling) => onChange({ selling })}
-                      currency={form.saleCurrency as Currency}
-                      onCurrencyChange={(saleCurrency) => onChange({ saleCurrency })}
-                      required={isSold}
-                      tabIndex={1}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") onChange({ amountPaid: form.selling });
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">تاريخ البيع</label>
+              <div className="grid grid-cols-3" style={{ columnGap: "var(--car-gap-x)", rowGap: "var(--car-gap-y)" }}>
+                <div>
+                  <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">اسم المشتري</label>
+                  <TextInput
+                    id="buyer-name"
+                    inputSize="sm"
+                    value={form.buyerName}
+                    onChange={(e) => onChange({ buyerName: e.target.value })}
+                    placeholder="الاسم"
+                    required={isSold}
+                    tabIndex={1}
+                  />
+                </div>
+                <div>
+                  <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">سعر البيع</label>
+                  <PriceInput
+                    id="car-selling"
+                    value={form.selling}
+                    onChange={(selling) => onChange({ selling })}
+                    currency={form.saleCurrency as Currency}
+                    onCurrencyChange={(saleCurrency) => onChange({ saleCurrency })}
+                    required={isSold}
+                    tabIndex={2}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") onChange({ amountPaid: form.selling });
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">تاريخ البيع</label>
+                  <UnifiedDateField
+                    value={form.saleDate}
+                    onChange={(saleDate) => onChange({ saleDate })}
+                    tabIndex={3}
+                  />
+                </div>
+                <div>
+                  <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">رقم الهاتف</label>
+                  <TextInput
+                    id="buyer-phone"
+                    inputSize="sm"
+                    value={form.phone}
+                    autoComplete="new-password"
+                    dir="ltr"
+                    placeholder="07XX XXX XXXX"
+                    onInput={(e: React.FormEvent<HTMLInputElement>) => onChange({ phone: toEn((e.target as HTMLInputElement).value).replace(/[^\d+\s()-]/g, "") })}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ phone: toEn(e.target.value).replace(/[^\d+\s()-]/g, "") })}
+                    onBlur={(e: React.FocusEvent<HTMLInputElement>) => onChange({ phone: toEn(e.target.value).replace(/[^\d+\s()-]/g, "") })}
+                    tabIndex={4}
+                  />
+                </div>
+
+                {/* Non-cash fields */}
+                {form.paymentType !== "كاش" && (
+                  <>
+                    <div>
+                      <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">المقدمة المستلمة</label>
+                      <PriceInput
+                        id="amount-paid"
+                        value={form.amountPaid}
+                        onChange={(amountPaid) => onChange({ amountPaid })}
+                        currency={form.saleCurrency as Currency}
+                        onCurrencyChange={(saleCurrency) => onChange({ saleCurrency })}
+                        required={isSold}
+                        tabIndex={5}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">المتبقي</label>
+                      <PriceInput
+                        id="amount-remaining"
+                        value={form.amountRemaining}
+                        onChange={(amountRemaining) => onChange({ amountRemaining })}
+                        currency={form.saleCurrency as Currency}
+                        onCurrencyChange={(saleCurrency) => onChange({ saleCurrency })}
+                        required={isSold}
+                        disabled
+                        tabIndex={6}
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* Delivery date */}
+                {form.paymentType === "موعد" && (
+                  <div className="col-span-3">
+                    <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">موعد التسليم</label>
                     <UnifiedDateField
-                      value={form.saleDate}
-                      onChange={(saleDate) => onChange({ saleDate })}
-                      tabIndex={3}
+                      id="first-payment-date"
+                      value={form.deliveryDate}
+                      onChange={(v) => onChange({ deliveryDate: v })}
+                      tabIndex={9}
                     />
                   </div>
-                  <div>
-                    <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">اسم المشتري</label>
-                    <TextInput
-                      id="buyer-name"
-                      inputSize="sm"
-                      value={form.buyerName}
-                      onChange={(e) => onChange({ buyerName: e.target.value })}
-                      placeholder="الاسم"
-                      required={isSold}
-                      tabIndex={4}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">رقم الهاتف</label>
-                    <TextInput
-                      id="buyer-phone"
-                      inputSize="sm"
-                      value={form.phone}
-                      autoComplete="new-password"
-                      dir="ltr"
-                      placeholder="07XX XXX XXXX"
-                      onInput={(e: React.FormEvent<HTMLInputElement>) => onChange({ phone: toEn((e.target as HTMLInputElement).value).replace(/[^\d+\s()-]/g, "") })}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ phone: toEn(e.target.value).replace(/[^\d+\s()-]/g, "") })}
-                      onBlur={(e: React.FocusEvent<HTMLInputElement>) => onChange({ phone: toEn(e.target.value).replace(/[^\d+\s()-]/g, "") })}
-                      tabIndex={5}
-                    />
-                  </div>
+                )}
 
-                  {/* Non-cash fields */}
-                  {form.paymentType !== "كاش" && (
-                    <>
-                      <div>
-                        <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">المقدمة المستلمة</label>
-                        <PriceInput
-                          id="amount-paid"
-                          value={form.amountPaid}
-                          onChange={(amountPaid) => onChange({ amountPaid })}
-                          currency={form.saleCurrency as Currency}
-                          onCurrencyChange={(saleCurrency) => onChange({ saleCurrency })}
-                          required={isSold}
-                          tabIndex={2}
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">المتبقي</label>
-                        <PriceInput
-                          id="amount-remaining"
-                          value={form.amountRemaining}
-                          onChange={(amountRemaining) => onChange({ amountRemaining })}
-                          currency={form.saleCurrency as Currency}
-                          onCurrencyChange={(saleCurrency) => onChange({ saleCurrency })}
-                          required={isSold}
-                          disabled
-                          tabIndex={6}
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  {/* Delivery date */}
-                  {form.paymentType === "موعد" && (
-                    <div className="col-span-3">
-                      <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">موعد التسليم</label>
+                {/* Installment fields */}
+                {form.paymentType === "اقساط" && (
+                  <>
+                    <div>
+                      <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">تاريخ القسط الأول</label>
                       <UnifiedDateField
                         id="first-payment-date"
-                        value={form.deliveryDate}
-                        onChange={(v) => onChange({ deliveryDate: v })}
+                        value={form.firstPaymentDate}
+                        onChange={(v) => onChange({ firstPaymentDate: v })}
                         tabIndex={9}
                       />
                     </div>
-                  )}
-
-                  {/* Installment fields */}
-                  {form.paymentType === "اقساط" && (
-                    <>
-                      <div>
-                        <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">تاريخ القسط الأول</label>
-                        <UnifiedDateField
-                          id="first-payment-date"
-                          value={form.firstPaymentDate}
-                          onChange={(v) => onChange({ firstPaymentDate: v })}
-                          tabIndex={9}
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">الأشهر</label>
-                        <NumberInput
-                          id="installment-months"
-                          value={form.installmentMonths}
-                          min={1}
-                          step={1}
-                          onChange={(v) => onChange({ installmentMonths: String(Math.max(1, Number(v) || 1)) })}
-                          required
-                          tabIndex={8}
-                          hideArrows
-                        />
-                      </div>
-                      <div className="col-span-3 flex flex-col items-center gap-1 px-3 py-3 bg-[var(--car-bg-page)] rounded-lg mt-1">
-                        <span className="text-[var(--car-fs-label)] text-[var(--car-text-label)]">القسط الشهري</span>
-                        <span className="text-[var(--car-fs-button)] font-bold text-[var(--car-accent-light)] text-lg">
-                          {monthly.toLocaleString("en-US")} {form.saleCurrency === "USD" ? "USD" : "IQ"}
-                        </span>
-                      </div>
-                    </>
-                  )}
-                </div>
+                    <div>
+                      <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">الأشهر</label>
+                      <NumberInput
+                        id="installment-months"
+                        value={form.installmentMonths}
+                        min={1}
+                        step={1}
+                        onChange={(v) => onChange({ installmentMonths: String(Math.max(1, Number(v) || 1)) })}
+                        required
+                        tabIndex={8}
+                        hideArrows
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">القسط الشهري</label>
+                      <TextInput
+                        inputSize="sm"
+                        value={`${monthly.toLocaleString("en-US")} ${form.saleCurrency === "USD" ? "USD" : "IQ"}`}
+                        disabled
+                        dir="ltr"
+                        style={{ color: "var(--car-accent-light)", fontWeight: "bold" }}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
+            </div>
           )}
         </div>
       </div>

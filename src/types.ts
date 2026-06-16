@@ -113,6 +113,7 @@ export interface CashRegisterEntry {
 export interface Agency {
   id: number;
   old_agent_name: string;
+  car_type: string;
   car_number: string;
   car_model: string;
   color: string;
@@ -136,17 +137,25 @@ export interface AgencyTransaction {
   notes: string | null;
 }
 
-export type TabId = "dashboard" | "cars" | "partners" | "partners-financial" | "debtors" | "cashregister" | "expenses" | "financial-accounts" | "financial-transactions" | "agencies";
+export type TabId = "dashboard" | "company-status" | "cars" | "partners" | "partners-financial" | "debtors" | "cashregister" | "expenses" | "financial-accounts" | "financial-transactions" | "agencies" | "profit-distribution";
 
 export interface FinancialSummary {
-  iqd_balance: number;
-  usd_balance: number;
-  inventory_value: number;
-  total_investments: number;
-  total_partner_capital: number;
-  total_debtors: number;
-  net_capital: number;
-  total_expenses: number;
+  cash_iqd: number;
+  cash_usd: number;
+  inventory_value_iqd: number;
+  inventory_value_usd: number;
+  total_investments_iqd: number;
+  total_investments_usd: number;
+  total_partner_capital_iqd: number;
+  total_partner_capital_usd: number;
+  total_debtors_iqd: number;
+  total_debtors_usd: number;
+  total_expenses_iqd: number;
+  total_expenses_usd: number;
+  net_capital_iqd: number;
+  net_capital_usd: number;
+  monthly_profits_iqd: number;
+  monthly_profits_usd: number;
 }
 
 export interface CarFormState {
@@ -173,12 +182,58 @@ export interface CarFormState {
   firstPaymentDate: string;
   currency: "IQD" | "USD";
   saleCurrency: "IQD" | "USD";
-  purchasePaymentType: "قاصه" | "ماستر";
-  salePaymentType: "قاصه" | "ماستر";
-  purchaseType: "كاش" | "شراكه" | "تمويل" | "شركة";
+  purchasePaymentType: "قاصه" | "خارج القاصة" | "ماستر";
+  salePaymentType: "قاصه" | "خارج القاصة" | "ماستر";
+  purchaseType: "كاش" | "تمويل" | "شركة" | "موجود";
   financerName: string;
   commissionType: "نسبة" | "مقطوع" | "لا يوجد";
   commissionValue: string;
-  carPartners: { partner_name: string; amount: string; currency: "IQD" | "USD"; kind?: string }[];
   oldNum?: string;
+}
+
+export interface PartnerDistributionInfo {
+  partner_name: string;
+  capital_iqd: number;
+  capital_usd: number;
+  drawings_iqd: number;
+  drawings_usd: number;
+}
+
+export interface ProfitDistributionSummary {
+  undistributed_iqd: number;
+  undistributed_usd: number;
+  partners: PartnerDistributionInfo[];
+}
+
+export interface PartnerProfitShareInput {
+  partner_name: string;
+  profit_share: number;
+  drawings_deducted: number;
+  amount_reinvested: number;
+  amount_paid: number;
+}
+
+export interface ProfitDistribution {
+  id: number;
+  date: string;
+  time: string;
+  total_profit: number;
+  currency: string;
+  notes: string | null;
+}
+
+export interface PartnerProfitShare {
+  id: number;
+  distribution_id: number;
+  partner_name: string;
+  profit_share: number;
+  drawings_deducted: number;
+  amount_reinvested: number;
+  amount_paid: number;
+  currency: string;
+}
+
+export interface ProfitDistributionDetail {
+  distribution: ProfitDistribution;
+  shares: PartnerProfitShare[];
 }

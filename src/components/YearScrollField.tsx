@@ -95,7 +95,7 @@ export function YearScrollField({
         <input
           ref={inputRef}
           id={id}
-          className="app-input-field-sm w-full min-w-0 bg-transparent text-sm font-semibold text-white placeholder:text-white/35 outline-none text-center flex-1"
+          className="app-input-field-sm w-full min-w-0 bg-transparent text-sm font-semibold placeholder:text-white/35 outline-none text-center flex-1"
           type="text"
           inputMode="decimal"
           dir="ltr"

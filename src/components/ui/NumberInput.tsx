@@ -5,6 +5,7 @@ import {
   forwardRef,
   useCallback,
   useRef,
+  useEffect,
 } from "react";
 import { ChevronUp, ChevronDown } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -58,6 +59,38 @@ const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(
     const inputRef = useRef<HTMLInputElement>(null);
     const numericValue = toNum(value);
 
+    // Normalize Arabic digits before processing via beforeinput event listener
+    useEffect(() => {
+      const el = inputRef.current;
+      if (!el) return;
+
+      const handler = (e: InputEvent) => {
+        if (!e.data) return;
+        if (/[\u0660-\u0669\u06f0-\u06f9]/.test(e.data)) {
+          e.preventDefault();
+
+          const start = el.selectionStart ?? 0;
+          const end = el.selectionEnd ?? 0;
+          
+          const normalized = e.data
+            .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+            .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+
+          const newValue = el.value.slice(0, start) + normalized + el.value.slice(end);
+
+          const nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, "value"
+          )?.set;
+          nativeSetter?.call(el, newValue);
+
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      };
+
+      el.addEventListener("beforeinput", handler as any);
+      return () => el.removeEventListener("beforeinput", handler as any);
+    }, []);
+
     const clamp = useCallback(
       (v: number) => Math.min(Math.max(v, min), max),
       [min, max],
@@ -99,13 +132,20 @@ const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(
 
     const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
       const pasted = e.clipboardData.getData("text");
-      if (!/^-?\d*\.?\d*$/.test(pasted)) {
+      const normalized = pasted
+        .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+        .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+      if (!/^-?\d*\.?\d*$/.test(normalized)) {
         e.preventDefault();
       }
     };
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const raw = e.target.value.replace(/[^0-9.-]/g, "");
+      const normalizedValue = e.target.value
+        .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+        .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+      
+      const raw = normalizedValue.replace(/[^0-9.-]/g, "");
       const parsed = parseFloat(raw);
       if (!isNaN(parsed)) {
         const clamped = clamp(parsed);
@@ -172,13 +212,14 @@ const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             onFocus={(e) => {
+              setTimeout(() => e.target.select(), 0);
               props.onFocus?.(e);
             }}
             onBlur={(e) => {
               props.onBlur?.(e);
             }}
             className={cn(
-              "app-input-field w-20 bg-transparent text-center text-xl font-bold tabular-nums text-white outline-none",
+              "app-input-field w-full bg-transparent text-center text-xl font-bold tabular-nums outline-none",
               "placeholder:text-white/35",
               className,
             )}

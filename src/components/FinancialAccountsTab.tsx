@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { callTauri } from "../api/tauri";
-import type { CashRegisterEntry } from "../types";
+import type { FinancialSummary } from "../types";
 import { CashRegisterTab } from "./CashRegisterTab";
 import { PriceDisplay } from "@/components/ui";
-import "../styles/qasa.css";
-import "../styles/cards.css";
 
-type PaymentTab = "قاصه" | "ماستر";
+type PaymentTab = "قاصه" | "خارج القاصة" | "ماستر";
 
 const PAYMENT_TABS: { id: PaymentTab; label: string }[] = [
   { id: "قاصه", label: "قاصه" },
@@ -16,18 +14,21 @@ const PAYMENT_TABS: { id: PaymentTab; label: string }[] = [
 
 export function FinancialAccountsTab() {
   const [activeTab, setActiveTab] = useState<PaymentTab>("قاصه");
-  const [entries, setEntries] = useState<CashRegisterEntry[]>([]);
+  const [balance, setBalance] = useState<{ iqd: number; usd: number }>({ iqd: 0, usd: 0 });
   const [loadingBalance, setLoadingBalance] = useState(true);
 
   const loadBalance = useCallback(async (tab: PaymentTab) => {
     setLoadingBalance(true);
     try {
-      const data = await callTauri<CashRegisterEntry[]>("get_cash_register_entries", {
+      const data = await callTauri<FinancialSummary>("get_financial_summary", {
         paymentType: tab,
       });
-      setEntries(data ?? []);
+      setBalance({
+        iqd: data?.cash_iqd || 0,
+        usd: data?.cash_usd || 0,
+      });
     } catch {
-      setEntries([]);
+      setBalance({ iqd: 0, usd: 0 });
     } finally {
       setLoadingBalance(false);
     }
@@ -37,12 +38,8 @@ export function FinancialAccountsTab() {
     void loadBalance(activeTab);
   }, [activeTab, loadBalance]);
 
-  const iqdBalance = entries.length > 0
-    ? entries.filter(e => e.currency !== "USD").reduce((sum, e) => sum + e.amount, 0)
-    : 0;
-  const usdBalance = entries.length > 0
-    ? entries.filter(e => e.currency === "USD").reduce((sum, e) => sum + e.amount, 0)
-    : 0;
+  const iqdBalance = balance.iqd;
+  const usdBalance = balance.usd;
 
 
   return (
@@ -53,13 +50,14 @@ export function FinancialAccountsTab() {
             <div className="financial-tabs">
               {PAYMENT_TABS.map((tab) => {
                 const isActive = activeTab === tab.id;
+                const isQasaOrExternal = tab.id === "قاصه" || tab.id === "خارج القاصة";
                 return (
                   <button
                     key={tab.id}
                     type="button"
                     role="tab"
                     aria-selected={isActive}
-                    className={`${tab.id === "قاصه" ? "top-btn-one" : "top-btn-two"} ${isActive ? (tab.id === "قاصه" ? "top-btn-one--active" : "top-btn-two--active") : ""}`.trim()}
+                    className={`${isQasaOrExternal ? "top-btn-one" : "top-btn-two"} ${isActive ? (isQasaOrExternal ? "top-btn-one--active" : "top-btn-two--active") : ""}`.trim()}
                     onClick={() => setActiveTab(tab.id)}
                   >
                     {tab.label}
@@ -76,12 +74,14 @@ export function FinancialAccountsTab() {
         </div>
         <div className="unified-toolbar__left">
           {!loadingBalance && (
-            <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
-              <div className="currency-card currency-card--usd">
-                <PriceDisplay amount={usdBalance} currency="USD" />
-              </div>
-              <div className="currency-card currency-card--iqd">
-                <PriceDisplay amount={iqdBalance} />
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", alignItems: "flex-start" }}>
+              <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+                <div className="currency-card currency-card--usd">
+                  <PriceDisplay amount={usdBalance} currency="USD" />
+                </div>
+                <div className="currency-card currency-card--iqd">
+                  <PriceDisplay amount={iqdBalance} />
+                </div>
               </div>
             </div>
           )}
@@ -89,6 +89,7 @@ export function FinancialAccountsTab() {
       </div>
 
       {activeTab === "قاصه" && <CashRegisterTab paymentType="قاصه" />}
+      {activeTab === "خارج القاصة" && <CashRegisterTab paymentType="خارج القاصة" />}
       {activeTab === "ماستر" && <CashRegisterTab paymentType="ماستر" />}
     </div>
   );
