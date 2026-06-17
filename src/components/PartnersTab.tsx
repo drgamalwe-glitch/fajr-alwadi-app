@@ -494,7 +494,15 @@ export function PartnersTab({
 
   const handleClose = async () => {
     if (modalMode === "view" && kind === "partners-financial") {
-      setShowExitConfirm(true);
+      const changed =
+        form.name !== originalPartnerData?.name ||
+        form.phone !== originalPartnerData?.phone ||
+        form.kind !== originalPartnerData?.kind;
+      if (changed) {
+        setShowExitConfirm(true);
+        return;
+      }
+      resetForm();
       return;
     }
     if (modalMode === "view") {
@@ -1002,10 +1010,9 @@ export function PartnersTab({
             setModalMode(null);
             setTransactions([]);
             onPartnerActionsChange?.(null);
-          } else {
-            setShowExitConfirm(true);
+            return;
           }
-          return;
+          // non-شريك: fall through to handleClose
         }
         if (editingKey) {
           void handleClose();
@@ -1696,7 +1703,7 @@ export function PartnersTab({
             </div>
           </div>
 
-          {/* Card 3: رأس المال */}
+          {/* Card 3: الكاش */}
           <div className="stat-card" style={{
             display: "flex",
             flexDirection: "column",
@@ -1716,7 +1723,7 @@ export function PartnersTab({
               marginBottom: 0,
               color: "var(--green)",
               textShadow: "0 0 12px rgba(34,197,94,0.5)"
-            }}>رأس المال</h3>
+            }}>الكاش</h3>
             <svg viewBox="0 0 100 36" style={{ width: "180px", height: "36px", margin: "4px 0 6px 0" }}>
               <path d="M 50 0 L 50 12 Q 50 17, 25 17 L 18 34 M 50 12 Q 50 17, 75 17 L 82 34"
                 stroke="rgba(34,197,94,0.35)" strokeWidth="1.5" fill="none" strokeLinecap="round" />
@@ -1781,7 +1788,15 @@ export function PartnersTab({
                         setTransactions([]);
                         onPartnerActionsChange?.(null);
                       } else {
-                        setShowExitConfirm(true);
+                        const changed =
+                          form.name !== originalPartnerData?.name ||
+                          form.phone !== originalPartnerData?.phone ||
+                          form.kind !== originalPartnerData?.kind;
+                        if (changed) {
+                          setShowExitConfirm(true);
+                        } else {
+                          resetForm();
+                        }
                       }
                     }}
                   >

@@ -658,7 +658,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
       </div>
 
       {activeSubTab === "company-status" ? (
-        <CompanyStatusTab />
+        <CompanyStatusTab summary={summary} unifiedAccounts={unifiedAccounts} partners={partners} />
       ) : (
         <>
           {/* ═══════════════════════════════════════════════════
@@ -667,7 +667,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "1rem", marginBottom: "1.25rem", marginTop: "1.5rem" }}>
         <QasaCard cashIqd={summary?.cash_iqd || 0} cashUsd={summary?.cash_usd || 0} />
         <InventoryCard valueIqd={summary?.inventory_value_iqd || 0} valueUsd={summary?.inventory_value_usd || 0} availableCarsCount={cars.filter((c) => c.status === "متوفرة").length} />
-        <CapitalCard capitalIqd={summary?.total_partner_capital_iqd || 0} capitalUsd={summary?.total_partner_capital_usd || 0} />
+        <CapitalCard capitalIqd={summary?.cash_iqd || 0} capitalUsd={summary?.cash_usd || 0} />
         <ProfitCard profitIqd={summary?.monthly_profits_iqd || 0} profitUsd={summary?.monthly_profits_usd || 0} monthName={monthName} />
       </div>
 

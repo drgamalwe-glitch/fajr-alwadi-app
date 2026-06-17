@@ -746,99 +746,58 @@ async function mockInvoke<T>(
   }
 
   if (command === "get_financial_summary") {
-    const filterType = args.payment_type ? String(args.payment_type) : null;
-    const cars: Car[] = JSON.parse(localStorage.getItem("mock_cars") ?? "[]");
     const partners: Partner[] = JSON.parse(localStorage.getItem("mock_partners") ?? "[]");
     const allTx: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
     const expenses: ExpenseEntry[] = JSON.parse(localStorage.getItem("mock_expenses") ?? "[]");
 
-    const filteredCars = filterType
-      ? cars.filter((c) => c.purchase_payment_type === filterType)
-      : cars;
-
-    let iqdBalance = 0;
-    let usdBalance = 0;
-
-    // شراء السيارات
-    for (const c of filteredCars) {
-      if (c.purchase_date && c.purchase_price > 0) {
-        if (c.currency === "USD") usdBalance -= c.purchase_price;
-        else iqdBalance -= c.purchase_price;
-      }
-    }
-
-    // بيع السيارات
-    for (const c of filteredCars) {
-      if (c.status === "مبيوعة" && c.sale_date) {
-        const amount = c.payment_type === "كاش" ? c.selling_price : (c.amount_paid ?? 0);
-        const curr = c.sale_currency === "USD" ? "USD" : "IQD";
-        if (curr === "USD") usdBalance += amount;
-        else iqdBalance += amount;
-      }
-    }
-
-    // معاملات الشركاء والمستثمرين
+    // cash = sum of all شريك partner balances (deposits - withdrawals)
+    let cashIqd = 0;
+    let cashUsd = 0;
     for (const tx of allTx) {
-      if (tx.kind === "مطلوب" && tx.type_.startsWith("سحب")) continue;
-      if (tx.type_.startsWith("سحب شراء سيارة") || tx.type_.startsWith("ايداع بيع سيارة") || tx.type_.startsWith("سحب مصروف") || tx.type_.startsWith("ايداع ارباح وكالة")) {
-        continue;
-      }
-      let signed = 0;
-      if ((tx.kind === "شريك" || tx.kind === "مستثمر" || tx.kind === "مقترض") && (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("تسديد") || tx.type_.startsWith("استلام") || tx.type_.startsWith("مقدمة"))) signed = tx.amount;
-      else if (tx.kind === "شريك" && tx.type_.startsWith("سحب")) signed = -tx.amount;
-      else if (tx.kind === "مستثمر" && tx.type_.startsWith("سحب")) signed = -tx.amount;
-      else if (tx.kind === "مقترض" && tx.type_.startsWith("سحب")) {
-        // do not subtract, remaining/rest doesn't affect the safe
-      }
-      else if (tx.kind === "ممول" && tx.type_.startsWith("سحب")) {
-        const comm = parseCommissionAmount(tx.amount, tx.notes);
-        signed = -(tx.amount + comm);
-      }
-      else if (tx.kind === "مطلوب" && (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع"))) signed = tx.amount;
-      const curr = tx.currency === "USD" ? "USD" : "IQD";
-      if (curr === "USD") usdBalance += signed;
-      else iqdBalance += signed;
-    }
-
-    // المصروفات
-    for (const e of expenses) {
-      if (e.currency === "USD") usdBalance -= e.amount;
-      else iqdBalance -= e.amount;
-    }
-
-    // أرباح الوكالات وحركاتها المباشرة في القاصة
-    const includeOthers = filterType === null || filterType === "قاصه" || filterType === "قاصة";
-    if (includeOthers) {
-      const agencies: any[] = JSON.parse(localStorage.getItem("mock_default") ?? "[]");
-      for (const a of agencies) {
-        usdBalance += a.amount_usd || 0;
-        iqdBalance += a.amount_iqd || 0;
+      if (tx.kind !== "شريك") continue;
+      const isUsd = tx.currency === "USD";
+      const isDeposit = tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة") || tx.type_.startsWith("استلام") || tx.type_.startsWith("إستلام") || tx.type_.startsWith("إعادة استثمار") || tx.type_.startsWith("تسوية") || tx.type_.startsWith("تسديد");
+      const isWithdrawal = tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي");
+      if (tx.type_.includes("تحويل")) continue;
+      if (isDeposit) {
+        if (isUsd) cashUsd += tx.amount;
+        else cashIqd += tx.amount;
+      } else if (isWithdrawal) {
+        if (isUsd) cashUsd -= tx.amount;
+        else cashIqd -= tx.amount;
       }
     }
 
+    const cars: Car[] = JSON.parse(localStorage.getItem("mock_cars") ?? "[]");
+
+    // Inventory Value
     const carExpensesList: CarExpenseRecord[] = JSON.parse(localStorage.getItem("mock_car_expenses") ?? "[]");
-    const inventoryValue = filteredCars
+    const inventoryValueIqd = cars
       .filter((c) => c.status === "متوفرة")
       .reduce((sum, c) => {
         const carExpenses = carExpensesList.filter((e) => e.car_number === c.car_number);
         const expensesSum = carExpenses.reduce((s, e) => s + e.amount, 0);
         return sum + c.purchase_price + expensesSum;
       }, 0);
+    let inventoryValueUsd = 0;
 
-    const totalInvestments = partners
+    const totalInvestmentsIqd = partners
       .filter((p) => p.kind === "مستثمر" && p.total_amount > 0)
       .reduce((sum, p) => sum + p.total_amount, 0);
+    const totalInvestmentsUsd = 0;
 
-    const totalPartnerCapital = partners
+    const totalPartnerCapitalIqd = partners
       .filter((p) => p.kind === "شريك")
       .reduce((sum, p) => sum + p.total_amount, 0);
+    const totalPartnerCapitalUsd = 0;
 
-    const totalDebtors = partners
+    const totalDebtorsIqd = partners
       .filter((p) => p.kind === "مطلوب" && p.total_amount > 0)
       .reduce((sum, p) => sum + p.total_amount, 0);
+    const totalDebtorsUsd = 0;
 
     const mockTxs: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
-    let totalBorrowers = 0;
+    let totalBorrowersIqd = 0;
     const borrowerNames = Array.from(new Set(mockTxs.filter(tx => tx.kind === "مقترض").map(tx => tx.partner_name)));
     for (const name of borrowerNames) {
       const net = mockTxs
@@ -848,24 +807,39 @@ async function mockInvoke<T>(
           if (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) return sum - tx.amount;
           return sum;
         }, 0);
-      if (net < 0) {
-        totalBorrowers += net;
-      }
+      if (net < 0) totalBorrowersIqd += net;
     }
+    const totalBorrowersUsd = 0;
 
-    const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+    const totalExpensesIqd = expenses.reduce((sum, e) => {
+      if (e.currency === "USD") return sum;
+      return sum + e.amount;
+    }, 0);
+    const totalExpensesUsd = expenses.reduce((sum, e) => {
+      if (e.currency !== "USD") return sum;
+      return sum + e.amount;
+    }, 0);
 
-    const netCapital = iqdBalance + inventoryValue + totalDebtors - totalInvestments - totalBorrowers;
+    const netCapitalIqd = cashIqd + inventoryValueIqd + totalDebtorsIqd - totalInvestmentsIqd - totalBorrowersIqd;
+    const netCapitalUsd = cashUsd + inventoryValueUsd + totalDebtorsUsd - totalInvestmentsUsd - totalBorrowersUsd;
 
     return {
-      iqd_balance: iqdBalance,
-      usd_balance: usdBalance,
-      inventory_value: inventoryValue,
-      total_investments: totalInvestments,
-      total_partner_capital: totalPartnerCapital,
-      total_debtors: totalDebtors,
-      total_expenses: totalExpenses,
-      net_capital: netCapital,
+      cash_iqd: cashIqd,
+      cash_usd: cashUsd,
+      inventory_value_iqd: inventoryValueIqd,
+      inventory_value_usd: inventoryValueUsd,
+      total_investments_iqd: totalInvestmentsIqd,
+      total_investments_usd: totalInvestmentsUsd,
+      total_partner_capital_iqd: totalPartnerCapitalIqd,
+      total_partner_capital_usd: totalPartnerCapitalUsd,
+      total_debtors_iqd: totalDebtorsIqd,
+      total_debtors_usd: totalDebtorsUsd,
+      total_expenses_iqd: totalExpensesIqd,
+      total_expenses_usd: totalExpensesUsd,
+      net_capital_iqd: netCapitalIqd,
+      net_capital_usd: netCapitalUsd,
+      monthly_profits_iqd: 0,
+      monthly_profits_usd: 0,
     } as T;
   }
 
@@ -919,10 +893,10 @@ async function mockInvoke<T>(
         const isUsd = tx.currency === "USD";
         let signed = 0;
         if (p.kind === "مقترض" || p.kind === "مطلوب") {
-          if (tx.type_.startsWith("سحب")) {
+          if (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) {
             signed = tx.amount;
-          } else if (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع")) {
-            if (tx.notes?.includes("دفعة أولى") || tx.notes?.includes("قسط") || tx.notes?.includes("مؤجل")) {
+          } else if (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("تسديد")) {
+            if ((tx.notes?.includes("دفعة أولى") || tx.notes?.includes("مؤجل")) && !tx.type_.startsWith("تسديد")) {
               continue;
             }
             signed = -tx.amount;

@@ -11,7 +11,7 @@ export default defineConfig(async () => ({
 
   resolve: {
     alias: {
-      "@logo": resolve(__dirname, "logo.png"),
+      "@logo": resolve(__dirname, "public/logo.png"),
       "@": resolve(__dirname, "./src"),
     },
   },

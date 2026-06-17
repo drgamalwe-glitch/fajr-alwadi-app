@@ -3169,8 +3169,15 @@ select option {
 }
 
 @keyframes badge-dot-pulse {
-  0%, 100% { box-shadow: 0 0 12px rgba(34, 197, 94, 0.6), 0 0 4px rgba(34, 197, 94, 0.8); }
-  50% { box-shadow: 0 0 20px rgba(34, 197, 94, 0.9), 0 0 8px rgba(34, 197, 94, 1); }
+
+  0%,
+  100% {
+    box-shadow: 0 0 12px rgba(34, 197, 94, 0.6), 0 0 4px rgba(34, 197, 94, 0.8);
+  }
+
+  50% {
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.9), 0 0 8px rgba(34, 197, 94, 1);
+  }
 }
 
 .car-status-badge__text {
@@ -3491,7 +3498,7 @@ select option {
 }
 
 
-/* 2. Master Card (رأس المال) */
+/* 2. Master Card (الكاش) */
 .dashboard .stat-card--master {
   --dc-card-accent: #6366f1;
   --dc-card-glow: rgba(99, 102, 241, 0.18);
@@ -3672,6 +3679,7 @@ select option {
     opacity: 0;
     transform: translateY(6px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -5348,6 +5356,165 @@ textarea::placeholder {
   font-weight: 700;
 }
 
+/* ═══════════════════════════════════════════════
+   3-Card Top Layout: Partner | Company | Partner
+   ═══════════════════════════════════════════════ */
+.company-status-top {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr 1fr;
+  gap: 20px;
+  align-items: stretch;
+  margin-bottom: 28px;
+}
+
+.company-value-center {
+  display: flex;
+  align-items: stretch;
+}
+
+.company-value-center .company-value {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+/* Partner Capital Cards */
+.partner-capital-card {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 24px;
+  border-radius: 24px;
+  background: rgba(30, 30, 40, 0.10);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1), border-color 0.4s ease;
+  min-height: 180px;
+  direction: rtl;
+}
+
+.partner-capital-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 24px;
+  background: radial-gradient(ellipse 140% 55% at 50% 100%,
+      color-mix(in srgb, var(--partner-card-color) 20%, transparent) 0%,
+      color-mix(in srgb, var(--partner-card-color) 5%, transparent) 30%,
+      transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.partner-capital-card>* {
+  position: relative;
+  z-index: 1;
+}
+
+.partner-capital-card:hover {
+  transform: translateY(-6px);
+  border-color: color-mix(in srgb, var(--partner-card-color) 40%, transparent) !important;
+}
+
+.partner-card--right {
+  --partner-card-color: #a78bfa;
+  border-color: rgba(167, 139, 250, 0.15);
+}
+
+.partner-card--left {
+  --partner-card-color: #60a5fa;
+  border-color: rgba(96, 165, 250, 0.15);
+}
+
+.partner-capital-card__icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--partner-card-color) 15%, transparent);
+  color: var(--partner-card-color);
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 2px solid color-mix(in srgb, var(--partner-card-color) 35%, transparent);
+}
+
+.partner-capital-card__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.partner-capital-card__header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-bottom: auto;
+  direction: rtl;
+}
+
+.partner-capital-card__name {
+  font-size: 26px;
+  font-weight: 800;
+  color: #ffffff;
+  line-height: 1.3;
+  text-align: right;
+}
+
+.partner-capital-card__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 12px;
+}
+
+.partner-capital-card__values {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  flex: 1;
+  padding: 8px 0;
+}
+
+.partner-capital-card__value {
+  font-size: 34px;
+  font-weight: 800;
+  color: var(--partner-card-color);
+  line-height: 1.1;
+  text-shadow: 0 0 30px color-mix(in srgb, var(--partner-card-color) 15%, transparent);
+}
+
+.partner-capital-card__sub-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--partner-card-color) 70%, transparent);
+  margin-top: 6px;
+}
+
+.partner-capital-card__currency {
+  font-size: inherit;
+  opacity: 0.5;
+}
+
+/* Responsive: stack on smaller screens */
+@media (max-width: 900px) {
+  .company-status-top {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
 .wadhisharikah-container .line {
   height: 1px;
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06) 50%, transparent);
@@ -5368,8 +5535,8 @@ textarea::placeholder {
   flex-direction: column;
   align-items: stretch;
   justify-content: space-between;
-  min-height: 190px;
-  padding: 24px;
+  min-height: 170px;
+  padding: 20px 24px;
   border-radius: 24px;
   background: rgba(30, 30, 40, 0.10);
   backdrop-filter: blur(24px);
@@ -5412,7 +5579,7 @@ textarea::placeholder {
 
 /* Individual card definitions */
 
-/* 1. Capital Card (رأس المال) */
+/* 1. Capital Card (الكاش) */
 .wadhisharikah-container .card.capital {
   --card-color: #d8a85a;
   border-color: rgba(216, 168, 90, 0.12);
@@ -5461,9 +5628,12 @@ textarea::placeholder {
 .wadhisharikah-container .card-values {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
   gap: 6px;
   width: 100%;
+  flex: 1;
 }
 
 .wadhisharikah-container .number {
