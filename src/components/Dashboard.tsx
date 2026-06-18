@@ -233,72 +233,76 @@ function CreditorRow({
           <div style={{ fontSize: "var(--fs-sm)", color: "var(--white)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
             <Phone size={12} />
             <span>{creditor.phone}</span>
-            {cleanPhone && (
-              <button
-                type="button"
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  const text = encodeURIComponent(`بخصوص حساب ${creditor.partner_name}`);
-                  try {
-                    await callTauri("open_whatsapp", { phone: cleanPhone, text });
-                  } catch {
-                    window.open(`${waLink}?text=${encodeURIComponent(text)}`, "_blank");
-                  }
-                }}
-                style={{
-                  padding: "0.2rem 0.4rem",
-                  background: "linear-gradient(135deg, #25D366, #128C7E)",
-                  borderRadius: "6px",
-                  color: "var(--white)",
-                  border: "none",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  transition: "opacity 0.15s",
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.85")}
-                onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
-                title="مراسلة واتساب"
-              >
-                <svg viewBox="0 0 24 24" width={14} height={14} fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12c0 2.137.56 4.146 1.54 5.92L.06 23.94l6.02-1.48A11.93 11.93 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.6c-1.96 0-3.82-.6-5.36-1.6l-.38-.24-4.06 1 .86-4.2-.24-.4C1.8 14.6 1.2 12.8 1.2 10.8 1.2 5.84 5.84 1.2 12 1.2s10.8 4.64 10.8 10.8-4.64 10.8-10.8 10.8zm5.92-6.84c-.32-.16-1.88-.92-2.16-1.04-.28-.12-.5-.16-.72.16-.22.32-.84 1.04-1.04 1.24-.2.2-.4.24-.72.08s-1.4-.52-2.68-1.64c-.98-.88-1.64-1.96-1.84-2.28-.2-.32-.02-.5.14-.66.14-.14.32-.36.48-.56.16-.2.22-.32.32-.56.1-.24.06-.44-.02-.6-.08-.16-.72-1.72-.98-2.36-.26-.64-.52-.56-.72-.56-.18 0-.4-.04-.62-.04s-.56.08-.86.4c-.3.32-1.14 1.12-1.14 2.72s1.18 3.16 1.34 3.4c.16.24 2.32 3.52 5.62 4.92.78.34 1.4.54 1.88.7.78.24 1.5.2 2.06.12.64-.08 1.88-.76 2.14-1.5.26-.74.26-1.38.18-1.5-.08-.12-.28-.2-.6-.36z" /></svg>
-              </button>
-            )}
           </div>
         )}
       </div>
       <div style={{ textAlign: "left", flexShrink: 0 }}>
         {showUsd && (
-          <div style={{ fontWeight: "var(--fw-extrabold)", fontSize: "var(--fs-base)", color: "#e05070" }}>
-            {Math.abs(creditor.usd_balance).toLocaleString("ar-IQ")} USD
+          <div style={{ fontWeight: "var(--fw-extrabold)", fontSize: "var(--fs-lg)", color: "#e05070" }}>
+            {Math.abs(creditor.usd_balance).toLocaleString("en-US")} USD
           </div>
         )}
         {showIqd && (
-          <div style={{ fontWeight: "var(--fw-medium)", fontSize: "var(--fs-sm)", color: "#c08090" }}>
-            {Math.abs(creditor.iqd_balance).toLocaleString("ar-IQ")} IQ
+          <div style={{ fontWeight: "var(--fw-extrabold)", fontSize: "var(--fs-lg)", color: "#c08090" }}>
+            {Math.abs(creditor.iqd_balance).toLocaleString("en-US")} IQ
           </div>
         )}
       </div>
-      <button
-        type="button"
-        onClick={() => onViewAccount ? onViewAccount(creditor.partner_name) : onPay(creditor.partner_name)}
-        style={{
-          padding: "0.35rem 0.85rem",
-          background: "linear-gradient(135deg, rgba(215,168,0,0.9), rgba(180,130,0,0.95))",
-          border: "none",
-          borderRadius: "8px",
-          color: "var(--white)",
-          fontSize: "var(--fs-xs)",
-          fontWeight: "var(--fw-extrabold)",
-          cursor: "pointer",
-          fontFamily: "inherit",
-          flexShrink: 0,
-          transition: "opacity 0.15s",
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.85")}
-        onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
-      >
-        تسديد
-      </button>
+      <div style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
+        <button
+          type="button"
+          onClick={() => onViewAccount ? onViewAccount(creditor.partner_name) : onPay(creditor.partner_name)}
+          style={{
+            padding: "0.35rem 0.75rem",
+            background: "linear-gradient(135deg, rgba(215,168,0,0.9), rgba(180,130,0,0.95))",
+            border: "none",
+            borderRadius: "8px",
+            color: "var(--white)",
+            fontSize: "var(--fs-xs)",
+            fontWeight: "var(--fw-extrabold)",
+            cursor: "pointer",
+            fontFamily: "inherit",
+            transition: "opacity 0.15s",
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.85")}
+          onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+        >
+          تسديد
+        </button>
+        {cleanPhone && (
+          <button
+            type="button"
+            onClick={async (e) => {
+              e.stopPropagation();
+              const text = encodeURIComponent(`بخصوص حساب ${creditor.partner_name}`);
+              try {
+                await callTauri("open_whatsapp", { phone: cleanPhone, text });
+              } catch {
+                window.open(`${waLink}?text=${encodeURIComponent(text)}`, "_blank");
+              }
+            }}
+            style={{
+              padding: "0.35rem 0.55rem",
+              background: "linear-gradient(135deg, #25D366, #128C7E)",
+              borderRadius: "8px",
+              color: "var(--white)",
+              fontSize: "var(--fs-xs)",
+              fontWeight: "var(--fw-bold)",
+              border: "none",
+              cursor: "pointer",
+              fontFamily: "inherit",
+              display: "flex",
+              alignItems: "center",
+              gap: "0.25rem",
+              transition: "opacity 0.15s",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.85")}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+          >
+            <svg viewBox="0 0 24 24" width={14} height={14} fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12c0 2.137.56 4.146 1.54 5.92L.06 23.94l6.02-1.48A11.93 11.93 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.6c-1.96 0-3.82-.6-5.36-1.6l-.38-.24-4.06 1 .86-4.2-.24-.4C1.8 14.6 1.2 12.8 1.2 10.8 1.2 5.84 5.84 1.2 12 1.2s10.8 4.64 10.8 10.8-4.64 10.8-10.8 10.8zm5.92-6.84c-.32-.16-1.88-.92-2.16-1.04-.28-.12-.5-.16-.72.16-.22.32-.84 1.04-1.04 1.24-.2.2-.4.24-.72.08s-1.4-.52-2.68-1.64c-.98-.88-1.64-1.96-1.84-2.28-.2-.32-.02-.5.14-.66.14-.14.32-.36.48-.56.16-.2.22-.32.32-.56.1-.24.06-.44-.02-.6-.08-.16-.72-1.72-.98-2.36-.26-.64-.52-.56-.72-.56-.18 0-.4-.04-.62-.04s-.56.08-.86.4c-.3.32-1.14 1.12-1.14 2.72s1.18 3.16 1.34 3.4c.16.24 2.32 3.52 5.62 4.92.78.34 1.4.54 1.88.7.78.24 1.5.2 2.06.12.64-.08 1.88-.76 2.14-1.5.26-.74.26-1.38.18-1.5-.08-.12-.28-.2-.6-.36z" /></svg>
+          </button>
+        )}
+      </div>
     </div>
   );
 }

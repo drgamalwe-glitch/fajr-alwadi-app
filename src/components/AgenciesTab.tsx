@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { callTauri } from "../api/tauri";
 import type { Agency, AgencyTransaction } from "../types";
-import { NumberInput, PriceDisplay, PriceInput, TextInput } from "@/components/ui";
+import { ActionButton, NumberInput, PriceDisplay, PriceInput, TextInput } from "@/components/ui";
 import { YearScrollField } from "./YearScrollField";
 import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
@@ -17,6 +17,8 @@ interface AgenciesTabProps {
   agenciesSearchOpen?: boolean;
   onAgenciesSearchClose?: () => void;
   onAddAgencyChange?: (onAddAgency: { action: () => void } | null) => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  requestCloseRef?: React.MutableRefObject<{ request: (afterClose?: () => void) => void } | null>;
 }
 
 const AGENCIES_TABS: { id: "list" | "details"; label: string }[] = [
@@ -24,7 +26,7 @@ const AGENCIES_TABS: { id: "list" | "details"; label: string }[] = [
   { id: "details", label: "تفاصيل" },
 ];
 
-export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClose, onAddAgencyChange }: AgenciesTabProps) {
+export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClose, onAddAgencyChange, onDirtyChange, requestCloseRef }: AgenciesTabProps) {
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
@@ -36,6 +38,10 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   const [selectedAgency, setSelectedAgency] = useState<Agency | null>(null);
   const [saving, setSaving] = useState(false);
   const [showTxModal, setShowTxModal] = useState(false);
+  const [showAgencySaveConfirm, setShowAgencySaveConfirm] = useState(false);
+  const initialAgencyRef = useRef<string>("");
+  const pendingAgencyActionRef = useRef<(() => void) | null>(null);
+  const pendingAgencyCloseRef = useRef<(() => void) | null>(null);
 
   const [txForm, setTxForm] = useState({ type: "ايداع" as string, amount: 0, date: todayIsoDate(), notes: "", currency: "IQD" as string });
   const [txCurrency, setTxCurrency] = useState<"IQD" | "USD">("IQD");
@@ -44,6 +50,11 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   const [deleteAgencyConfirm, setDeleteAgencyConfirm] = useState<Agency | null>(null);
 
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const agencyDirty = useMemo(() => {
+    if (!selectedAgency) return false;
+    return JSON.stringify(selectedAgency) !== initialAgencyRef.current;
+  }, [selectedAgency]);
 
   const fetchAgencies = useCallback(async () => {
     setLoading(true);
@@ -75,6 +86,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
       time: "",
     };
     setSelectedAgency(newAgency);
+    initialAgencyRef.current = JSON.stringify(newAgency);
     setAgenciesTab("details");
   }, []);
 
@@ -84,6 +96,28 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
       saveTimeoutRef.current = null;
     }
     if (selectedAgency) {
+      const requiredFields: { key: keyof Agency; id: string }[] = [
+        { key: "old_agent_name", id: "agency-old-agent" },
+        { key: "new_agent_name", id: "agency-new-agent" },
+        { key: "car_type", id: "agency-car-type" },
+        { key: "car_number", id: "agency-car-number" },
+        { key: "car_model", id: "agency-car-year" },
+        { key: "color", id: "agency-color" },
+      ];
+      let hasError = false;
+      for (const field of requiredFields) {
+        const val = (selectedAgency[field.key] ?? "").toString().trim();
+        const input = document.getElementById(field.id) as HTMLElement | null;
+        if (!val) {
+          input?.classList.add("input--error");
+          if (!hasError) input?.focus();
+          hasError = true;
+        } else {
+          input?.classList.remove("input--error");
+        }
+      }
+      if (hasError) return;
+
       try {
         if (selectedAgency.id < 0) {
           const newId = await callTauri<number>("add_agency", {
@@ -139,8 +173,54 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
       }
     }
     setSelectedAgency(null);
+    initialAgencyRef.current = "";
     setAgenciesTab("list");
   };
+
+  const handleAgencySaveConfirmSave = async () => {
+    await handleSaveAgency();
+    setShowAgencySaveConfirm(false);
+    pendingAgencyActionRef.current = null;
+    pendingAgencyCloseRef.current?.();
+    pendingAgencyCloseRef.current = null;
+  };
+
+  const handleAgencySaveConfirmDiscard = () => {
+    setSelectedAgency(null);
+    initialAgencyRef.current = "";
+    setAgenciesTab("list");
+    setShowAgencySaveConfirm(false);
+    pendingAgencyActionRef.current = null;
+    pendingAgencyCloseRef.current?.();
+    pendingAgencyCloseRef.current = null;
+  };
+
+  const tryCancelAgency = () => {
+    if (agencyDirty && selectedAgency) {
+      setShowAgencySaveConfirm(true);
+    } else {
+      void handleCancelAgency();
+    }
+  };
+
+  useEffect(() => {
+    onDirtyChange?.(agencyDirty);
+  }, [agencyDirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (!requestCloseRef) return;
+    requestCloseRef.current = {
+      request: (afterClose?: () => void) => {
+        if (agencyDirty && selectedAgency && agenciesTab === "details") {
+          pendingAgencyCloseRef.current = afterClose ?? null;
+          setShowAgencySaveConfirm(true);
+        } else {
+          afterClose?.();
+        }
+      },
+    };
+    return () => { requestCloseRef.current = null; };
+  });
 
   useEffect(() => {
     void fetchAgencies();
@@ -182,6 +262,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
 
   const loadAgency = useCallback(async (agency: Agency) => {
     setSelectedAgency(agency);
+    initialAgencyRef.current = JSON.stringify(agency);
     setAgenciesTab("details");
   }, []);
 
@@ -298,15 +379,20 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
           setDeleteAgencyConfirm(null);
           return;
         }
+        if (showAgencySaveConfirm) {
+          setShowAgencySaveConfirm(false);
+          pendingAgencyCloseRef.current = null;
+          return;
+        }
         if (agenciesTab === "details") {
-          void handleCancelAgency();
+          tryCancelAgency();
           return;
         }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [agenciesSearchOpen, onAgenciesSearchClose, agenciesTab, showTxModal, deleteTxConfirm, deleteAgencyConfirm]);
+  }, [agenciesSearchOpen, onAgenciesSearchClose, agenciesTab, showTxModal, deleteTxConfirm, deleteAgencyConfirm, showAgencySaveConfirm]);
 
   return (
     <div className="customers-page agencies-page">
@@ -324,6 +410,10 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                   className={`${tab.id === "list" ? "top-btn-one" : "top-btn-two"} ${isActive ? (tab.id === "list" ? "top-btn-one--active" : "top-btn-two--active") : ""}`.trim()}
                   onClick={() => {
                     if (tab.id === "list") {
+                      if (agenciesTab === "details" && agencyDirty && selectedAgency) {
+                        setShowAgencySaveConfirm(true);
+                        return;
+                      }
                       const now = Date.now();
                       if (now - lastListTabClickRef.current < 300) {
                         lastListTabClickRef.current = 0;
@@ -481,6 +571,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
               <div className="agency-field agency-field--lg">
                 <label className="agency-label">الوكيل القديم</label>
                 <TextInput
+                  id="agency-old-agent"
                   inputSize="sm"
                   value={selectedAgency.old_agent_name}
                   onChange={(e) => { setSelectedAgency({ ...selectedAgency, old_agent_name: englishKeyboardToArabic(e.target.value) }); }}
@@ -489,6 +580,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
               <div className="agency-field agency-field--lg">
                 <label className="agency-label">الوكيل الجديد</label>
                 <TextInput
+                  id="agency-new-agent"
                   inputSize="sm"
                   value={selectedAgency.new_agent_name}
                   onChange={(e) => { setSelectedAgency({ ...selectedAgency, new_agent_name: englishKeyboardToArabic(e.target.value) }); }}
@@ -515,6 +607,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
               <div className="agency-field agency-field--lg">
                 <label className="agency-label">نوع السيارة</label>
                 <TextInput
+                  id="agency-car-type"
                   inputSize="sm"
                   value={selectedAgency.car_type || ""}
                   onChange={(e) => { setSelectedAgency({ ...selectedAgency, car_type: e.target.value }); }}
@@ -537,6 +630,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
               <div className="agency-field agency-field--md">
                 <label className="agency-label">رقم اللوحة</label>
                 <TextInput
+                  id="agency-car-number"
                   inputSize="sm"
                   type="text"
                   inputMode="decimal"
@@ -550,6 +644,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
               <div className="agency-field agency-field--md">
                 <label className="agency-label">لون السيارة</label>
                 <TextInput
+                  id="agency-color"
                   inputSize="sm"
                   value={selectedAgency.color || ""}
                   onChange={(e) => { setSelectedAgency({ ...selectedAgency, color: e.target.value }); }}
@@ -593,7 +688,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
               type="button"
               variant="gray"
               style={{ flex: 1, margin: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.7)" }}
-              onClick={handleCancelAgency}
+              onClick={tryCancelAgency}
             >
               <span className="gold-fx-btn__label">إلغاء الأمر</span>
             </GoldFxButton>
@@ -601,6 +696,40 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
 
         </div>
       ) : null}
+
+      {/* ── نافذة تأكيد حفظ التعديلات في الوكالة ── */}
+      {showAgencySaveConfirm && (
+        <div className="fx-confirm-overlay" role="presentation" onClick={() => setShowAgencySaveConfirm(false)}>
+          <div
+            className="fx-confirm-dialog"
+            role="alertdialog"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="fx-confirm-title">هل تريد حفظ التعديلات؟</h3>
+            <p className="fx-confirm-message">
+              لديك تعديلات غير محفوظة. هل تريد حفظها قبل المغادرة؟
+            </p>
+            <div className="fx-confirm-actions">
+              <ActionButton
+                type="button"
+                variant="success"
+                onClick={() => void handleAgencySaveConfirmSave()}
+                disabled={saving}
+              >
+                {saving ? "جاري الحفظ..." : "نعم"}
+              </ActionButton>
+              <ActionButton
+                type="button"
+                variant="ghost"
+                onClick={handleAgencySaveConfirmDiscard}
+                disabled={saving}
+              >
+                لا
+              </ActionButton>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── نافذة البحث المنبثقة ── */}
       {agenciesSearchOpen && (

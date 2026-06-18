@@ -1,6 +1,89 @@
-import type { FinancialSummary, UnifiedAccount, Partner } from "../types";
+import { useEffect, useState } from "react";
+import { callTauri } from "../api/tauri";
+import type { FinancialSummary, UnifiedAccount, Partner, PartnerTransaction } from "../types";
+
+const normalizePartnerName = (name: string) =>
+  name
+    .trim()
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/\s+/g, " ");
+
+const partnerImages: Record<string, string> = {
+  "منتصر": "/partners/muntasir.jpg",
+  "امير": "/partners/amir.jpg",
+};
+
+const getPartnerImage = (name: string) => {
+  const normalized = normalizePartnerName(name);
+  if (normalized.includes("امير")) return partnerImages["امير"];
+  if (normalized.includes("منتصر")) return partnerImages["منتصر"];
+  return undefined;
+};
+
+const transactionSignedAmount = (tx: PartnerTransaction) => {
+  const type = tx.type_ || "";
+  if (type.startsWith("تحويل")) return 0;
+  if (
+    type.startsWith("ايداع") ||
+    type.startsWith("إيداع") ||
+    type.startsWith("مقدمة") ||
+    type.startsWith("استلام") ||
+    type.startsWith("إستلام") ||
+    type.startsWith("إعادة استثمار") ||
+    type.startsWith("تسوية") ||
+    type.startsWith("تسديد")
+  ) {
+    return tx.amount;
+  }
+  if (type.startsWith("سحب") || type.startsWith("باقي")) {
+    return -tx.amount;
+  }
+  return 0;
+};
 
 export function CompanyStatusTab({ summary, unifiedAccounts, partners }: { summary: FinancialSummary | null; unifiedAccounts: UnifiedAccount[]; partners: Partner[] }) {
+  const sharikPartners = partners.filter((p) => p.kind === "شريك");
+  const amirPartner = sharikPartners.find((p) => normalizePartnerName(p.partner_name).includes("امير"));
+  const muntasirPartner = sharikPartners.find((p) => normalizePartnerName(p.partner_name).includes("منتصر"));
+  const fallbackPartners = sharikPartners.filter((p) => p !== amirPartner && p !== muntasirPartner);
+  const partner1 = amirPartner ?? fallbackPartners[0] ?? null;
+  const partner2 = muntasirPartner ?? fallbackPartners.find((p) => p !== partner1) ?? null;
+  const [partnerUsdBalances, setPartnerUsdBalances] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    const selectedPartners = [partner1, partner2].filter(Boolean) as Partner[];
+    if (selectedPartners.length === 0) {
+      setPartnerUsdBalances({});
+      return;
+    }
+
+    let cancelled = false;
+    void Promise.all(
+      selectedPartners.map(async (partner) => {
+        const transactions = await callTauri<PartnerTransaction[]>("get_partner_transactions", {
+          partnerName: partner.partner_name,
+          kind: partner.kind,
+        });
+        const usdBalance = (transactions ?? [])
+          .filter((tx) => (tx.currency || "IQD") === "USD")
+          .reduce((total, tx) => total + transactionSignedAmount(tx), 0);
+        return [normalizePartnerName(partner.partner_name), usdBalance] as const;
+      }),
+    )
+      .then((entries) => {
+        if (!cancelled) setPartnerUsdBalances(Object.fromEntries(entries));
+      })
+      .catch((err) => {
+        console.error("Failed to load partner USD balances:", err);
+        if (!cancelled) setPartnerUsdBalances({});
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [partner1?.partner_name, partner1?.kind, partner2?.partner_name, partner2?.kind]);
+
   if (!summary) {
     return (
       <div className="wadhisharikah-container">
@@ -58,26 +141,17 @@ export function CompanyStatusTab({ summary, unifiedAccounts, partners }: { summa
     return value.toLocaleString("en-US");
   };
 
-  const partnerImages: Record<string, string> = {
-    "منتصر": "/partners/muntasir.jpg",
-    "امير": "/partners/amir.jpg",
-  };
-
-  const sharikPartners = partners.filter((p) => p.kind === "شريك");
-  const partner1 = sharikPartners[0] ?? null;
-  const partner2 = sharikPartners.length >= 2 ? sharikPartners[1] : null;
-
   const sharedIqd = (summary.inventory_value_iqd + receivablesIqd - liabilitiesIqd) / 2;
   const sharedUsd = (summary.inventory_value_usd + receivablesUsd - liabilitiesUsd) / 2;
 
   const p1CapitalIqd = partner1 ? partner1.total_amount + sharedIqd : 0;
-  const p1CapitalUsd = partner1 ? sharedUsd : 0;
+  const p1CapitalUsd = partner1 ? (partnerUsdBalances[normalizePartnerName(partner1.partner_name)] ?? 0) + sharedUsd : 0;
   const p2CapitalIqd = partner2 ? partner2.total_amount + sharedIqd : 0;
-  const p2CapitalUsd = partner2 ? sharedUsd : 0;
+  const p2CapitalUsd = partner2 ? (partnerUsdBalances[normalizePartnerName(partner2.partner_name)] ?? 0) + sharedUsd : 0;
 
   const renderPartnerCard = (partner: Partner | null, capitalIqd: number, capitalUsd: number, colorClass: string) => {
     if (!partner) return null;
-    const imgSrc = partnerImages[partner.partner_name.trim()];
+    const imgSrc = getPartnerImage(partner.partner_name);
     return (
       <div className={`partner-capital-card ${colorClass}`}>
         <div className="partner-capital-card__header">
@@ -91,13 +165,13 @@ export function CompanyStatusTab({ summary, unifiedAccounts, partners }: { summa
               </svg>
             )}
           </div>
-          <div className="partner-capital-card__name">{partner.partner_name}</div>
+          <div className="partner-capital-card__identity">
+            <div className="partner-capital-card__name">{partner.partner_name}</div>
+          </div>
         </div>
         <div className="partner-capital-card__values">
           <div className="partner-capital-card__value">{formatCompact(capitalIqd)} <span className="partner-capital-card__currency">IQ</span></div>
-          {capitalUsd !== 0 && (
-            <div className="partner-capital-card__sub-value">{formatCompact(capitalUsd)} <span className="partner-capital-card__currency">USD</span></div>
-          )}
+          <div className="partner-capital-card__sub-value">{formatCompact(capitalUsd)} <span className="partner-capital-card__currency">USD</span></div>
         </div>
       </div>
     );
@@ -122,6 +196,12 @@ export function CompanyStatusTab({ summary, unifiedAccounts, partners }: { summa
                   <div className="currency-usd">دولار أمريكي</div>
                 </>
               )}
+              <div className="company-value__chips" aria-label="تفاصيل قيمة الشركة">
+                <span>الكاش: {formatCompact(summary.cash_iqd)} IQ</span>
+                <span>السيارات: {formatCompact(summary.inventory_value_iqd)} IQ</span>
+                <span>نطلب: {formatCompact(receivablesIqd)} IQ</span>
+                <span>مطلوبين: {formatCompact(liabilitiesIqd)} IQ</span>
+              </div>
             </div>
           </div>
 

@@ -24,12 +24,14 @@ interface CarFormPanelProps {
   onSubmit: (e: React.FormEvent) => void;
   onClose?: () => void;
   embedMode?: boolean;
+  onSwitchToSpecs?: () => void;
 }
 
 export function CarFormPanel({
   form, isEditing,
   onChange, onSubmit, onClose,
   embedMode = false,
+  onSwitchToSpecs,
 }: CarFormPanelProps) {
   const [allPartners, setAllPartners] = useState<Partner[]>([]);
   const [carExpenses, setCarExpenses] = useState<CarExpenseRecord[]>([]);
@@ -95,26 +97,13 @@ export function CarFormPanel({
     setCarExpenses((prev) => prev.filter((exp) => exp.id !== id));
   };
 
-  const hasSellingPrice = form.selling !== "" && Number(form.selling) > 0;
-  const hasBuyerName = form.buyerName.trim() !== "";
-  const isSold = hasSellingPrice && hasBuyerName;
+  const isSold = form.status === "مبيوعة";
   const installmentMonths = Number(form.installmentMonths) || 1;
   const amountRemaining = Number(form.amountRemaining) || 0;
 
   const monthly = form.paymentType === "اقساط" && installmentMonths > 0
     ? amountRemaining / installmentMonths : 0;
   const formRef = useRef<HTMLFormElement>(null);
-
-  /* مزامنة حالة السيارة تلقائياً */
-  useEffect(() => {
-    const desiredStatus: "متوفرة" | "مبيوعة" = isSold ? "مبيوعة" : "متوفرة";
-    if (form.status !== desiredStatus) {
-      onChange({ status: desiredStatus });
-      if (isSold && !form.saleDate) {
-        onChange({ saleDate: todayIsoDate() });
-      }
-    }
-  }, [isSold]);
 
   const prevAutoType = useRef(form.paymentType);
 
@@ -136,12 +125,57 @@ export function CarFormPanel({
     prevAutoType.current = pt;
   }, [form.paymentType]);
 
+  const validateSpecs = (): boolean => {
+    const formEl = formRef.current;
+    if (!formEl) return false;
+    formEl.querySelectorAll(".input--error").forEach(el => el.classList.remove("input--error"));
+    formEl.classList.remove("form--submitted");
+
+    const checks: { id: string; valid: () => boolean }[] = [
+      { id: "car-model", valid: () => !!form.model.trim() },
+      { id: "car-year", valid: () => !!form.year.trim() },
+      { id: "car-color", valid: () => !!form.color.trim() },
+      { id: "car-num", valid: () => !!form.num.trim() },
+      { id: "car-chassis", valid: () => !!form.chassis.trim() },
+      { id: "car-purchase", valid: () => form.purchase !== "" && Number(form.purchase) > 0 },
+    ];
+
+    if (form.purchaseType === "تمويل" || form.purchaseType === "شركة") {
+      checks.push({
+        id: "financer-select",
+        valid: () => !!form.financerName.trim(),
+      });
+    }
+
+    for (const { id, valid } of checks) {
+      try {
+        if (!valid()) {
+          const el = formEl.querySelector<HTMLElement>(`#${id}`);
+          el?.classList.add("input--error");
+          if (id === "financer-select") {
+            const input = el?.querySelector<HTMLInputElement>('.combobox-trigger');
+            input?.focus();
+          } else {
+            el?.focus();
+          }
+          formEl.classList.add("form--submitted");
+          return false;
+        }
+      } catch (err) {
+        console.error(`Validation error for #${id}:`, err);
+        return false;
+      }
+    }
+    return true;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const formEl = formRef.current;
     if (!formEl) return;
 
     formEl.querySelectorAll(".input--error").forEach(el => el.classList.remove("input--error"));
+    formEl.classList.remove("form--submitted");
 
     const checks: { id: string; valid: () => boolean }[] = [
       { id: "car-model", valid: () => !!form.model.trim() },
@@ -156,10 +190,11 @@ export function CarFormPanel({
       checks.push(
         { id: "car-selling", valid: () => form.selling !== "" && Number(form.selling) > 0 },
         { id: "buyer-name", valid: () => !!form.buyerName.trim() },
+        { id: "buyer-phone", valid: () => !!form.phone.trim() },
+        { id: "amount-paid", valid: () => form.amountPaid !== "" && Number(form.amountPaid) >= 0 },
       );
       if (form.paymentType !== "كاش") {
         checks.push(
-          { id: "amount-paid", valid: () => form.amountPaid !== "" && Number(form.amountPaid) >= 0 },
           { id: "amount-remaining", valid: () => form.amountRemaining !== "" && Number(form.amountRemaining) >= 0 },
         );
       }
@@ -176,19 +211,52 @@ export function CarFormPanel({
       }
     }
 
+    // Task 5: التحقق من اختيار الشركة أو الممول
+    if (form.purchaseType === "تمويل" || form.purchaseType === "شركة") {
+      checks.push({
+        id: "financer-select",
+        valid: () => !!form.financerName.trim(),
+      });
+    }
+
+    const saleFields = ["car-selling", "buyer-name", "amount-paid", "amount-remaining", "installment-months", "first-payment-date", "buyer-phone"];
+    let firstErrorId: string | null = null;
+    let firstSaleErrorId: string | null = null;
+
     for (const { id, valid } of checks) {
       try {
         if (!valid()) {
           const el = formEl.querySelector<HTMLElement>(`#${id}`);
           el?.classList.add("input--error");
-          el?.focus();
           formEl.classList.add("form--submitted");
-          return;
+          if (!firstErrorId) {
+            firstErrorId = id;
+            if (id === "financer-select") {
+              const input = el?.querySelector<HTMLInputElement>('.combobox-trigger');
+              input?.focus();
+            } else {
+              el?.focus();
+            }
+          }
+          if (!firstSaleErrorId && saleFields.includes(id)) {
+            firstSaleErrorId = id;
+          }
         }
       } catch (err) {
         console.error(`Validation error for #${id}:`, err);
         return;
       }
+    }
+
+    if (formEl.classList.contains("form--submitted")) {
+      if (formPage === 0 && firstSaleErrorId) {
+        setFormPage(1);
+        setTimeout(() => {
+          const el = formEl.querySelector<HTMLElement>(`#${firstSaleErrorId}`);
+          el?.focus();
+        }, 100);
+      }
+      return;
     }
 
     // حفظ التغييرات في المصاريف بقاعدة البيانات SQLite فقط عند تأكيد الحفظ
@@ -252,14 +320,49 @@ export function CarFormPanel({
       }}
     >
       <div className="flex flex-col h-full overflow-hidden p-4 gap-3 relative">
-        {/* ── شارة حالة السيارة (الجانب الأيمن) ── */}
-        <div className="absolute right-4 top-10 -translate-y-1/2 z-10">
-          <div
-            className={`car-status-badge ${isSold ? "car-status-badge--sold" : "car-status-badge--available"}`}
+        {/* ── شارة حالة السيارة (سويتش toggle أنيق) ── */}
+        <div className="absolute right-4 top-10 -translate-y-1/2 z-20">
+          <button
+            type="button"
+            className={`status-toggle ${isSold ? "status-toggle--sold" : "status-toggle--available"}`}
+            onClick={() => {
+              if (isSold) {
+                onChange({
+                  status: "متوفرة",
+                  selling: "0",
+                  amountPaid: "0",
+                  amountRemaining: "0",
+                  installmentMonths: "1",
+                  buyerName: "",
+                  phone: "",
+                  saleDate: "",
+                  deliveryDate: "",
+                  firstPaymentDate: "",
+                  paymentType: "كاش",
+                });
+                setFormPage(0);
+                onSwitchToSpecs?.();
+              } else {
+                if (!validateSpecs()) return;
+                onChange({
+                  status: "مبيوعة",
+                  ...(!form.saleDate ? { saleDate: todayIsoDate() } : {}),
+                });
+                setFormPage(1);
+              }
+            }}
+            title={isSold ? "إلغاء البيع وإرجاع السيارة للمعروض" : "تحويل إلى مباع"}
           >
-            <span className={`car-status-badge__dot ${isSold ? "" : "car-status-badge__dot--pulse"}`} />
-            <span className="car-status-badge__text">{isSold ? "مباع" : "متوفر"}</span>
-          </div>
+            <span className="status-toggle__icon">
+              <span className="status-toggle__track">
+                <span className="status-toggle__thumb" />
+              </span>
+            </span>
+            <span className="status-toggle__label">
+              <span className="status-toggle__text">{isSold ? "مباع" : "متوفر"}</span>
+              {!isSold && <span className="status-toggle__pulse" />}
+            </span>
+          </button>
         </div>
 
         {/* ── Tabs ── */}
@@ -420,7 +523,11 @@ export function CarFormPanel({
                             key={opt}
                             type="button"
                             className={`payment-type-btn payment-type-btn--${opt === "كاش" ? "green" : opt === "تمويل" ? "blue" : opt === "شركة" ? "orange" : "cyan"} ${form.purchaseType === opt ? "payment-type-btn--active" : ""}`}
-                            onClick={() => onChange({ purchaseType: opt })}
+                            onClick={() => {
+                              if (opt !== form.purchaseType) {
+                                onChange({ purchaseType: opt, financerName: "" });
+                              }
+                            }}
                           >
                             {opt}
                           </button>
@@ -430,7 +537,7 @@ export function CarFormPanel({
                   </div>
 
                   {(form.purchaseType === "تمويل" || form.purchaseType === "شركة") && (
-                    <div className="bg-[var(--car-bg-card)] rounded-xl p-3">
+                    <div id="financer-select" className="bg-[var(--car-bg-card)] rounded-xl p-3">
                       {form.purchaseType === "تمويل" && (
                         <SearchableCombobox
                           value={form.financerName}

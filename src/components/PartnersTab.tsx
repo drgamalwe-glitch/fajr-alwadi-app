@@ -26,6 +26,8 @@ interface PartnersTabProps {
   onAddAccountChange?: (onAddAccount: { action: () => void } | null) => void;
   pendingPartnerOpen?: string | null;
   onPendingPartnerOpened?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  requestCloseRef?: React.MutableRefObject<{ request: (afterClose?: () => void) => void } | null>;
 }
 
 const createEmptyForm = (kind: string) => ({
@@ -55,6 +57,12 @@ const isSaleInstallmentTx = (tx: PartnerTransaction) =>
 
 const isSameCurrency = (tx: PartnerTransaction, currency: Currency) =>
   (tx.currency || "IQD") === currency;
+
+const parseDecimalInput = (value: string | number) => {
+  const normalized = toEnglishDigits(String(value)).replace(/[٫٬،,]/g, ".");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
 
 const parseFinancierNotes = (notes: string | null) => {
   if (!notes) return { transferBy: "", commission: 0, commissionPercent: 0, originalNotes: "" };
@@ -144,6 +152,8 @@ export function PartnersTab({
   onAddAccountChange,
   pendingPartnerOpen,
   onPendingPartnerOpened,
+  onDirtyChange,
+  requestCloseRef,
 }: PartnersTabProps) {
   const [unifiedAccounts, setUnifiedAccounts] = useState<UnifiedAccount[]>([]);
   const [debtFilter, setDebtFilter] = useState<"all" | "we_owe" | "they_owe">("all");
@@ -186,6 +196,24 @@ export function PartnersTab({
   const [form, setForm] = useState(createEmptyForm(kind));
   const formRef = useRef(createEmptyForm(kind));
   const savingRef = useRef(false);
+  const requiresPhoneForCustomerAccount = (accountKind: string) =>
+    kind === "partners-financial" && accountsTab === "list" && accountKind !== "شريك";
+  const markAccountFieldError = (field: "name" | "phone") => {
+    const selector = field === "name"
+      ? '#partner-name, .toolbar-field-input[placeholder="اسم صاحب الحساب"]'
+      : '#partner-phone, .toolbar-field-input[placeholder="رقم الهاتف"], input[placeholder="رقم الهاتف"]';
+    const input = document.querySelector(selector) as HTMLElement | null;
+    if (input) {
+      input.classList.add("input--error");
+      input.focus();
+    }
+  };
+  const clearAccountFieldError = (field: "name" | "phone") => {
+    const selector = field === "name"
+      ? '#partner-name, .toolbar-field-input[placeholder="اسم صاحب الحساب"]'
+      : '#partner-phone, .toolbar-field-input[placeholder="رقم الهاتف"], input[placeholder="رقم الهاتف"]';
+    document.querySelectorAll(selector).forEach((el) => el.classList.remove("input--error"));
+  };
   const [partnersSort, setPartnersSort] = useState<{ key: string; direction: "asc" | "desc" }>({ key: "name", direction: "asc" });
   const handleSortPartners = (key: string) => {
     setPartnersSort((prev) => ({
@@ -256,6 +284,8 @@ export function PartnersTab({
   const [transactions, setTransactions] = useState<PartnerTransaction[]>([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [currencyTotals, setCurrencyTotals] = useState<[number, number]>([0, 0]);
+  const transactionsDirtyRef = useRef(false);
+  const pendingPartnerCloseRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -441,6 +471,8 @@ export function PartnersTab({
   const [showTxModal, setShowTxModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [partnerToDelete, setPartnerToDelete] = useState<{ name: string; kind: string } | null>(null);
+  const [settleFunderName, setSettleFunderName] = useState("");
+  const [companyPaymentMode, setCompanyPaymentMode] = useState<"" | "cash" | "funder">("");
 
   const replaceForm = (next: ReturnType<typeof createEmptyForm>) => {
     formRef.current = next;
@@ -458,6 +490,7 @@ export function PartnersTab({
     setOriginalPartnerData({ name: partner.partner_name, phone: partner.phone, kind: partner.kind });
     replaceForm({ name: partner.partner_name, phone: partner.phone, kind: partner.kind });
     setModalMode("view");
+    transactionsDirtyRef.current = false;
     setEditingTransactionId(null);
     setTransactionSort({ key: "date", direction: "asc" });
     if (!preserveType) {
@@ -493,20 +526,18 @@ export function PartnersTab({
   };
 
   const handleClose = async () => {
-    if (modalMode === "view" && kind === "partners-financial") {
+    if (modalMode === "view") {
       const changed =
         form.name !== originalPartnerData?.name ||
         form.phone !== originalPartnerData?.phone ||
-        form.kind !== originalPartnerData?.kind;
+        form.kind !== originalPartnerData?.kind ||
+        transactionsDirtyRef.current;
       if (changed) {
         setShowExitConfirm(true);
         return;
       }
       resetForm();
       return;
-    }
-    if (modalMode === "view") {
-      await handleAutoSave();
     }
     resetForm();
   };
@@ -517,11 +548,15 @@ export function PartnersTab({
       await handleAutoSave();
     }
     resetForm();
+    pendingPartnerCloseRef.current?.();
+    pendingPartnerCloseRef.current = null;
   };
 
   const handleExitConfirmDiscard = () => {
     setShowExitConfirm(false);
     resetForm();
+    pendingPartnerCloseRef.current?.();
+    pendingPartnerCloseRef.current = null;
   };
 
   const startNew = () => {
@@ -581,11 +616,14 @@ export function PartnersTab({
   const patchPhone = (value: string) => {
     const normalized = toEnglishDigits(value);
     const cleaned = normalized.replace(/[^\d+\s()-]/g, "");
+    if (cleaned.trim()) clearAccountFieldError("phone");
     patchForm({ phone: cleaned });
   };
 
   const patchName = (value: string) => {
-    patchForm({ name: englishKeyboardToArabic(value) });
+    const nextName = englishKeyboardToArabic(value);
+    if (nextName.trim()) clearAccountFieldError("name");
+    patchForm({ name: nextName });
   };
 
   const resetTransactionForm = (type: TransactionType = txForm.type) => {
@@ -609,6 +647,12 @@ export function PartnersTab({
     const phoneClean = toEnglishDigits(currentForm.phone.trim());
     if (!nameClean) {
       alert(kind === "مطلوب" || kind === "partners-financial" ? "الرجاء كتابة اسم الحساب" : `الرجاء كتابة اسم ${form.kind}`);
+      markAccountFieldError("name");
+      return null;
+    }
+    if (!editingKey && requiresPhoneForCustomerAccount(currentForm.kind) && !phoneClean) {
+      alert("الرجاء كتابة رقم الهاتف قبل إضافة الحساب");
+      markAccountFieldError("phone");
       return null;
     }
 
@@ -673,6 +717,7 @@ export function PartnersTab({
   const openWithdrawForm = async () => {
     const savedKey = await ensurePartnerSaved();
     if (!savedKey) return;
+    setCompanyPaymentMode("");
     resetTransactionForm("سحب");
     setShowTxModal(true);
   };
@@ -968,8 +1013,8 @@ export function PartnersTab({
     onPartnerActionsChange?.({
       onDeposit: openDepositForm,
       onWithdraw: openWithdrawForm,
-      depositLabel: partner.kind === "مقترض" ? "واصل" : (partner.kind === "ممول" ? "استلام" : undefined),
-      withdrawLabel: partner.kind === "مقترض" ? "باقي" : (partner.kind === "ممول" ? "تسديد" : undefined),
+      depositLabel: partner.kind === "مقترض" ? "واصل" : (partner.kind === "ممول" || partner.kind === "شركة" ? "استلام" : undefined),
+      withdrawLabel: partner.kind === "مقترض" ? "باقي" : (partner.kind === "ممول" || partner.kind === "شركة" ? "تسديد" : undefined),
     });
   }, [onPartnerActionsChange]);
 
@@ -979,6 +1024,7 @@ export function PartnersTab({
       if (e.key === "Escape") {
         if (showExitConfirm) {
           setShowExitConfirm(false);
+          pendingPartnerCloseRef.current = null;
           return;
         }
         if (partnersSearchOpen) {
@@ -1002,7 +1048,7 @@ export function PartnersTab({
           setShowTxModal(false);
           return;
         }
-        if (kind === "partners-financial" && partnerToView && !sharikListView) {
+        if (partnerToView && !sharikListView) {
           if (partnerToView.kind === "شريك") {
             setSharikListView(true);
             setPartnerToView(null);
@@ -1012,7 +1058,9 @@ export function PartnersTab({
             onPartnerActionsChange?.(null);
             return;
           }
-          // non-شريك: fall through to handleClose
+          // non-شريك: show exit confirm if changed
+          void handleClose();
+          return;
         }
         if (editingKey) {
           void handleClose();
@@ -1024,16 +1072,40 @@ export function PartnersTab({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [partnersSearchOpen, onPartnersSearchClose, showDeleteModal, deleteTxConfirm, deleteDialogOpen, showTxModal, editingKey, partnerToView, sharikListView, kind, showExitConfirm]);
 
+  const partnerDirty = modalMode === "view" && (
+    form.name !== originalPartnerData?.name ||
+    form.phone !== originalPartnerData?.phone ||
+    form.kind !== originalPartnerData?.kind ||
+    transactionsDirtyRef.current
+  );
+
+  useEffect(() => {
+    onDirtyChange?.(partnerDirty);
+  }, [partnerDirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (!requestCloseRef) return;
+    requestCloseRef.current = {
+      request: (afterClose?: () => void) => {
+        if (partnerDirty) {
+          pendingPartnerCloseRef.current = afterClose ?? null;
+          setShowExitConfirm(true);
+        } else {
+          if (modalMode === "view") {
+            resetForm();
+          }
+          afterClose?.();
+        }
+      },
+    };
+    return () => { requestCloseRef.current = null; };
+  });
+
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!form.name.trim()) {
       // تمييز الحقل الفارغ بإطار أحمر ونقل التركيز إليه
-      const nameInput = document.querySelector('.toolbar-field-input[placeholder="اسم صاحب الحساب"]') as HTMLElement
-        || document.querySelector('.partner-identity-form input') as HTMLElement;
-      if (nameInput) {
-        nameInput.classList.add("input--error");
-        nameInput.focus();
-      }
+      markAccountFieldError("name");
       return;
     }
 
@@ -1041,6 +1113,11 @@ export function PartnersTab({
     try {
       const nextName = form.name.trim();
       const phoneClean = toEnglishDigits(form.phone.trim());
+      if (!editingKey && requiresPhoneForCustomerAccount(form.kind) && !phoneClean) {
+        alert("الرجاء كتابة رقم الهاتف قبل إضافة الحساب");
+        markAccountFieldError("phone");
+        return;
+      }
       if (editingKey) {
         await callTauri("update_partner", {
           oldName: editingKey,
@@ -1062,7 +1139,13 @@ export function PartnersTab({
           phone: phoneClean,
           kind: form.kind,
         });
+        const savedAccountsTab = accountsTab;
+        const savedSharikListView = sharikListView;
         resetForm();
+        if (kind === "partners-financial") {
+          setAccountsTab(savedAccountsTab);
+          setSharikListView(savedSharikListView);
+        }
         await onRefresh();
         if (kind === "مطلوب") {
           void fetchUnifiedAccounts();
@@ -1090,6 +1173,12 @@ export function PartnersTab({
       return;
     }
     if (!currentForm.kind && !editingKey) {
+      savingRef.current = false;
+      return;
+    }
+    if (!editingKey && requiresPhoneForCustomerAccount(currentForm.kind) && !phoneClean) {
+      alert("الرجاء كتابة رقم الهاتف قبل إضافة الحساب");
+      markAccountFieldError("phone");
       savingRef.current = false;
       return;
     }
@@ -1202,6 +1291,7 @@ export function PartnersTab({
     setDeleteTxConfirm(null);
     try {
       await callTauri("delete_partner_transaction", { id: tx.id, partnerName: tx.partner_name, kind: tx.kind });
+      transactionsDirtyRef.current = true;
       if (kind === "مطلوب") { void fetchUnifiedAccounts(); }
       const txs = await callTauri<PartnerTransaction[]>("get_partner_transactions", { partnerName: tx.partner_name, kind: tx.kind });
       setTransactions(txs ?? []);
@@ -1234,6 +1324,26 @@ export function PartnersTab({
 
     setSaving(true);
     try {
+      // للشركة: إذا كان التسديد عبر ممول
+      if (form.kind === "شركة" && txForm.type === "سحب" && companyPaymentMode === "funder") {
+        if (!settleFunderName) { alert("الرجاء اختيار الممول"); setSaving(false); return; }
+        await callTauri("settle_company_through_funder", {
+          companyName: editingKey,
+          funderName: settleFunderName,
+          amount: txForm.amount,
+          date: txForm.date,
+          currency: txCurrency,
+        });
+        resetTransactionForm(txForm.type);
+        setCompanyPaymentMode("");
+        shouldScrollTransactionsRef.current = !editingTransactionId;
+        await loadPartner({ partner_name: editingKey, phone: form.phone, total_amount: 0, total_withdrawals: 0, kind: form.kind }, true);
+        await onRefresh();
+        setShowTxModal(false);
+        setSaving(false);
+        return;
+      }
+
       const originalEditingTransaction = editingTransactionId
         ? transactions.find((tx) => tx.id === editingTransactionId) ?? null
         : null;
@@ -1469,13 +1579,17 @@ export function PartnersTab({
               : (txForm.notes || null);
           })();
 
+          const isCompanyCashWithdrawal = form.kind === "شركة" && txForm.type === "سحب";
+          const cashWdrNote = isCompanyCashWithdrawal
+            ? (monthNote ? `سحب نقدي - ${monthNote}` : "سحب نقدي")
+            : monthNote;
           const transactionPayload = {
             partnerName: editingKey,
             kind: form.kind,
             type: (form.kind === "مقترض" && txForm.type === "ايداع") ? "تسديد قسط سيارة" : txForm.type,
             amount,
             date: dateStr_i,
-            notes: monthNote,
+            notes: cashWdrNote,
             currency: txCurrency,
             paymentType: (form.kind === "ممول" && txForm.type === "ايداع") ? "ممول" : txForm.paymentType,
           };
@@ -1518,6 +1632,7 @@ export function PartnersTab({
         }
       }
 
+      transactionsDirtyRef.current = true;
       resetTransactionForm(txForm.type);
       shouldScrollTransactionsRef.current = !editingTransactionId;
       await loadPartner({ partner_name: editingKey, phone: form.phone, total_amount: 0, total_withdrawals: 0, kind: form.kind }, true);
@@ -1791,7 +1906,8 @@ export function PartnersTab({
                         const changed =
                           form.name !== originalPartnerData?.name ||
                           form.phone !== originalPartnerData?.phone ||
-                          form.kind !== originalPartnerData?.kind;
+                          form.kind !== originalPartnerData?.kind ||
+                          transactionsDirtyRef.current;
                         if (changed) {
                           setShowExitConfirm(true);
                         } else {
@@ -1802,13 +1918,21 @@ export function PartnersTab({
                   >
                     <span className="gold-fx-btn__icon">↩</span>
                   </GoldFxButton>
+                  <GoldFxButton
+                    type="button"
+                    variant="green"
+                    style={{ margin: 0, whiteSpace: "nowrap", height: "42px" }}
+                    disabled={saving}
+                    onClick={() => void handleAutoSave()}
+                  >
+                    <span className="gold-fx-btn__label">حفظ</span>
+                  </GoldFxButton>
 
                   <div className="toolbar-field-group">
                     <input
                       value={form.name}
                       onChange={(e) => patchName(e.target.value)}
                       onFocus={(e) => setTimeout(() => e.target.select(), 0)}
-                      onBlur={() => void handleAutoSave()}
                       placeholder="اسم صاحب الحساب"
                       className="toolbar-field-input w-[250px] min-w-[250px]"
                     />
@@ -1816,9 +1940,10 @@ export function PartnersTab({
                   <div className="toolbar-field-group">
                     <input
                       value={form.phone || ""}
+                      inputMode="tel"
+                      onInput={(e) => patchPhone((e.target as HTMLInputElement).value)}
                       onChange={(e) => patchPhone(e.target.value)}
                       onFocus={(e) => setTimeout(() => e.target.select(), 0)}
-                      onBlur={() => void handleAutoSave()}
                       placeholder="رقم الهاتف"
                       className="toolbar-field-input w-[180px] min-w-[180px]"
                       dir="ltr"
@@ -1829,7 +1954,6 @@ export function PartnersTab({
                       value={form.kind}
                       onChange={(val) => {
                         patchForm({ kind: val });
-                        void handleAutoSave();
                       }}
                       placeholder="نوع الحساب"
                       options={[
@@ -1854,6 +1978,19 @@ export function PartnersTab({
                       className={`${tab.id === "list" ? "top-btn-one" : "top-btn-two"} ${isActive || isPersonalActive ? (tab.id === "list" ? "top-btn-one--active" : "top-btn-two--active") : ""}`.trim()}
                       onClick={() => {
                         if (tab.id === "list") {
+                          if (partnerToView && !sharikListView) {
+                            if (partnerToView.kind === "شريك") {
+                              setSharikListView(true);
+                              setPartnerToView(null);
+                              setEditingKey(null);
+                              setModalMode(null);
+                              setTransactions([]);
+                              onPartnerActionsChange?.(null);
+                            } else {
+                              void handleClose();
+                            }
+                            return;
+                          }
                           resetForm();
                         } else {
                           setAccountsTab("personal");
@@ -2226,7 +2363,7 @@ export function PartnersTab({
                           <td className="col-time">{tx.time || "00:00"}</td>
                           <td className="col-type">
                             <span className={form.kind === "ممول" ? (isWithdraw ? "text-red font-bold" : "text-green font-bold") : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
-                              {form.kind === "ممول" ? (isWithdraw ? "تسديد تمويل" : "استلام تمويل") : form.kind === "مقترض" ? (isWithdraw ? "باقي" : "واصل") : isSaleInstallmentTx(tx) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
+                              {form.kind === "ممول" ? (isWithdraw ? "تسديد تمويل" : "استلام تمويل") : form.kind === "شركة" ? (isWithdraw ? "تسديد" : "استلام") : form.kind === "مقترض" ? (isWithdraw ? "باقي" : "واصل") : isSaleInstallmentTx(tx) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
                             </span>
                           </td>
                           <td className={cn(
@@ -2498,6 +2635,7 @@ export function PartnersTab({
                 </label>
                 <TextInput id="partner-phone-new" value={form.phone}
                   autoComplete="new-password"
+                  inputMode="tel"
                   onInput={(e: React.FormEvent<HTMLInputElement>) => patchPhone((e.target as HTMLInputElement).value)}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => patchPhone(e.target.value)}
                   onBlur={(e: React.FocusEvent<HTMLInputElement>) => patchPhone(e.target.value)} />
@@ -2558,10 +2696,10 @@ export function PartnersTab({
                       onInput={(e) => patchName((e.target as HTMLInputElement).value)}
                       onChange={(e) => patchName(e.target.value)}
                       onFocus={(e) => setTimeout(() => (e.target as HTMLInputElement).select(), 0)}
-                      onBlur={() => void handleAutoSave()}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          (e.target as HTMLInputElement).blur();
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          void handleAutoSave();
                         }
                       }}
                     />
@@ -2570,16 +2708,17 @@ export function PartnersTab({
                     <span className="partner-summary-field__label">📞 رقم الهاتف</span>
                     <input
                       type="text"
+                      inputMode="tel"
                       className="partner-sidebar-input"
                       dir="ltr"
                       value={form.phone}
                       onInput={(e) => patchPhone((e.target as HTMLInputElement).value)}
                       onChange={(e) => patchPhone(e.target.value)}
                       onFocus={(e) => setTimeout(() => (e.target as HTMLInputElement).select(), 0)}
-                      onBlur={() => void handleAutoSave()}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          (e.target as HTMLInputElement).blur();
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          void handleAutoSave();
                         }
                       }}
                     />
@@ -2591,7 +2730,6 @@ export function PartnersTab({
                         value={form.kind}
                         onChange={(val) => {
                           patchForm({ kind: val });
-                          void handleAutoSave();
                         }}
                         placeholder="نوع الحساب"
                         options={[
@@ -2604,6 +2742,15 @@ export function PartnersTab({
                       />
                     </div>
                   )}
+                  <GoldFxButton
+                    type="button"
+                    variant="green"
+                    style={{ width: "100%", margin: "8px 0 0" }}
+                    disabled={saving}
+                    onClick={() => void handleAutoSave()}
+                  >
+                    <span className="gold-fx-btn__label">حفظ التعديلات</span>
+                  </GoldFxButton>
                   {(kind === "مطلوب") ? (
                     <>
                       <div className="partner-summary-field">
@@ -2701,6 +2848,7 @@ export function PartnersTab({
                       </label>
                       <TextInput id="partner-phone" value={form.phone}
                         autoComplete="new-password"
+                        inputMode="tel"
                         onInput={(e: React.FormEvent<HTMLInputElement>) => patchPhone((e.target as HTMLInputElement).value)}
                         onChange={(e: React.ChangeEvent<HTMLInputElement>) => patchPhone(e.target.value)}
                         onBlur={(e: React.FocusEvent<HTMLInputElement>) => patchPhone(e.target.value)} />
@@ -2801,7 +2949,7 @@ export function PartnersTab({
                                         <td className="col-time">{tx.time || "00:00"}</td>
                                         <td className="col-type">
                                           <span className={form.kind === "ممول" || kind === "مطلوب" ? (isWithdraw ? "text-green font-bold" : "text-red font-bold") : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
-                                            {form.kind === "ممول" ? (isWithdraw ? "سحب" : "ايداع") : kind === "مطلوب" ? (isWithdraw ? "اعطيته" : "اخذت منه") : form.kind === "مقترض" ? (isWithdraw ? "باقي" : "واصل") : isSaleInstallmentTx(tx) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
+                                            {form.kind === "ممول" ? (isWithdraw ? "سحب" : "ايداع") : kind === "مطلوب" ? (isWithdraw ? "اعطيته" : "اخذت منه") : form.kind === "شركة" ? (isWithdraw ? "تسديد" : "استلام") : form.kind === "مقترض" ? (isWithdraw ? "باقي" : "واصل") : isSaleInstallmentTx(tx) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
                                           </span>
                                         </td>
                                         <td className="col-account">
@@ -2876,7 +3024,7 @@ export function PartnersTab({
                         style={{ flex: 1, minWidth: 0, padding: "8px 16px", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", color: "var(--red-600)", backdropFilter: "blur(8px)", borderRadius: "10px", fontWeight: 700, fontSize: "var(--fs-sm)" }}
                         onClick={openWithdrawForm}
                       >
-                        {form.kind === "ممول" ? "سحب" : kind === "مطلوب" ? `باقي على ${form.name || "الحساب"}` : form.kind === "مقترض" ? "باقي" : "سحب"}
+                        {form.kind === "ممول" ? "سحب" : kind === "مطلوب" ? `باقي على ${form.name || "الحساب"}` : form.kind === "مقترض" ? "باقي" : form.kind === "شركة" ? "تسديد" : "سحب"}
                       </ActionButton>
                       <ActionButton
                         type="button"
@@ -2884,7 +3032,7 @@ export function PartnersTab({
                         style={{ flex: 1, minWidth: 0, padding: "8px 16px", background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.3)", color: "var(--green)", backdropFilter: "blur(8px)", borderRadius: "10px", fontWeight: 700, fontSize: "var(--fs-sm)" }}
                         onClick={openDepositForm}
                       >
-                        {form.kind === "ممول" ? "ايداع" : kind === "مطلوب" ? `واصل من ${form.name || "الحساب"}` : form.kind === "مقترض" ? "واصل" : "إيداع"}
+                        {form.kind === "ممول" ? "ايداع" : kind === "مطلوب" ? `واصل من ${form.name || "الحساب"}` : form.kind === "مقترض" ? "واصل" : form.kind === "شركة" ? "استلام" : "إيداع"}
                       </ActionButton>
                     </div>
                   </>
@@ -3217,7 +3365,7 @@ export function PartnersTab({
                     <label className="mb-label">العمولة (نسبة مئوية %)</label>
                     <NumberInput
                       value={String(txForm.commissionPercent)}
-                      onChange={(val) => setTxForm({ ...txForm, commissionPercent: Number(val) || 0 })}
+                      onChange={(val) => setTxForm({ ...txForm, commissionPercent: parseDecimalInput(val) })}
                       min={0}
                       step={0.1}
                       hideArrows
@@ -3234,11 +3382,10 @@ export function PartnersTab({
                       fontWeight: 700,
                       fontSize: "var(--fs-md)",
                       display: "flex",
-                      justifyContent: "space-between",
+                      justifyContent: "center",
                       alignItems: "center",
                       height: "42px"
                     }}>
-                      <span style={{ fontSize: "var(--fs-sm)", opacity: 0.7 }}>المجموع:</span>
                       <PriceDisplay amount={txForm.amount + (txForm.amount * txForm.commissionPercent) / 100} currency={txCurrency} />
                     </div>
                   </div>
@@ -3302,7 +3449,7 @@ export function PartnersTab({
                         <label className="mb-label">العمولة (نسبة مئوية %)</label>
                         <NumberInput
                           value={String(txForm.commissionPercent)}
-                          onChange={(val) => setTxForm({ ...txForm, commissionPercent: Number(val) || 0 })}
+                          onChange={(val) => setTxForm({ ...txForm, commissionPercent: parseDecimalInput(val) })}
                           min={0}
                           step={0.1}
                           hideArrows
@@ -3319,10 +3466,10 @@ export function PartnersTab({
                           fontWeight: 700,
                           fontSize: "var(--fs-md)",
                           display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center"
+                          justifyContent: "center",
+                          alignItems: "center",
+                          height: "42px"
                         }}>
-                          <span>المجموع:</span>
                           <PriceDisplay amount={txForm.amount + (txForm.amount * txForm.commissionPercent) / 100} currency={txCurrency} />
                         </div>
                       </div>
@@ -3350,6 +3497,38 @@ export function PartnersTab({
                       onFocus={(e) => setTimeout(() => e.target.select(), 0)}
                     />
                   </div>
+
+                  {form.kind === "شركة" && txForm.type === "سحب" && (
+                    <div className="form-group">
+                      <label className="mb-label">طريقة الدفع</label>
+                      <div className="payment-type-selector" style={{ display: "flex", gap: "4px" }}>
+                        <button
+                          type="button"
+                          className={`payment-type-btn payment-type-btn--green ${companyPaymentMode === "cash" || companyPaymentMode === "" ? "payment-type-btn--active" : ""}`}
+                          onClick={() => setCompanyPaymentMode("cash")}
+                        >
+                          كاش
+                        </button>
+                        <button
+                          type="button"
+                          className={`payment-type-btn payment-type-btn--blue ${companyPaymentMode === "funder" ? "payment-type-btn--active" : ""}`}
+                          onClick={() => setCompanyPaymentMode("funder")}
+                        >
+                          تمويل
+                        </button>
+                      </div>
+                      {companyPaymentMode === "funder" && (
+                        <div className="bg-[var(--car-bg-card)] rounded-xl p-3" style={{ marginTop: "0.75rem" }}>
+                          <SearchableCombobox
+                            value={settleFunderName}
+                            onChange={(name) => setSettleFunderName(name)}
+                            placeholder="اختر الممول"
+                            options={partners.filter(p => p.kind === "ممول").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
 
@@ -3360,7 +3539,7 @@ export function PartnersTab({
                   style={{ flex: 1, margin: 0 }}
                   disabled={saving}
                 >
-                  <span className="gold-fx-btn__label">{saving ? "جاري الحفظ..." : editingTransactionId ? "تحديث" : (form.kind === "ممول" ? (txForm.type === "سحب" ? "تسديد" : "استلام") : "إضافة")}</span>
+                  <span className="gold-fx-btn__label">{saving ? "جاري الحفظ..." : editingTransactionId ? "تحديث" : (form.kind === "ممول" ? (txForm.type === "سحب" ? "تسديد" : "استلام") : form.kind === "شركة" ? (txForm.type === "سحب" ? "تسديد" : "استلام") : "إضافة")}</span>
                 </GoldFxButton>
                 <GoldFxButton type="button" variant="gray" style={{ flex: 1, margin: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.7)" }} onClick={() => setShowTxModal(false)}>
                   <span className="gold-fx-btn__label">إلغاء</span>

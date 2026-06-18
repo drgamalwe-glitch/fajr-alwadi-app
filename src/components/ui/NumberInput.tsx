@@ -31,8 +31,15 @@ type NumberInputProps = Omit<
 
 function toNum(v: string | number): number {
   if (typeof v === "number") return v;
-  const n = parseFloat(v);
+  const n = parseFloat(v.replace(/[٫٬،,]/g, "."));
   return isNaN(n) ? 0 : n;
+}
+
+function normalizeNumberText(value: string): string {
+  return value
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/[٫٬،,]/g, ".");
 }
 
 const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(
@@ -66,15 +73,12 @@ const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(
 
       const handler = (e: InputEvent) => {
         if (!e.data) return;
-        if (/[\u0660-\u0669\u06f0-\u06f9]/.test(e.data)) {
+        if (/[\u0660-\u0669\u06f0-\u06f9٫٬،,]/.test(e.data)) {
           e.preventDefault();
 
           const start = el.selectionStart ?? 0;
           const end = el.selectionEnd ?? 0;
-          
-          const normalized = e.data
-            .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
-            .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+          const normalized = normalizeNumberText(e.data);
 
           const newValue = el.value.slice(0, start) + normalized + el.value.slice(end);
 
@@ -132,18 +136,14 @@ const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(
 
     const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
       const pasted = e.clipboardData.getData("text");
-      const normalized = pasted
-        .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
-        .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+      const normalized = normalizeNumberText(pasted);
       if (!/^-?\d*\.?\d*$/.test(normalized)) {
         e.preventDefault();
       }
     };
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const normalizedValue = e.target.value
-        .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
-        .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+      const normalizedValue = normalizeNumberText(e.target.value);
       
       const raw = normalizedValue.replace(/[^0-9.-]/g, "");
       const parsed = parseFloat(raw);

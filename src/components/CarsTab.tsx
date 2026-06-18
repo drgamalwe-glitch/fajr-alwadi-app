@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buildCarInvokeArgs, callTauri } from "../api/tauri";
-import type { Car, CarFormState, PartnerTransaction } from "../types";
+import type { Car, CarFormState, Partner, PartnerTransaction } from "../types";
 import { carNetProfit, carProfitPercentage } from "../utils/finance";
 import { cleanAndNormalizeNumbers } from "../utils/numberInput";
 import { todayIsoDate } from "../utils/dateSegments";
@@ -12,6 +12,7 @@ import { GoldFxButton } from "./ui/GoldFxButton";
 
 interface CarsTabProps {
   cars: Car[];
+  partners: Partner[];
   onRefresh: () => Promise<void>;
   carFormTrigger: { mode: "new" | "edit"; car?: Car } | null;
   onClearCarFormTrigger: () => void;
@@ -107,6 +108,7 @@ function carToForm(car: Car): CarFormState {
 
 export function CarsTab({
   cars,
+  partners,
   onRefresh,
   carFormTrigger,
   onClearCarFormTrigger,
@@ -130,6 +132,8 @@ export function CarsTab({
   const [toast, setToast] = useState<string | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [carToDelete, setCarToDelete] = useState<Car | null>(null);
+  const [showSaleConfirm, setShowSaleConfirm] = useState(false);
+  const [pendingSaleData, setPendingSaleData] = useState<CarFormState | null>(null);
   const [page, setPage] = useState(0);
   const lastAvailableClickRef = useRef(0);
   const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
@@ -373,35 +377,59 @@ export function CarsTab({
 
 
   const handleAutoSave = async () => {
-    // تحديد السيارة الأصلية قبل التعديل
+    const data = formRef.current;
     const originalCar = cars.find((c) => c.car_number === selectedId);
     const wasSold = originalCar?.status === "مبيوعة";
     const isSaleOnly = isEditing && wasSold;
 
-    // 🔍 تحديد ما إذا كانت هذه عملية بيع جديدة — منع تكرار الأقساط
     const isNewSale = (() => {
-      if (panelMode === "new") return form.status === "مبيوعة";
-      return originalCar?.status === "متوفرة" && form.status === "مبيوعة";
+      if (panelMode === "new") return data.status === "مبيوعة";
+      return originalCar?.status === "متوفرة" && data.status === "مبيوعة";
     })();
 
+    const isPaymentChange = isEditing && wasSold && originalCar?.payment_type !== data.paymentType;
+
     try {
-      const carArgs = buildCarInvokeArgs(form);
+      const carArgs = buildCarInvokeArgs(data);
       if (isSaleOnly && originalCar) {
         carArgs.purchaseDate = originalCar.purchase_date ?? carArgs.purchaseDate;
       }
 
       await callTauri("add_car", carArgs);
 
-      await handlePurchaseAutomation(form, originalCar);
+      await handlePurchaseAutomation(data, originalCar);
 
-      if (isNewSale && !isSaleOnly && form.status === "مبيوعة" && form.paymentType !== "كاش") {
-        await handleSaleAutomation(form);
+      if (data.status === "مبيوعة" && data.paymentType !== "كاش" && (isNewSale || isPaymentChange)) {
+        if (isPaymentChange && originalCar?.buyer_name?.trim()) {
+          const oldBuyer = originalCar.buyer_name.trim();
+          const chassis = originalCar.chassis_number?.trim();
+          const carLabel = (data.name || data.model || "سيارة").trim();
+          const saleLabel = `${oldBuyer} ${carLabel} ${chassis || ""}`.trim();
+          try {
+            const existingTxns = await callTauri<PartnerTransaction[]>(
+              "get_partner_transactions",
+              { partnerName: oldBuyer, kind: "مقترض" },
+            );
+            const relatedTxs = existingTxns?.filter(
+              (tx) => tx.notes?.includes(saleLabel) && (tx.type_ === "باقي قسط" || tx.type_ === "باقي" || tx.type_?.includes("باقي"))
+            ) || [];
+            for (const tx of relatedTxs) {
+              await callTauri("delete_partner_transaction", {
+                id: tx.id,
+                partnerName: oldBuyer,
+                kind: "مقترض",
+              });
+            }
+          } catch (delErr) {
+            console.error("Failed to delete old borrower transactions on payment change:", delErr);
+          }
+        }
+        await handleSaleAutomation(data);
       }
 
       await onRefresh();
-      // تحديث selectedId في حال تغير رقم اللوحة (إذا كان مسموحاً)
-      if (panelMode === "edit" && form.num !== selectedId) {
-        setSelectedId(form.num);
+      if (panelMode === "edit" && data.num !== selectedId) {
+        setSelectedId(data.num);
       }
     } catch (err) {
       console.error("Auto-save failed:", err);
@@ -430,6 +458,21 @@ export function CarsTab({
   };
 
   const handleSaleAutomation = async (formData: CarFormState) => {
+    const buyerName = formData.buyerName.trim();
+
+    if (!buyerName) return;
+
+    const isInstallmentsOrDue = formData.paymentType === "اقساط" || formData.paymentType === "موعد";
+    if (isInstallmentsOrDue) {
+      setPendingSaleData(formData);
+      setShowSaleConfirm(true);
+      return;
+    }
+
+    await executeSaleAutomation(formData);
+  };
+
+  const executeSaleAutomation = async (formData: CarFormState) => {
     // 1. تنظيف البيانات والأسماء تماماً من المسافات الخفية في حقل البيع والمعرض
     const buyerName = formData.buyerName.trim();
     const phone = formData.phone.trim();
@@ -520,6 +563,20 @@ export function CarsTab({
     }
   };
 
+  const handleSaleConfirm = async () => {
+    setShowSaleConfirm(false);
+    if (pendingSaleData) {
+      await executeSaleAutomation(pendingSaleData);
+      setPendingSaleData(null);
+      await onRefresh();
+    }
+  };
+
+  const handleSaleCancel = () => {
+    setShowSaleConfirm(false);
+    setPendingSaleData(null);
+  };
+
   const handlePurchaseAutomation = async (formData: CarFormState, originalCar?: Car) => {
     try {
       const currentFinancer = formData.purchaseType === "تمويل" ? formData.financerName.trim() : "";
@@ -527,7 +584,11 @@ export function CarsTab({
       const currentChassis = formData.chassis.trim();
       const oldChassis = originalCar?.chassis_number?.trim();
 
-      // 1. If old transaction exists and we changed financer or purchase type, delete the old transaction
+      // Task 4: حذف معاملة الشركة القديمة إذا تغيرت طريقة الشراء
+      const currentCompany = formData.purchaseType === "شركة" ? formData.financerName.trim() : "";
+      const oldCompany = originalCar?.purchase_type === "شركة" ? originalCar.financer_name?.trim() : "";
+
+      // 1. If old financer transaction exists and we changed financer or purchase type, delete the old transaction
       if (oldFinancer && oldChassis) {
         const oldTxs = await callTauri<PartnerTransaction[]>(
           "get_partner_transactions",
@@ -541,6 +602,25 @@ export function CarsTab({
               id: oldTx.id,
               partnerName: oldFinancer,
               kind: "ممول",
+            });
+          }
+        }
+      }
+
+      // Task 4: حذف معاملة الشركة القديمة إذا تغيرت طريقة الشراء
+      if (oldCompany && oldChassis) {
+        const oldTxs = await callTauri<PartnerTransaction[]>(
+          "get_partner_transactions",
+          { partnerName: oldCompany, kind: "شركة" }
+        );
+        const oldTx = oldTxs?.find(tx => tx.notes?.includes(oldChassis));
+
+        if (oldTx) {
+          if (formData.purchaseType !== "شركة" || currentCompany !== oldCompany) {
+            await callTauri("delete_partner_transaction", {
+              id: oldTx.id,
+              partnerName: oldCompany,
+              kind: "شركة",
             });
           }
         }
@@ -763,7 +843,9 @@ export function CarsTab({
       }
 
       // 6. Delete the car itself
-      await callTauri("delete_car", { num: carNumber });
+      const savedUser = localStorage.getItem("app_current_user");
+      const adminName = savedUser ? (JSON.parse(savedUser).display_name || JSON.parse(savedUser).username) : "الإدارة";
+      await callTauri("delete_car", { num: carNumber, adminName });
 
       setShowDeleteModal(false);
       setCarToDelete(null);
@@ -1151,6 +1233,14 @@ export function CarsTab({
             onChange={patchForm}
             onSubmit={handleSubmit}
             onClose={handleClosePanel}
+            onSwitchToSpecs={() => {
+              // العودة إلى تبويب مواصفات السيارة
+              const formEl = document.getElementById("car-form");
+              const tabButtons = formEl?.querySelectorAll(".car-form-tab");
+              if (tabButtons && tabButtons.length >= 2) {
+                (tabButtons[0] as HTMLButtonElement)?.click();
+              }
+            }}
           />
         </div>
       )}
@@ -1224,6 +1314,46 @@ export function CarsTab({
           </div>
         </div>
       )}
+
+      {/* نافذة تأكيد إنشاء حساب مقترض */}
+      {showSaleConfirm && pendingSaleData && (() => {
+        const buyerName = pendingSaleData.buyerName.trim();
+        const phone = pendingSaleData.phone.trim();
+        const existingBuyer = partners.some(
+          (p) => p.partner_name.trim() === buyerName && p.kind === "مقترض"
+        );
+        const message = existingBuyer
+          ? `هل تريد الشراء لـ ${buyerName} الموجود اسمه مسبقاً؟`
+          : `هل تريد إنشاء حساب باسم ${buyerName} رقم هاتفه ${phone}؟`;
+        return (
+          <div className="fx-confirm-overlay" role="presentation" onClick={handleSaleCancel}>
+            <div
+              className="fx-confirm-dialog"
+              role="alertdialog"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="fx-confirm-title">تأكيد البيع بالتقسيط</h3>
+              <p className="fx-confirm-message">{message}</p>
+              <div className="fx-confirm-actions">
+                <GoldFxButton
+                  type="button"
+                  variant="green"
+                  onClick={() => void handleSaleConfirm()}
+                >
+                  <span className="gold-fx-btn__label">نعم</span>
+                </GoldFxButton>
+                <ActionButton
+                  type="button"
+                  variant="ghost"
+                  onClick={handleSaleCancel}
+                >
+                  إلغاء
+                </ActionButton>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

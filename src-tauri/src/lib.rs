@@ -1,6 +1,8 @@
-use rusqlite::{params, Connection, Result as SqlResult};
+use rusqlite::{params, types::ValueRef, Connection, Result as SqlResult};
+use rust_xlsxwriter::{Format, FormatAlign, FormatBorder, Workbook, Worksheet};
 use serde::{Deserialize, Serialize};
-use std::{env, sync::Mutex};
+use sha2::{Digest, Sha256};
+use std::{env, path::PathBuf, sync::Mutex};
 use tauri::{Manager, State};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -221,6 +223,7 @@ pub struct ProfitDistributionDetail {
 
 pub struct AppState {
     pub db: Mutex<Connection>,
+    pub app_dir: PathBuf,
 }
 
 fn init_db(conn: &Connection) -> SqlResult<()> {
@@ -651,6 +654,45 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         [],
     );
 
+    // إنشاء جدول المستخدمين للمصادقة
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            display_name TEXT NOT NULL DEFAULT '',
+            profile_image TEXT,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M', 'now', 'localtime')),
+            updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M', 'now', 'localtime'))
+        )",
+        [],
+    )?;
+
+    // إنشاء المستخدم الافتراضي admin/admin إذا لم يكن موجوداً
+    if let Ok(count) = conn.query_row::<i64, _, _>(
+        "SELECT COUNT(*) FROM users WHERE username = 'admin'",
+        [],
+        |row| row.get(0),
+    ) {
+        if count == 0 {
+            let hash = hash_password("admin");
+            conn.execute(
+                "INSERT INTO users (username, password_hash, display_name, profile_image) VALUES (?1, ?2, 'مدير النظام', NULL)",
+                params!["admin", hash],
+            )?;
+        }
+    }
+
+    // إنشاء حسابات الشركاء الافتراضية
+    conn.execute(
+        "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES ('أمير', '07808425228', 0.0, 'شريك')",
+        [],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES ('منتصر', '07812541714', 0.0, 'شريك')",
+        [],
+    )?;
+
     migrate_existing_data_to_ledger(conn)?;
 
     // تنظيف الحركات الخاطئة الناتجة عن نسخ سابقة من البرنامج
@@ -682,6 +724,7 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn record_ledger_entry(
     conn: &Connection,
     date: &str,
@@ -799,6 +842,7 @@ fn reverse_ledger_entries(
     Ok(())
 }
 
+#[allow(clippy::type_complexity)]
 fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), String> {
     let tx_info: Result<(String, String, String, f64, String, Option<String>, Option<String>, String, String), rusqlite::Error> = conn.query_row(
         "SELECT partner_name, kind, type, amount, date, notes, currency, COALESCE(payment_type, 'قاصه'), COALESCE(time, '00:00')
@@ -1311,6 +1355,7 @@ fn record_agency_ledger_entries(conn: &Connection, agency_id: i64) -> Result<(),
     Ok(())
 }
 
+#[allow(clippy::type_complexity)]
 fn record_agency_transaction_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), String> {
     reverse_ledger_entries(conn, "agency_transaction", &tx_id.to_string())?;
 
@@ -1680,19 +1725,6 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
                 exp_amount_sum += r.get::<_, f64>(0)?;
             }
             let total_cogs = purchase_price + exp_amount_sum;
-
-            conn.execute(
-                "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-                 VALUES (?1, ?2, 'expense', 'cogs', ?3, 0.0, ?4, 'car', ?5, 'تكلفة المبيعات', ?6, NULL)",
-                params![
-                    sale_date,
-                    sale_time,
-                    total_cogs,
-                    currency,
-                    car_number,
-                    format!("تكلفة البضاعة المباعة سيارة {} ({})", car_name, car_number)
-                ],
-            )?;
 
             conn.execute(
                 "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
@@ -2101,6 +2133,7 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
     Ok(())
 }
 
+#[allow(clippy::type_complexity)]
 fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), String> {
     let car_number = car_number.trim();
 
@@ -2412,23 +2445,6 @@ fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), St
             db,
             &s_date,
             &s_time,
-            "expense",
-            Some("cogs"),
-            total_cogs,
-            0.0,
-            &currency,
-            "car",
-            car_number,
-            "تكلفة المبيعات",
-            &format!("تكلفة البضاعة المباعة سيارة {} ({})", car_name, car_number),
-            None,
-        )
-        .map_err(|e| e.to_string())?;
-
-        record_ledger_entry(
-            db,
-            &s_date,
-            &s_time,
             "inventory",
             Some(car_number),
             0.0,
@@ -2446,7 +2462,7 @@ fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), St
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[tauri::command]
 fn add_car(
     state: State<AppState>,
@@ -3199,9 +3215,10 @@ fn get_cars(state: State<AppState>) -> Result<Vec<Car>, String> {
 }
 
 #[tauri::command]
-fn delete_car(state: State<AppState>, num: String) -> Result<(), String> {
+fn delete_car(state: State<AppState>, num: String, admin_name: Option<String>) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let car_number = num.trim();
+    let admin = admin_name.unwrap_or_else(|| "الإدارة".to_string());
 
     // Get car details before deleting it
     let (car_name, chassis_number, car_model, car_year): (
@@ -3220,9 +3237,32 @@ fn delete_car(state: State<AppState>, num: String) -> Result<(), String> {
     let clean_name = car_name.trim();
     let clean_chassis = chassis_str.trim();
 
-    // عكس حركات القيود المالي في دفتر الأستاذ للسيارة ومصاريفها قبل الحذف
-    reverse_ledger_entries(&db, "car", car_number)?;
+    // تسجيل عملية الحذف في سجل المعاملات المالية
+    let (today, now_time) = now_datetime();
+    let deletion_desc = format!("حذف سيارة {} {} بواسطة {}", clean_name, clean_chassis, admin);
+    record_ledger_entry(
+        &db,
+        &today,
+        &now_time,
+        "system",
+        Some("deletion"),
+        0.0,
+        0.0,
+        "IQD",
+        "car_deletion",
+        car_number,
+        "حذف سيارة",
+        &deletion_desc,
+        Some(&format!("تم حذف السيارة {} ({}) من قبل {}", clean_name, car_number, admin)),
+    ).map_err(|e| e.to_string())?;
 
+    // حذف جميع القيود المالية المرتبطة بالسيارة من دفتر الأستاذ (بدون عكس)
+    db.execute(
+        "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = ?1",
+        [car_number],
+    ).map_err(|e| e.to_string())?;
+
+    // حذف قيود مصاريف السيارة من دفتر الأستاذ
     let mut ce_stmt = db
         .prepare("SELECT id FROM car_expenses WHERE car_number = ?1")
         .map_err(|e| e.to_string())?;
@@ -3232,7 +3272,10 @@ fn delete_car(state: State<AppState>, num: String) -> Result<(), String> {
         .collect::<Result<Vec<_>, rusqlite::Error>>()
         .map_err(|e| e.to_string())?;
     for ce_id in ce_ids {
-        reverse_ledger_entries(&db, "expense", &ce_id.to_string())?;
+        db.execute(
+            "DELETE FROM financial_ledger WHERE reference_type = 'expense' AND reference_id = ?1",
+            [ce_id.to_string()],
+        ).map_err(|e| e.to_string())?;
     }
 
     let mut ge_stmt = db
@@ -3244,7 +3287,10 @@ fn delete_car(state: State<AppState>, num: String) -> Result<(), String> {
         .collect::<Result<Vec<_>, rusqlite::Error>>()
         .map_err(|e| e.to_string())?;
     for ge_id in ge_ids {
-        reverse_ledger_entries(&db, "expense", &ge_id.to_string())?;
+        db.execute(
+            "DELETE FROM financial_ledger WHERE reference_type = 'expense' AND reference_id = ?1",
+            [ge_id.to_string()],
+        ).map_err(|e| e.to_string())?;
     }
 
     db.execute("DELETE FROM cars WHERE car_number = ?1", [car_number])
@@ -3686,6 +3732,62 @@ fn add_partner_transaction(
             "قاصه",
             "تسديد قسط",
             &installment_note,
+        )?;
+    }
+
+    // === حسم المستثمر 50/50 على الشركاء (Task 1) ===
+    if kind.trim() == "مستثمر" && type_.trim().starts_with("سحب") && amount > 0.0 {
+        let curr = currency.as_deref().unwrap_or("IQD");
+        let reason = notes
+            .as_deref()
+            .unwrap_or("سحب مستثمر")
+            .to_string();
+        let partner_note = format!("سحب لتسوية المستثمر: {} - {}", partner_name.trim(), reason);
+        deduct_from_partners_5050(
+            &db,
+            amount,
+            curr,
+            date.trim(),
+            "قاصه",
+            &partner_note,
+        )?;
+    }
+
+    // === حسم سحب نقدي من الشركة 50/50 على الشركاء (Task 2) ===
+    let is_company_cash_withdrawal = kind.trim() == "شركة"
+        && type_.trim().starts_with("سحب")
+        && notes.as_deref().unwrap_or("").contains("سحب نقدي");
+    if is_company_cash_withdrawal && amount > 0.0 {
+        let curr = currency.as_deref().unwrap_or("IQD");
+        let reason = notes
+            .as_deref()
+            .unwrap_or("سحب نقدي من شركة")
+            .to_string();
+        let partner_note = format!("سحب نقدي للشركة: {} - {}", partner_name.trim(), reason);
+        deduct_from_partners_5050(
+            &db,
+            amount,
+            curr,
+            date.trim(),
+            "قاصه",
+            &partner_note,
+        )?;
+    }
+
+    // === حسم عملية تمويل للممول 50/50 على الشركاء (Task 3) ===
+    if kind.trim() == "ممول" && type_.trim().starts_with("تمويل") && amount > 0.0 {
+        let curr = currency.as_deref().unwrap_or("IQD");
+        let reason = notes
+            .as_deref()
+            .unwrap_or("عملية تمويل")
+            .to_string();
+        let partner_note = format!("تمويل للممول {} - {}", partner_name.trim(), reason);
+        deduct_from_partners_5050(
+            &db,
+            amount,
+            curr,
+            date.trim(),
+            "قاصه", &partner_note,
         )?;
     }
 
@@ -4221,20 +4323,37 @@ fn get_cash_register_entries(
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
     let mut query = "SELECT id, date, time, type_, (debit - credit) AS amount, description, notes, currency, account_id 
-                     FROM financial_ledger 
-                     WHERE account_type = 'cash'".to_string();
+                     FROM financial_ledger".to_string();
 
     let mut params: Vec<String> = Vec::new();
 
     if let Some(pt) = &payment_type {
+        query.push_str(" WHERE account_type = 'cash'");
         if pt == "قاصه" || pt == "قاصة" {
             query.push_str(" AND (account_id = 'قاصه' OR account_id = 'قاصة' OR account_id IS NULL OR account_id = '')");
         } else {
             query.push_str(" AND account_id = ?1");
             params.push(pt.trim().to_string());
         }
+    } else {
+        query.push_str(" WHERE account_type != 'inventory'");
     }
 
+    query.push_str(
+        " AND type_ != 'تكلفة المبيعات'
+          AND type_ NOT LIKE 'عكس: تكلفة المبيعات%'
+          AND type_ NOT IN ('تعديل ايداع', 'تعديل إيداع', 'تعديل سحب', 'تعديل حركة')
+          AND NOT (
+            account_type = 'revenue'
+            AND type_ = 'بيع سيارة'
+            AND reference_type = 'car'
+            AND EXISTS (
+              SELECT 1 FROM cars
+              WHERE cars.car_number = financial_ledger.reference_id
+                AND COALESCE(cars.payment_type, 'كاش') = 'كاش'
+            )
+          )",
+    );
     query.push_str(" ORDER BY date ASC, time ASC, id ASC");
 
     let mut stmt = db.prepare(&query).map_err(|e| e.to_string())?;
@@ -4784,7 +4903,7 @@ fn now_datetime() -> (String, String) {
     let mut y = 1970u64;
     let mut days = total_days;
     loop {
-        let days_in_year = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+        let days_in_year = if is_leap_year(y) {
             366
         } else {
             365
@@ -4795,7 +4914,7 @@ fn now_datetime() -> (String, String) {
         days -= days_in_year;
         y += 1;
     }
-    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let leap = is_leap_year(y);
     let month_days: [u64; 12] = [
         31,
         if leap { 29 } else { 28 },
@@ -4822,6 +4941,10 @@ fn now_datetime() -> (String, String) {
     let date = format!("{:04}-{:02}-{:02}", y, m + 1, d);
     let time = format!("{:02}:{:02}", hh, mm);
     (date, time)
+}
+
+fn is_leap_year(year: u64) -> bool {
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
 fn distribute_to_partners_50(
@@ -4930,6 +5053,7 @@ fn get_agencies(state: State<AppState>) -> Result<Vec<Agency>, String> {
     Ok(agencies)
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 fn add_agency(
     state: State<AppState>,
@@ -4981,6 +5105,7 @@ fn add_agency(
     Ok(new_id)
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 fn update_agency(
     state: State<AppState>,
@@ -5250,17 +5375,21 @@ fn get_financial_summary(
         |row| row.get(0),
     ).unwrap_or(0.0);
 
-    // 2. Inventory Value
-    let inventory_value_iqd: f64 = db.query_row(
+    // 2. Inventory Value — from ledger entries. Car purchases, including cash purchases,
+    // are recorded in record_car_ledger_entries(), so adding cars.purchase_price here
+    // would count the same vehicle twice.
+    let ledger_inventory_iqd: f64 = db.query_row(
         "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'inventory' AND currency = 'IQD'",
         [],
         |row| row.get(0),
     ).unwrap_or(0.0);
-    let inventory_value_usd: f64 = db.query_row(
+    let ledger_inventory_usd: f64 = db.query_row(
         "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'inventory' AND currency = 'USD'",
         [],
         |row| row.get(0),
     ).unwrap_or(0.0);
+    let inventory_value_iqd = ledger_inventory_iqd;
+    let inventory_value_usd = ledger_inventory_usd;
 
     // 3. Total Investments
     let total_investments_iqd: f64 = db.query_row(
@@ -5451,37 +5580,40 @@ fn get_profit_distribution_summary(
     state: State<AppState>,
 ) -> Result<ProfitDistributionSummary, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
+    let (current_date, current_time) = now_datetime();
+    let month_start = profit_period_month_start(&current_date, &current_time);
+    let month_end = next_month_start(&month_start);
 
     let revenue_iqd: f64 = db.query_row(
-        "SELECT COALESCE(SUM(credit - debit), 0.0) FROM financial_ledger WHERE account_type = 'revenue' AND currency = 'IQD'",
-        [],
+        "SELECT COALESCE(SUM(credit - debit), 0.0) FROM financial_ledger WHERE account_type = 'revenue' AND currency = 'IQD' AND date >= ?1 AND date < ?2",
+        params![&month_start, &month_end],
         |row| row.get(0),
     ).unwrap_or(0.0);
     let revenue_usd: f64 = db.query_row(
-        "SELECT COALESCE(SUM(credit - debit), 0.0) FROM financial_ledger WHERE account_type = 'revenue' AND currency = 'USD'",
-        [],
+        "SELECT COALESCE(SUM(credit - debit), 0.0) FROM financial_ledger WHERE account_type = 'revenue' AND currency = 'USD' AND date >= ?1 AND date < ?2",
+        params![&month_start, &month_end],
         |row| row.get(0),
     ).unwrap_or(0.0);
 
     let expenses_iqd: f64 = db.query_row(
-        "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'expense' AND currency = 'IQD'",
-        [],
+        "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'expense' AND currency = 'IQD' AND type_ != 'تكلفة المبيعات' AND date >= ?1 AND date < ?2",
+        params![&month_start, &month_end],
         |row| row.get(0),
     ).unwrap_or(0.0);
     let expenses_usd: f64 = db.query_row(
-        "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'expense' AND currency = 'USD'",
-        [],
+        "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'expense' AND currency = 'USD' AND type_ != 'تكلفة المبيعات' AND date >= ?1 AND date < ?2",
+        params![&month_start, &month_end],
         |row| row.get(0),
     ).unwrap_or(0.0);
 
     let distributed_iqd: f64 = db.query_row(
-        "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'retained_earnings' AND currency = 'IQD'",
-        [],
+        "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'retained_earnings' AND currency = 'IQD' AND date >= ?1 AND date < ?2",
+        params![&month_start, &month_end],
         |row| row.get(0),
     ).unwrap_or(0.0);
     let distributed_usd: f64 = db.query_row(
-        "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'retained_earnings' AND currency = 'USD'",
-        [],
+        "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'retained_earnings' AND currency = 'USD' AND date >= ?1 AND date < ?2",
+        params![&month_start, &month_end],
         |row| row.get(0),
     ).unwrap_or(0.0);
 
@@ -5514,13 +5646,13 @@ fn get_profit_distribution_summary(
         ).unwrap_or(0.0);
 
         let drawings_iqd: f64 = db.query_row(
-            "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'drawings' AND account_id = ?1 AND currency = 'IQD'",
-            [&name],
+            "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'drawings' AND account_id = ?1 AND currency = 'IQD' AND date >= ?2 AND date < ?3",
+            params![&name, &month_start, &month_end],
             |row| row.get(0),
         ).unwrap_or(0.0);
         let drawings_usd: f64 = db.query_row(
-            "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'drawings' AND account_id = ?1 AND currency = 'USD'",
-            [&name],
+            "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'drawings' AND account_id = ?1 AND currency = 'USD' AND date >= ?2 AND date < ?3",
+            params![&name, &month_start, &month_end],
             |row| row.get(0),
         ).unwrap_or(0.0);
 
@@ -5538,6 +5670,153 @@ fn get_profit_distribution_summary(
         undistributed_usd,
         partners,
     })
+}
+
+fn parse_ymd(date: &str) -> Option<(i32, u32, u32)> {
+    let mut parts = date.split('-');
+    let year = parts.next()?.parse::<i32>().ok()?;
+    let month = parts.next()?.parse::<u32>().ok()?;
+    let day = parts.next()?.parse::<u32>().ok()?;
+    if (1..=12).contains(&month) && (1..=31).contains(&day) {
+        Some((year, month, day))
+    } else {
+        None
+    }
+}
+
+fn previous_month_start(month_start: &str) -> String {
+    let (mut year, mut month, _) = parse_ymd(month_start).unwrap_or((2025, 1, 1));
+    if month == 1 {
+        year -= 1;
+        month = 12;
+    } else {
+        month -= 1;
+    }
+    format!("{:04}-{:02}-01", year, month)
+}
+
+fn next_month_start(month_start: &str) -> String {
+    let (mut year, mut month, _) = parse_ymd(month_start).unwrap_or((2025, 1, 1));
+    if month == 12 {
+        year += 1;
+        month = 1;
+    } else {
+        month += 1;
+    }
+    format!("{:04}-{:02}-01", year, month)
+}
+
+fn profit_period_month_start(current_date: &str, current_time: &str) -> String {
+    let (year, month, day) = parse_ymd(current_date).unwrap_or((2025, 1, 1));
+    let hour = current_time
+        .split(':')
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(0);
+    let current_month = format!("{:04}-{:02}-01", year, month);
+    if day == 1 && hour < 21 {
+        previous_month_start(&current_month)
+    } else {
+        current_month
+    }
+}
+
+#[tauri::command]
+fn sync_monthly_profit_distributions(state: State<AppState>) -> Result<(), String> {
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = &mut *db_guard;
+    let (current_date, current_time) = now_datetime();
+    let month_start = profit_period_month_start(&current_date, &current_time);
+    let month_end = next_month_start(&month_start);
+
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    let partners = {
+        let mut stmt = tx
+            .prepare("SELECT partner_name FROM partners WHERE kind = 'شريك' ORDER BY partner_name")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<String>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+
+    if partners.is_empty() {
+        tx.commit().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    for currency in ["IQD", "USD"] {
+        let revenue: f64 = tx.query_row(
+            "SELECT COALESCE(SUM(credit - debit), 0.0) FROM financial_ledger WHERE account_type = 'revenue' AND currency = ?1 AND date >= ?2 AND date < ?3",
+            params![currency, &month_start, &month_end],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+        let expenses: f64 = tx.query_row(
+            "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'expense' AND currency = ?1 AND type_ != 'تكلفة المبيعات' AND date >= ?2 AND date < ?3",
+            params![currency, &month_start, &month_end],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+        let total_profit = (revenue - expenses).max(0.0);
+        let notes = format!("auto-monthly:{}:{}", month_start, currency);
+        let existing_id = tx
+            .query_row(
+                "SELECT id FROM profit_distributions WHERE notes = ?1 AND currency = ?2 LIMIT 1",
+                params![notes, currency],
+                |row| row.get::<_, i64>(0),
+            )
+            .ok();
+
+        let distribution_id = if let Some(id) = existing_id {
+            tx.execute(
+                "UPDATE profit_distributions SET date = ?1, time = ?2, total_profit = ?3 WHERE id = ?4",
+                params![&month_start, &current_time, total_profit, id],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute("DELETE FROM partner_profit_shares WHERE distribution_id = ?1", [id])
+                .map_err(|e| e.to_string())?;
+            id
+        } else {
+            tx.execute(
+                "INSERT INTO profit_distributions (date, time, total_profit, currency, notes)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![&month_start, &current_time, total_profit, currency, notes],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.last_insert_rowid()
+        };
+
+        let partner_count = partners.len() as f64;
+        for partner_name in &partners {
+            let drawings: f64 = tx.query_row(
+                "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'drawings' AND account_id = ?1 AND currency = ?2 AND date >= ?3 AND date < ?4",
+                params![partner_name, currency, &month_start, &month_end],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            let profit_share = if partner_count > 0.0 {
+                total_profit / partner_count
+            } else {
+                0.0
+            };
+            let amount_reinvested = (profit_share - drawings).max(0.0);
+            tx.execute(
+                "INSERT INTO partner_profit_shares (
+                    distribution_id, partner_name, profit_share, drawings_deducted, amount_reinvested, amount_paid, currency
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 0.0, ?6)",
+                params![
+                    distribution_id,
+                    partner_name,
+                    profit_share,
+                    drawings.max(0.0),
+                    amount_reinvested,
+                    currency,
+                ],
+            ).map_err(|e| e.to_string())?;
+        }
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -5847,23 +6126,21 @@ fn get_backgrounds() -> Result<Vec<String>, String> {
     let entries =
         std::fs::read_dir(base_dir).map_err(|e| format!("فشل قراءة مجلد الخلفيات: {e}"))?;
 
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                    let ext_lower = ext.to_lowercase();
-                    if ext_lower == "jpg"
-                        || ext_lower == "jpeg"
-                        || ext_lower == "png"
-                        || ext_lower == "webp"
-                        || ext_lower == "gif"
-                        || ext_lower == "bmp"
-                    {
-                        if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
-                            if !filename.to_lowercase().contains("logo") {
-                                bgs.push(format!("/backgrounds/{}", filename));
-                            }
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                let ext_lower = ext.to_lowercase();
+                if ext_lower == "jpg"
+                    || ext_lower == "jpeg"
+                    || ext_lower == "png"
+                    || ext_lower == "webp"
+                    || ext_lower == "gif"
+                    || ext_lower == "bmp"
+                {
+                    if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
+                        if !filename.to_lowercase().contains("logo") {
+                            bgs.push(format!("/backgrounds/{}", filename));
                         }
                     }
                 }
@@ -5924,20 +6201,17 @@ fn rename_background(file_path: String) -> Result<String, String> {
     let mut bg_exists = false;
     let mut max_num = -1;
 
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let p = entry.path();
-            if p.is_file() {
-                if let Some(fname) = p.file_stem().and_then(|s| s.to_str()) {
-                    let fname_lower = fname.to_lowercase();
-                    if fname_lower == "bg" {
-                        bg_exists = true;
-                    } else if fname_lower.starts_with("bg") {
-                        let num_str = &fname_lower[2..];
-                        if let Ok(num) = num_str.parse::<i32>() {
-                            if num > max_num {
-                                max_num = num;
-                            }
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_file() {
+            if let Some(fname) = p.file_stem().and_then(|s| s.to_str()) {
+                let fname_lower = fname.to_lowercase();
+                if fname_lower == "bg" {
+                    bg_exists = true;
+                } else if let Some(num_str) = fname_lower.strip_prefix("bg") {
+                    if let Ok(num) = num_str.parse::<i32>() {
+                        if num > max_num {
+                            max_num = num;
                         }
                     }
                 }
@@ -6011,6 +6285,782 @@ fn open_whatsapp(phone: String, text: String) -> Result<(), String> {
     open::that(&url).map_err(|e| format!("فشل فتح واتساب: {e}"))
 }
 
+fn hash_password(password: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(password.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn get_partner_names_for_distribution(db: &Connection) -> Result<Vec<String>, String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT partner_name FROM partners WHERE kind = 'شريك' AND partner_name != 'فجر الوادي'",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut names: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    if names.is_empty() {
+        names.push("فجر الوادي".to_string());
+    }
+    Ok(names)
+}
+
+fn deduct_from_partners_5050(
+    db: &Connection,
+    amount: f64,
+    currency: &str,
+    date: &str,
+    payment_type: &str,
+    notes: &str,
+) -> Result<(), String> {
+    if amount <= 0.0 {
+        return Ok(());
+    }
+
+    let partner_names = get_partner_names_for_distribution(db)?;
+    let per_partner = amount / partner_names.len() as f64;
+
+    if per_partner <= 0.0 {
+        return Ok(());
+    }
+
+    let time_str = db
+        .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .unwrap_or_else(|_| "00:00".to_string());
+
+    for p_name in &partner_names {
+        db.execute(
+            "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, 'شريك')",
+            [p_name],
+        )
+        .map_err(|e| e.to_string())?;
+
+        db.execute(
+            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+             VALUES (?1, 'شريك', 'سحب', ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                p_name,
+                per_partner,
+                date,
+                &time_str,
+                notes,
+                currency,
+                payment_type,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+
+        let tx_id = db.last_insert_rowid();
+        record_partner_ledger_entries(db, tx_id)?;
+        recalculate_partner_total(db, p_name, "شريك")?;
+    }
+
+    Ok(())
+}
+
+// ==================== COMPANY SETTLEMENT THROUGH FUNDER ====================
+
+#[tauri::command]
+fn settle_company_through_funder(
+    state: State<AppState>,
+    company_name: String,
+    funder_name: String,
+    amount: f64,
+    date: String,
+    currency: Option<String>,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let curr = currency.as_deref().unwrap_or("IQD");
+    let time_str = db
+        .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .unwrap_or_else(|_| "00:00".to_string());
+
+    // 1. Create company withdrawal with special note
+    let note = format!("تسديد {} من قبل {}", company_name.trim(), funder_name.trim());
+    let company_note = note.clone();
+    db.execute(
+        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+         VALUES (?1, 'شركة', 'سحب', ?2, ?3, ?4, ?5, ?6, 'نقدا')",
+        params![
+            company_name.trim(),
+            amount,
+            date.trim(),
+            &time_str,
+            &company_note,
+            curr,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    let company_tx_id = db.last_insert_rowid();
+    record_partner_ledger_entries(&db, company_tx_id)?;
+    recalculate_partner_total(&db, company_name.trim(), "شركة")?;
+
+    // 2. Create funder deposit (funder pays out to cover the company)
+    let funder_note = note.clone();
+    db.execute(
+        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+         VALUES (?1, 'ممول', 'ايداع', ?2, ?3, ?4, ?5, ?6, 'قاصه')",
+        params![
+            funder_name.trim(),
+            amount,
+            date.trim(),
+            &time_str,
+            &funder_note,
+            curr,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    let funder_tx_id = db.last_insert_rowid();
+    record_partner_ledger_entries(&db, funder_tx_id)?;
+    recalculate_partner_total(&db, funder_name.trim(), "ممول")?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn settle_borrower_through_funder(
+    state: State<AppState>,
+    borrower_name: String,
+    funder_name: String,
+    amount: f64,
+    date: String,
+    currency: Option<String>,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let curr = currency.as_deref().unwrap_or("IQD");
+    let time_str = db
+        .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .unwrap_or_else(|_| "00:00".to_string());
+
+    // 1. Create borrower settlement (type = تسديد)
+    let borrower_note = format!("تسوية عبر ممول: {} - تسوية مقترض", funder_name.trim());
+    db.execute(
+        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+         VALUES (?1, 'مقترض', 'تسديد', ?2, ?3, ?4, ?5, ?6, 'قاصه')",
+        params![
+            borrower_name.trim(),
+            amount,
+            date.trim(),
+            &time_str,
+            &borrower_note,
+            curr,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    let borrower_tx_id = db.last_insert_rowid();
+    record_partner_ledger_entries(&db, borrower_tx_id)?;
+    recalculate_partner_total(&db, borrower_name.trim(), "مقترض")?;
+
+    // 2. Create funder deposit
+    let funder_note = format!("تسوية مقترض: {} - تسوية عبر ممول", borrower_name.trim());
+    db.execute(
+        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+         VALUES (?1, 'ممول', 'ايداع', ?2, ?3, ?4, ?5, ?6, 'قاصه')",
+        params![
+            funder_name.trim(),
+            amount,
+            date.trim(),
+            &time_str,
+            &funder_note,
+            curr,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    let funder_tx_id = db.last_insert_rowid();
+    record_partner_ledger_entries(&db, funder_tx_id)?;
+    recalculate_partner_total(&db, funder_name.trim(), "ممول")?;
+
+    Ok(())
+}
+
+// ==================== AUTHENTICATION COMMANDS ====================
+
+#[derive(Serialize, Debug, Clone)]
+pub struct UserInfo {
+    pub id: i64,
+    pub username: String,
+    pub display_name: String,
+    pub profile_image: Option<String>,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct LoginResult {
+    pub success: bool,
+    pub user: Option<UserInfo>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+fn login(
+    state: State<AppState>,
+    username: String,
+    password: String,
+) -> Result<LoginResult, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let username = username.trim();
+    let password = password.trim();
+
+    let result = db.query_row(
+        "SELECT id, username, display_name, profile_image, password_hash FROM users WHERE username = ?1",
+        [username],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        },
+    );
+
+    match result {
+        Ok((id, uname, display_name, profile_image, stored_hash)) => {
+            let input_hash = hash_password(password);
+            if input_hash == stored_hash {
+                Ok(LoginResult {
+                    success: true,
+                    user: Some(UserInfo {
+                        id,
+                        username: uname,
+                        display_name,
+                        profile_image,
+                    }),
+                    error: None,
+                })
+            } else {
+                Ok(LoginResult {
+                    success: false,
+                    user: None,
+                    error: Some("كلمة المرور غير صحيحة".to_string()),
+                })
+            }
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(LoginResult {
+            success: false,
+            user: None,
+            error: Some("اسم المستخدم غير موجود".to_string()),
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+fn get_users(state: State<AppState>) -> Result<Vec<UserInfo>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = db
+        .prepare("SELECT id, username, display_name, profile_image FROM users ORDER BY id")
+        .map_err(|e| e.to_string())?;
+
+    let users = stmt
+        .query_map([], |row| {
+            Ok(UserInfo {
+                id: row.get(0)?,
+                username: row.get(1)?,
+                display_name: row.get(2)?,
+                profile_image: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(users)
+}
+
+#[tauri::command]
+fn add_user(
+    state: State<AppState>,
+    username: String,
+    password: String,
+    display_name: String,
+    profile_image: Option<String>,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let username = username.trim();
+    let display_name = display_name.trim();
+
+    if username.is_empty() {
+        return Err("اسم المستخدم مطلوب".to_string());
+    }
+    if password.len() < 3 {
+        return Err("كلمة المرور يجب أن تكون 3 أحرف على الأقل".to_string());
+    }
+
+    let hash = hash_password(password.trim());
+
+    db.execute(
+        "INSERT INTO users (username, password_hash, display_name, profile_image) VALUES (?1, ?2, ?3, ?4)",
+        params![username, hash, display_name, profile_image],
+    )
+    .map_err(|e| format!("فشل إنشاء المستخدم: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn update_user(
+    state: State<AppState>,
+    id: i64,
+    username: String,
+    display_name: String,
+    profile_image: Option<String>,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+
+    db.execute(
+        "UPDATE users SET username = ?1, display_name = ?2, profile_image = ?3, updated_at = strftime('%Y-%m-%d %H:%M', 'now', 'localtime') WHERE id = ?4",
+        params![username.trim(), display_name.trim(), profile_image, id],
+    )
+    .map_err(|e| format!("فشل تحديث المستخدم: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn change_password(
+    state: State<AppState>,
+    id: i64,
+    new_password: String,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+
+    if new_password.trim().len() < 3 {
+        return Err("كلمة المرور يجب أن تكون 3 أحرف على الأقل".to_string());
+    }
+
+    let hash = hash_password(new_password.trim());
+    db.execute(
+        "UPDATE users SET password_hash = ?1, updated_at = strftime('%Y-%m-%d %H:%M', 'now', 'localtime') WHERE id = ?2",
+        params![hash, id],
+    )
+    .map_err(|e| format!("فشل تغيير كلمة المرور: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_user(state: State<AppState>, id: i64) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+
+    // Prevent deleting the default admin user
+    let is_admin: bool = db
+        .query_row(
+            "SELECT COUNT(*) FROM users WHERE id = ?1 AND username = 'admin'",
+            [id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| e.to_string())?
+        > 0;
+
+    if is_admin {
+        return Err("لا يمكن حذف مستخدم admin الافتراضي".to_string());
+    }
+
+    db.execute("DELETE FROM users WHERE id = ?1", [id])
+        .map_err(|e| format!("فشل حذف المستخدم: {}", e))?;
+
+    Ok(())
+}
+
+struct ExportSection {
+    table_name: &'static str,
+    sheet_name: &'static str,
+    title: &'static str,
+    order_by: Option<&'static str>,
+}
+
+enum ExcelValue {
+    Null,
+    Integer(i64),
+    Real(f64),
+    Text(String),
+    Blob(usize),
+}
+
+fn export_sections() -> Vec<ExportSection> {
+    vec![
+        ExportSection {
+            table_name: "cars",
+            sheet_name: "السيارات",
+            title: "قسم السيارات",
+            order_by: Some("COALESCE(purchase_date, ''), car_number"),
+        },
+        ExportSection {
+            table_name: "car_partners",
+            sheet_name: "شركاء السيارات",
+            title: "قسم شركاء السيارات",
+            order_by: Some("car_number, partner_name"),
+        },
+        ExportSection {
+            table_name: "car_expenses",
+            sheet_name: "مصاريف السيارات",
+            title: "قسم مصاريف السيارات",
+            order_by: Some("date, time, id"),
+        },
+        ExportSection {
+            table_name: "partners",
+            sheet_name: "الشركاء والحسابات",
+            title: "قسم الشركاء والحسابات",
+            order_by: Some("kind, partner_name"),
+        },
+        ExportSection {
+            table_name: "partner_transactions",
+            sheet_name: "حركات الشركاء",
+            title: "قسم حركات الشركاء",
+            order_by: Some("date, time, id"),
+        },
+        ExportSection {
+            table_name: "cash_register",
+            sheet_name: "القاصة",
+            title: "قسم القاصة",
+            order_by: Some("date, time, id"),
+        },
+        ExportSection {
+            table_name: "expenses",
+            sheet_name: "المصاريف العامة",
+            title: "قسم المصاريف العامة",
+            order_by: Some("date, time, id"),
+        },
+        ExportSection {
+            table_name: "agencies",
+            sheet_name: "الوكالات",
+            title: "قسم الوكالات",
+            order_by: Some("date, time, id"),
+        },
+        ExportSection {
+            table_name: "agency_transactions",
+            sheet_name: "حركات الوكالات",
+            title: "قسم حركات الوكالات",
+            order_by: Some("date, time, id"),
+        },
+        ExportSection {
+            table_name: "financial_ledger",
+            sheet_name: "الدفتر المالي",
+            title: "قسم الدفتر المالي",
+            order_by: Some("date, time, id"),
+        },
+        ExportSection {
+            table_name: "profit_distributions",
+            sheet_name: "توزيع الأرباح",
+            title: "قسم توزيع الأرباح",
+            order_by: Some("date, time, id"),
+        },
+        ExportSection {
+            table_name: "partner_profit_shares",
+            sheet_name: "حصص الأرباح",
+            title: "قسم حصص الأرباح",
+            order_by: Some("distribution_id, partner_name"),
+        },
+        ExportSection {
+            table_name: "users",
+            sheet_name: "المستخدمون",
+            title: "قسم المستخدمين",
+            order_by: Some("id"),
+        },
+        ExportSection {
+            table_name: "db_version",
+            sheet_name: "إصدارات القاعدة",
+            title: "قسم إصدارات قاعدة البيانات",
+            order_by: Some("version"),
+        },
+    ]
+}
+
+fn quote_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
+fn table_exists(conn: &Connection, table_name: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [table_name],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|count| count > 0)
+    .map_err(|e| e.to_string())
+}
+
+fn table_columns(conn: &Connection, table_name: &str) -> Result<Vec<String>, String> {
+    let pragma = format!("PRAGMA table_info({})", quote_identifier(table_name));
+    let mut stmt = conn.prepare(&pragma).map_err(|e| e.to_string())?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(columns)
+}
+
+fn table_rows(
+    conn: &Connection,
+    table_name: &str,
+    columns: &[String],
+    order_by: Option<&str>,
+) -> Result<Vec<Vec<ExcelValue>>, String> {
+    if columns.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let column_sql = columns
+        .iter()
+        .map(|column| quote_identifier(column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let order_sql = order_by
+        .map(|order| format!(" ORDER BY {order}"))
+        .unwrap_or_default();
+    let query = format!(
+        "SELECT {column_sql} FROM {}{order_sql}",
+        quote_identifier(table_name)
+    );
+
+    let mut stmt = conn.prepare(&query).map_err(|e| e.to_string())?;
+    let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+    let mut output = Vec::new();
+
+    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        let mut values = Vec::with_capacity(columns.len());
+        for index in 0..columns.len() {
+            let value = match row.get_ref(index).map_err(|e| e.to_string())? {
+                ValueRef::Null => ExcelValue::Null,
+                ValueRef::Integer(value) => ExcelValue::Integer(value),
+                ValueRef::Real(value) => ExcelValue::Real(value),
+                ValueRef::Text(value) => {
+                    ExcelValue::Text(String::from_utf8_lossy(value).into_owned())
+                }
+                ValueRef::Blob(value) => ExcelValue::Blob(value.len()),
+            };
+            values.push(value);
+        }
+        output.push(values);
+    }
+
+    Ok(output)
+}
+
+fn write_excel_value(
+    worksheet: &mut Worksheet,
+    row: u32,
+    col: u16,
+    value: &ExcelValue,
+    text_format: &Format,
+    integer_format: &Format,
+    number_format: &Format,
+) -> Result<(), String> {
+    match value {
+        ExcelValue::Null => worksheet
+            .write_blank(row, col, text_format)
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+        ExcelValue::Integer(value) => worksheet
+            .write_number_with_format(row, col, *value as f64, integer_format)
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+        ExcelValue::Real(value) => worksheet
+            .write_number_with_format(row, col, *value, number_format)
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+        ExcelValue::Text(value) => worksheet
+            .write_string_with_format(row, col, value, text_format)
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+        ExcelValue::Blob(size) => worksheet
+            .write_string_with_format(row, col, format!("ملف مرفق ({size} بايت)"), text_format)
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+    }
+}
+
+fn column_width(column: &str, rows: &[Vec<ExcelValue>], column_index: usize) -> f64 {
+    let mut width = column.chars().count().max(10);
+    for row in rows.iter().take(200) {
+        let value_width = match row.get(column_index) {
+            Some(ExcelValue::Text(value)) => value.chars().count(),
+            Some(ExcelValue::Integer(value)) => value.to_string().len(),
+            Some(ExcelValue::Real(value)) => format!("{value:.2}").len(),
+            Some(ExcelValue::Blob(size)) => format!("ملف مرفق ({size} بايت)").chars().count(),
+            _ => 0,
+        };
+        width = width.max(value_width);
+    }
+    (width as f64 + 4.0).clamp(12.0, 42.0)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_section_sheet(
+    workbook: &mut Workbook,
+    section: &ExportSection,
+    columns: &[String],
+    rows: &[Vec<ExcelValue>],
+    exported_at: &str,
+    title_format: &Format,
+    meta_format: &Format,
+    header_format: &Format,
+    text_format: &Format,
+    integer_format: &Format,
+    number_format: &Format,
+) -> Result<(), String> {
+    let worksheet = workbook
+        .add_worksheet()
+        .set_name(section.sheet_name)
+        .map_err(|e| e.to_string())?;
+    worksheet.set_right_to_left(true);
+    worksheet.set_freeze_panes(4, 0).map_err(|e| e.to_string())?;
+
+    let last_col = columns.len().saturating_sub(1) as u16;
+    worksheet
+        .merge_range(0, 0, 0, last_col.max(1), section.title, title_format)
+        .map_err(|e| e.to_string())?;
+    let meta_text = format!(
+        "شركة فجر الوادي | تاريخ التصدير: {exported_at} | عدد السجلات: {}",
+        rows.len()
+    );
+    worksheet
+        .merge_range(1, 0, 1, last_col.max(1), &meta_text, meta_format)
+        .map_err(|e| e.to_string())?;
+    worksheet
+        .set_row_height(0, 26)
+        .map_err(|e| e.to_string())?;
+    worksheet
+        .set_row_height(1, 21)
+        .map_err(|e| e.to_string())?;
+
+    if columns.is_empty() {
+        worksheet
+            .write_string_with_format(3, 0, "لا توجد أعمدة في هذا القسم", text_format)
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    for (index, column) in columns.iter().enumerate() {
+        let col = index as u16;
+        worksheet
+            .write_string_with_format(3, col, column, header_format)
+            .map_err(|e| e.to_string())?;
+        worksheet
+            .set_column_width(col, column_width(column, rows, index))
+            .map_err(|e| e.to_string())?;
+    }
+
+    for (row_index, values) in rows.iter().enumerate() {
+        let excel_row = row_index as u32 + 4;
+        for (column_index, value) in values.iter().enumerate() {
+            write_excel_value(
+                worksheet,
+                excel_row,
+                column_index as u16,
+                value,
+                text_format,
+                integer_format,
+                number_format,
+            )?;
+        }
+    }
+
+    let last_data_row = if rows.is_empty() {
+        4
+    } else {
+        rows.len() as u32 + 3
+    };
+    worksheet
+        .autofilter(3, 0, last_data_row, last_col)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn export_database_to_excel(state: State<AppState>) -> Result<String, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let exported_at: String = db
+        .query_row(
+            "SELECT strftime('%Y-%m-%d %H:%M', 'now', 'localtime')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let file_date: String = db
+        .query_row("SELECT strftime('%d-%m-%Y', 'now', 'localtime')", [], |row| {
+            row.get(0)
+        })
+        .map_err(|e| e.to_string())?;
+
+    let output_path = state.app_dir.join(format!("{file_date}.xlsx"));
+    let mut workbook = Workbook::new();
+    let title_format = Format::new()
+        .set_bold()
+        .set_font_size(16)
+        .set_font_color("FFFFFF")
+        .set_background_color("2D2417")
+        .set_align(FormatAlign::Center)
+        .set_reading_direction(2);
+    let meta_format = Format::new()
+        .set_font_color("6B4A1D")
+        .set_background_color("F7F2E8")
+        .set_align(FormatAlign::Center)
+        .set_reading_direction(2);
+    let header_format = Format::new()
+        .set_bold()
+        .set_font_color("FFFFFF")
+        .set_background_color("B88746")
+        .set_border(FormatBorder::Thin)
+        .set_align(FormatAlign::Center)
+        .set_reading_direction(2);
+    let text_format = Format::new()
+        .set_border(FormatBorder::Thin)
+        .set_align(FormatAlign::Right)
+        .set_reading_direction(2);
+    let integer_format = Format::new()
+        .set_border(FormatBorder::Thin)
+        .set_num_format("#,##0")
+        .set_align(FormatAlign::Center);
+    let number_format = Format::new()
+        .set_border(FormatBorder::Thin)
+        .set_num_format("#,##0.00")
+        .set_align(FormatAlign::Center);
+
+    for section in export_sections() {
+        if !table_exists(&db, section.table_name)? {
+            continue;
+        }
+
+        let columns = table_columns(&db, section.table_name)?;
+        let rows = table_rows(&db, section.table_name, &columns, section.order_by)?;
+        write_section_sheet(
+            &mut workbook,
+            &section,
+            &columns,
+            &rows,
+            &exported_at,
+            &title_format,
+            &meta_format,
+            &header_format,
+            &text_format,
+            &integer_format,
+            &number_format,
+        )?;
+    }
+
+    workbook
+        .save(&output_path)
+        .map_err(|e| format!("فشل إنشاء ملف Excel: {e}"))?;
+
+    Ok(output_path.to_string_lossy().into_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -6037,6 +7087,7 @@ pub fn run() {
 
             app.manage(AppState {
                 db: Mutex::new(conn),
+                app_dir,
             });
 
             Ok(())
@@ -6073,6 +7124,7 @@ pub fn run() {
             add_agency_transaction,
             delete_agency_transaction,
             get_profit_distribution_summary,
+            sync_monthly_profit_distributions,
             distribute_profits,
             get_profit_distributions,
             delete_profit_distribution,
@@ -6080,6 +7132,15 @@ pub fn run() {
             rename_background,
             delete_background,
             get_backgrounds,
+            login,
+            get_users,
+            add_user,
+            update_user,
+            change_password,
+            delete_user,
+            export_database_to_excel,
+            settle_company_through_funder,
+            settle_borrower_through_funder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

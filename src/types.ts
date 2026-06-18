@@ -137,7 +137,20 @@ export interface AgencyTransaction {
   notes: string | null;
 }
 
-export type TabId = "dashboard" | "company-status" | "cars" | "partners" | "partners-financial" | "debtors" | "cashregister" | "expenses" | "financial-accounts" | "financial-transactions" | "agencies" | "profit-distribution";
+export interface UserInfo {
+  id: number;
+  username: string;
+  display_name: string;
+  profile_image?: string | null;
+}
+
+export interface LoginResult {
+  success: boolean;
+  user?: UserInfo | null;
+  error?: string | null;
+}
+
+export type TabId = "dashboard" | "company-status" | "cars" | "partners" | "partners-financial" | "debtors" | "cashregister" | "expenses" | "financial-accounts" | "financial-transactions" | "agencies" | "profit-distribution" | "users";
 
 export interface FinancialSummary {
   cash_iqd: number;

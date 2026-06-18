@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { callTauri } from "../api/tauri";
 import { todayIsoDate } from "../utils/dateSegments";
 import { UnifiedDateField } from "./UnifiedDateField";
 import type { ExpenseEntry } from "../types";
-import { TextInput, PriceInput, PriceDisplay } from "@/components/ui";
+import { ActionButton, TextInput, PriceInput, PriceDisplay } from "@/components/ui";
 import type { Currency } from "@/components/ui";
 import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
@@ -12,9 +12,11 @@ import { GoldFxButton } from "./ui/GoldFxButton";
 
 interface ExpensesTabProps {
   onAddExpenseChange?: (onAddExpense: { action: () => void } | null) => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  requestCloseRef?: React.MutableRefObject<{ request: (afterClose?: () => void) => void } | null>;
 }
 
-export function ExpensesTab({ onAddExpenseChange }: ExpensesTabProps) {
+export function ExpensesTab({ onAddExpenseChange, onDirtyChange, requestCloseRef }: ExpensesTabProps) {
   const [entries, setEntries] = useState<ExpenseEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
@@ -28,6 +30,36 @@ export function ExpensesTab({ onAddExpenseChange }: ExpensesTabProps) {
   const [editingExpense, setEditingExpense] = useState<ExpenseEntry | null>(null);
   const [deleteExpenseConfirm, setDeleteExpenseConfirm] = useState<ExpenseEntry | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [showExpenseSaveConfirm, setShowExpenseSaveConfirm] = useState(false);
+  const [expenseSaving, setExpenseSaving] = useState(false);
+  const initialExpenseRef = useRef("");
+  const pendingExpenseCloseRef = useRef<(() => void) | null>(null);
+  const expenseFormDirty = useMemo(() => {
+    if (!showAddModal) return false;
+    const current = JSON.stringify({ description, amount, date, notes, currency });
+    return current !== initialExpenseRef.current;
+  }, [description, amount, date, notes, currency, showAddModal]);
+
+  const isDirty = showAddModal && expenseFormDirty;
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (!requestCloseRef) return;
+    requestCloseRef.current = {
+      request: (afterClose?: () => void) => {
+        if (isDirty) {
+          pendingExpenseCloseRef.current = afterClose ?? null;
+          setShowExpenseSaveConfirm(true);
+        } else {
+          afterClose?.();
+        }
+      },
+    };
+    return () => { requestCloseRef.current = null; };
+  });
 
   useEffect(() => {
     const lastPage = Math.max(0, Math.ceil(entries.length / PAGE_SIZE) - 1);
@@ -62,6 +94,14 @@ export function ExpensesTab({ onAddExpenseChange }: ExpensesTabProps) {
   }, [showAddModal]);
 
   const handleCloseModal = () => {
+    if (expenseFormDirty) {
+      setShowExpenseSaveConfirm(true);
+      return;
+    }
+    forceCloseModal();
+  };
+
+  const forceCloseModal = () => {
     setDescription("");
     setAmount("");
     setDate(todayIsoDate());
@@ -69,6 +109,46 @@ export function ExpensesTab({ onAddExpenseChange }: ExpensesTabProps) {
     setCurrency("IQD");
     setEditingExpense(null);
     setShowAddModal(false);
+    initialExpenseRef.current = "";
+  };
+
+  const handleExpenseSaveConfirmSave = async () => {
+    setShowExpenseSaveConfirm(false);
+    if (editingExpense) {
+      if (!description.trim() || !amount || Number(amount) <= 0 || !date || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
+        return;
+      }
+      await callTauri("update_expense", {
+        id: editingExpense.id,
+        description: description.trim(),
+        amount: Number(amount),
+        date,
+        notes: notes.trim() || null,
+        currency,
+      });
+    } else {
+      if (!description.trim() || !amount || Number(amount) <= 0 || !date || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
+        return;
+      }
+      await callTauri("add_expense", {
+        description: description.trim(),
+        amount: Number(amount),
+        date,
+        notes: notes.trim() || null,
+        currency,
+      });
+    }
+    forceCloseModal();
+    void load();
+    pendingExpenseCloseRef.current?.();
+    pendingExpenseCloseRef.current = null;
+  };
+
+  const handleExpenseSaveConfirmDiscard = () => {
+    setShowExpenseSaveConfirm(false);
+    forceCloseModal();
+    pendingExpenseCloseRef.current?.();
+    pendingExpenseCloseRef.current = null;
   };
 
   const handleRowClick = (expense: ExpenseEntry) => {
@@ -78,6 +158,13 @@ export function ExpensesTab({ onAddExpenseChange }: ExpensesTabProps) {
     setDate(expense.date);
     setNotes(expense.notes || "");
     setCurrency((expense.currency as Currency) || "IQD");
+    initialExpenseRef.current = JSON.stringify({
+      description: expense.description,
+      amount: String(expense.amount),
+      date: expense.date,
+      notes: expense.notes || "",
+      currency: (expense.currency as Currency) || "IQD",
+    });
     setShowAddModal(true);
   };
 
@@ -85,6 +172,13 @@ export function ExpensesTab({ onAddExpenseChange }: ExpensesTabProps) {
     onAddExpenseChange?.({
       action: () => {
         handleCloseModal();
+        initialExpenseRef.current = JSON.stringify({
+          description: "",
+          amount: "",
+          date: todayIsoDate(),
+          notes: "",
+          currency: "IQD",
+        });
         setShowAddModal(true);
       },
     });
@@ -95,30 +189,63 @@ export function ExpensesTab({ onAddExpenseChange }: ExpensesTabProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!description.trim() || !amount) return;
+    if (expenseSaving) return;
+    let hasError = false;
+    const descInput = document.getElementById("expense-description") as HTMLElement | null;
+    const amountInput = document.getElementById("expense-amount") as HTMLElement | null;
+    const dateInput = document.getElementById("expense-date") as HTMLElement | null;
 
-    if (editingExpense) {
-      await callTauri("update_expense", {
-        id: editingExpense.id,
-        description: description.trim(),
-        amount: Number(amount),
-        date,
-        notes: notes.trim() || null,
-        currency,
-      });
+    if (!description.trim()) {
+      descInput?.classList.add("input--error");
+      if (!hasError) descInput?.focus();
+      hasError = true;
     } else {
-      await callTauri("add_expense", {
-        description: description.trim(),
-        amount: Number(amount),
-        date,
-        notes: notes.trim() || null,
-        currency,
-      });
+      descInput?.classList.remove("input--error");
     }
 
+    if (!amount || Number(amount) <= 0) {
+      amountInput?.classList.add("input--error");
+      if (!hasError) amountInput?.focus();
+      hasError = true;
+    } else {
+      amountInput?.classList.remove("input--error");
+    }
 
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
+      dateInput?.classList.add("input--error");
+      if (!hasError) dateInput?.focus();
+      hasError = true;
+    } else {
+      dateInput?.classList.remove("input--error");
+    }
 
-    handleCloseModal();
+    if (hasError) return;
+
+    setExpenseSaving(true);
+    try {
+      if (editingExpense) {
+        await callTauri("update_expense", {
+          id: editingExpense.id,
+          description: description.trim(),
+          amount: Number(amount),
+          date,
+          notes: notes.trim() || null,
+          currency,
+        });
+      } else {
+        await callTauri("add_expense", {
+          description: description.trim(),
+          amount: Number(amount),
+          date,
+          notes: notes.trim() || null,
+          currency,
+        });
+      }
+    } finally {
+      setExpenseSaving(false);
+    }
+
+    forceCloseModal();
     void load();
   };
 
@@ -221,6 +348,7 @@ export function ExpensesTab({ onAddExpenseChange }: ExpensesTabProps) {
                 <div className="agency-field agency-field--lg" style={{ flex: "2 1 220px" }}>
                   <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>وصف المصروف</label>
                   <TextInput
+                    id="expense-description"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     required
@@ -230,6 +358,7 @@ export function ExpensesTab({ onAddExpenseChange }: ExpensesTabProps) {
                 <div className="agency-field agency-field--lg" style={{ flex: "1 1 160px" }}>
                   <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>المبلغ</label>
                   <PriceInput
+                    id="expense-amount"
                     value={amount}
                     onChange={setAmount}
                     required
@@ -239,7 +368,7 @@ export function ExpensesTab({ onAddExpenseChange }: ExpensesTabProps) {
                 </div>
                 <div className="agency-field agency-field--md">
                   <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>التاريخ</label>
-                  <UnifiedDateField value={date} onChange={setDate} />
+                  <UnifiedDateField id="expense-date" value={date} onChange={setDate} />
                 </div>
                 <div className="agency-field agency-field--lg">
                   <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>ملاحظة</label>
@@ -256,9 +385,10 @@ export function ExpensesTab({ onAddExpenseChange }: ExpensesTabProps) {
                   type="submit"
                   variant="green"
                   style={{ flex: 1, margin: 0 }}
+                  disabled={expenseSaving}
                 >
 
-                  <span className="gold-fx-btn__label">{editingExpense ? "حفظ" : "حفظ"}</span>
+                  <span className="gold-fx-btn__label">{expenseSaving ? "جاري الحفظ..." : "حفظ"}</span>
                 </GoldFxButton>
                 <GoldFxButton
                   type="button"
@@ -270,6 +400,40 @@ export function ExpensesTab({ onAddExpenseChange }: ExpensesTabProps) {
                 </GoldFxButton>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── نافذة تأكيد حفظ التعديلات في المصروف ── */}
+      {showExpenseSaveConfirm && (
+        <div className="fx-confirm-overlay" role="presentation" onClick={() => setShowExpenseSaveConfirm(false)}>
+          <div
+            className="fx-confirm-dialog"
+            role="alertdialog"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="fx-confirm-title">هل تريد حفظ التعديلات؟</h3>
+            <p className="fx-confirm-message">
+              لديك تعديلات غير محفوظة. هل تريد حفظها قبل المغادرة؟
+            </p>
+            <div className="fx-confirm-actions">
+              <ActionButton
+                type="button"
+                variant="success"
+                onClick={() => void handleExpenseSaveConfirmSave()}
+                disabled={deleting}
+              >
+                {deleting ? "جاري الحفظ..." : "حفظ"}
+              </ActionButton>
+              <ActionButton
+                type="button"
+                variant="ghost"
+                onClick={handleExpenseSaveConfirmDiscard}
+                disabled={deleting}
+              >
+                تجاهل التغييرات
+              </ActionButton>
+            </div>
           </div>
         </div>
       )}

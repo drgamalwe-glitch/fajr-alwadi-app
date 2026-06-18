@@ -111,6 +111,10 @@ async function mockInvoke<T>(
 ): Promise<T> {
   const key = mockStorageKey(command);
 
+  if (command === "export_database_to_excel") {
+    return "تصدير تجريبي - يعمل إنشاء ملف Excel داخل تطبيق Tauri" as unknown as T;
+  }
+
   if (command === "get_cars") {
     const raw = localStorage.getItem(key);
     const cars: Car[] = raw ? JSON.parse(raw) : [];
@@ -462,15 +466,31 @@ async function mockInvoke<T>(
     const allTx: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
     const entries: CashRegisterEntry[] = [];
 
-    // شراء السيارات
+    // شراء السيارات - معالجة جميع طرق الدفع
     for (const c of cars) {
       if (c.purchase_date && c.purchase_price > 0) {
-        const isFunded = c.purchase_type === "دين";
-        const type_ = isFunded ? "شراء بالتمويل" : "شراء سيارة";
-        const amount = isFunded ? c.purchase_price : -c.purchase_price;
-        const description = isFunded
-          ? `${c.car_name} - ${c.car_number} (تمويل - الممول: ${(c.financer_name || "").trim()})`
-          : `${c.car_name} - ${c.car_number}`;
+        const purchaseType = c.purchase_type || "كاش";
+        let type_: string;
+        let amount: number;
+        let description: string;
+
+        if (purchaseType === "دين" || purchaseType === "تمويل") {
+          type_ = "شراء بالتمويل";
+          amount = c.purchase_price;
+          description = `${c.car_name} - ${c.car_number} (تمويل - الممول: ${(c.financer_name || "").trim()})`;
+        } else if (purchaseType === "شركة") {
+          type_ = "شراء عن طريق شركة";
+          amount = c.purchase_price;
+          description = `${c.car_name} - ${c.car_number} (شركة: ${(c.financer_name || "").trim()})`;
+        } else if (purchaseType === "موجود") {
+          type_ = "إضافة سيارة موجودة";
+          amount = c.purchase_price;
+          description = `${c.car_name} - ${c.car_number} (سيارة موجودة)`;
+        } else {
+          type_ = "شراء سيارة";
+          amount = -c.purchase_price;
+          description = `${c.car_name} - ${c.car_number}`;
+        }
 
         entries.push({
           id: 0,
@@ -1037,37 +1057,43 @@ async function mockInvoke<T>(
   }
 
   if (command === "get_backgrounds") {
-    return [
-      "/backgrounds/Abstract_background_with_light_c…_202606140949.jpeg",
-      "/backgrounds/Abstract_chromatic_field_crimson_202606140943.jpeg",
-      "/backgrounds/Abstract_energy_flow_red_light_202606140943.jpeg",
-      "/backgrounds/Cosmic_environment_red_luminous_…_202606140943.jpeg",
-      "/backgrounds/Crimson_red_light_beams_dark_202606140941.jpeg",
-      "/backgrounds/Crimson_red_light_trails_202606140947.jpeg",
-      "/backgrounds/Fintech_background_with_gradients_202606140922.jpeg",
-      "/backgrounds/Floating_translucent_color_fields_202606140950.jpeg",
-      "/backgrounds/Futuristic_automotive_background…_202606140947.jpeg",
-      "/backgrounds/Futuristic_nebula_composition_re…_202606140943.jpeg",
-      "/backgrounds/Glassmorphism_background_crimson…_202606140917.jpeg",
-      "/backgrounds/Light_layers_with_subtle_illumin…_202606140950.jpeg",
-      "/backgrounds/Luxury_abstract_background_white…_202606140947.jpeg",
-      "/backgrounds/Luxury_horizon_soft_light_gradients_202606140950.jpeg",
-      "/backgrounds/Platinum_background_crimson_ener…_202606140947.jpeg",
-      "/backgrounds/Red_energy_field_nebula_background_202606140941.jpeg",
-      "/backgrounds/Red_luminous_streams_flowing_202606140941.jpeg",
-      "/backgrounds/aaaf.jpg",
-      "/backgrounds/bg.jpg",
-      "/backgrounds/bsg.jpg",
-      "/backgrounds/bwwg.jpg",
-      "/backgrounds/sss.jpg",
-      "/backgrounds/ww.jpg",
-      "/backgrounds/صbg.jpg"
-    ].sort() as unknown as T;
+    return ["/backgrounds/bg.jpg"] as unknown as T;
   }
 
   if (command === "rename_background") {
     console.log(`[وضع المتصفح] تم محاكاة إعادة تسمية الخلفية: ${args.filePath}`);
-    return "/backgrounds/bg_renamed.jpg" as unknown as T;
+    return "/backgrounds/bg.jpg" as unknown as T;
+  }
+
+  if (command === "login") {
+    const username = String(args.username ?? "").trim();
+    const password = String(args.password ?? "").trim();
+    // Mock: any username/password works (except blank)
+    if (!username || !password) {
+      return { success: false, user: null, error: "اسم المستخدم أو كلمة المرور فارغة" } as T;
+    }
+    return {
+      success: true,
+      user: { id: 1, username, display_name: "مدير النظام", profile_image: null },
+      error: null,
+    } as T;
+  }
+
+  if (command === "get_users") {
+    return [
+      { id: 1, username: "admin", display_name: "مدير النظام", profile_image: null },
+      { id: 2, username: "user1", display_name: "مستخدم ١", profile_image: null },
+    ] as T;
+  }
+
+  if (command === "add_user" || command === "update_user" || command === "change_password" || command === "delete_user") {
+    console.log(`[وضع المتصفح] تم محاكاة: ${command}`, args);
+    return undefined as T;
+  }
+
+  if (command === "settle_company_through_funder" || command === "settle_borrower_through_funder") {
+    console.log(`[وضع المتصفح] تم محاكاة: ${command}`, args);
+    return undefined as T;
   }
 
   throw new Error(`أمر غير معروف: ${command}`);
@@ -1082,6 +1108,9 @@ export function buildCarInvokeArgs(form: CarFormState) {
   const months = Math.max(1, Number(form.installmentMonths) || 1);
   const remaining = Number(form.amountRemaining) || 0;
   const paid = Number(form.amountPaid) || 0;
+
+  const savedUser = localStorage.getItem("app_current_user");
+  const adminName = savedUser ? (JSON.parse(savedUser).display_name || JSON.parse(savedUser).username) : null;
 
   return {
     num: form.num.trim(),
@@ -1116,6 +1145,7 @@ export function buildCarInvokeArgs(form: CarFormState) {
     commissionType: null,
     commissionValue: null,
     carPartners: null,
+    adminName,
   };
 }
 

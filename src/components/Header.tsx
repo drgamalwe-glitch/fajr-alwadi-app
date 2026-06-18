@@ -31,6 +31,7 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: "profit-distribution", label: "توزيـــــــع الاربـــــــاح", icon: "⚖" },
   { id: "financial-accounts", label: "القاصــــــــــــــــــــــــــــــــة", icon: "♢" },
   { id: "financial-transactions", label: "سجــل المعاملات", icon: "⇄" },
+  { id: "users", label: "المستخدميـــــــــــن", icon: "⚙" },
 ];
 
 export function Header({

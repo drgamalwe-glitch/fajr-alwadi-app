@@ -10,35 +10,12 @@ import { FinancialTransactionsTab } from "./components/FinancialTransactionsTab"
 import { PartnersTab } from "./components/PartnersTab";
 import { AgenciesTab } from "./components/AgenciesTab";
 import { ProfitDistributionTab } from "./components/ProfitDistributionTab";
-import type { Car, Partner, TabId } from "./types";
+import { LoginScreen } from "./components/LoginScreen";
+import { UsersTab } from "./components/UsersTab";
+import type { Car, Partner, TabId, UserInfo } from "./types";
 
 // Static array of background paths to optimize build size and prevent file duplication
-const INITIAL_BG_PATHS = [
-  "/backgrounds/Abstract_background_with_light_c…_202606140949.jpeg",
-  "/backgrounds/Abstract_chromatic_field_crimson_202606140943.jpeg",
-  "/backgrounds/Abstract_energy_flow_red_light_202606140943.jpeg",
-  "/backgrounds/Cosmic_environment_red_luminous_…_202606140943.jpeg",
-  "/backgrounds/Crimson_red_light_beams_dark_202606140941.jpeg",
-  "/backgrounds/Crimson_red_light_trails_202606140947.jpeg",
-  "/backgrounds/Fintech_background_with_gradients_202606140922.jpeg",
-  "/backgrounds/Floating_translucent_color_fields_202606140950.jpeg",
-  "/backgrounds/Futuristic_automotive_background…_202606140947.jpeg",
-  "/backgrounds/Futuristic_nebula_composition_re…_202606140943.jpeg",
-  "/backgrounds/Glassmorphism_background_crimson…_202606140917.jpeg",
-  "/backgrounds/Light_layers_with_subtle_illumin…_202606140950.jpeg",
-  "/backgrounds/Luxury_abstract_background_white…_202606140947.jpeg",
-  "/backgrounds/Luxury_horizon_soft_light_gradients_202606140950.jpeg",
-  "/backgrounds/Platinum_background_crimson_ener…_202606140947.jpeg",
-  "/backgrounds/Red_energy_field_nebula_background_202606140941.jpeg",
-  "/backgrounds/Red_luminous_streams_flowing_202606140941.jpeg",
-  "/backgrounds/aaaf.jpg",
-  "/backgrounds/bg.jpg",
-  "/backgrounds/bsg.jpg",
-  "/backgrounds/bwwg.jpg",
-  "/backgrounds/sss.jpg",
-  "/backgrounds/ww.jpg",
-  "/backgrounds/صbg.jpg"
-].sort();
+const INITIAL_BG_PATHS = ["/backgrounds/bg.jpg"];
 
 /*
 // Helper to extract a friendly readable name from the background file path
@@ -119,6 +96,18 @@ export default function App() {
     localStorage.setItem("app_available_backgrounds", JSON.stringify(bgPaths));
   }, [bgPaths]);
 
+  // Warn before closing if there are unsaved changes
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (dirtyRef.current) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, []);
+
   const [carFormTrigger, setCarFormTrigger] = useState<{ mode: "new" | "edit"; car?: Car } | null>(null);
   const [carsSearchOpen, setCarsSearchOpen] = useState(false);
   const [partnersSearchOpen, setPartnersSearchOpen] = useState(false);
@@ -135,9 +124,23 @@ export default function App() {
   const [partners, setPartners] = useState<Partner[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [carFormDirty, setCarFormDirty] = useState(false);
+  const [exportingExcel, setExportingExcel] = useState(false);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<UserInfo | null>(null);
   const pendingTabRef = useRef<TabId | null>(null);
-  const carFormRequestCloseRef = useRef<{ request: (afterClose?: () => void) => void } | null>(null);
+  const tabCloseRequestRef = useRef<{ request: (afterClose?: () => void) => void } | null>(null);
+  const dirtyRef = useRef(false);
+
+  const handleLogin = useCallback((user: UserInfo) => {
+    setCurrentUser(user);
+    localStorage.setItem("app_current_user", JSON.stringify(user));
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    setCurrentUser(null);
+    localStorage.removeItem("app_current_user");
+    setActiveTab("dashboard");
+  }, []);
 
   // Navigate to a tab
   const navigateTo = useCallback((nextTab: TabId) => {
@@ -145,11 +148,15 @@ export default function App() {
     setPartnerActions(null);
   }, []);
 
-  // Manual tab click: decide direction by comparing indices
+  const handleDirtyChange = useCallback((dirty: boolean) => {
+    dirtyRef.current = dirty;
+  }, []);
+
+  // Manual tab click: check for unsaved changes before switching
   const handleTabChange = useCallback((nextTab: TabId) => {
-    if (activeTab === "cars" && carFormDirty) {
+    if (tabCloseRequestRef.current) {
       pendingTabRef.current = nextTab;
-      carFormRequestCloseRef.current?.request(() => {
+      tabCloseRequestRef.current.request(() => {
         const pending = pendingTabRef.current;
         pendingTabRef.current = null;
         if (pending) navigateTo(pending);
@@ -157,7 +164,7 @@ export default function App() {
       return;
     }
     navigateTo(nextTab);
-  }, [navigateTo, activeTab, carFormDirty]);
+  }, [navigateTo]);
 
   const refreshData = useCallback(async () => {
     setError(null);
@@ -333,6 +340,26 @@ export default function App() {
     event.currentTarget.style.setProperty("--my", `${event.clientY}px`);
   };
 
+  const handleExportExcel = useCallback(async () => {
+    if (exportingExcel) return;
+
+    setExportingExcel(true);
+    setExportMessage(null);
+    try {
+      const filePath = await callTauri<string>("export_database_to_excel");
+      setExportMessage(`تم التصدير: ${filePath}`);
+    } catch (err) {
+      console.error("فشل تصدير Excel:", err);
+      setExportMessage("تعذر تصدير ملف Excel. حاول مرة أخرى.");
+    } finally {
+      setExportingExcel(false);
+    }
+  }, [exportingExcel]);
+
+  if (!currentUser) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
   return (
     <>
       <div className="app" onPointerMove={handlePointerMove}>
@@ -403,6 +430,7 @@ export default function App() {
                 {activeTab === "cars" && (
                   <CarsTab
                     cars={cars}
+                    partners={partners}
                     onRefresh={refreshData}
                     carFormTrigger={carFormTrigger}
                     onClearCarFormTrigger={() => setCarFormTrigger(null)}
@@ -410,11 +438,19 @@ export default function App() {
                     onSearchClose={() => setCarsSearchOpen(false)}
                     onAddCarChange={setAddCarAction}
                     onCarFormActionsChange={setCarFormActions}
-                    onFormDirtyChange={setCarFormDirty}
-                    requestCloseRef={carFormRequestCloseRef}
+                    onFormDirtyChange={(dirty) => { dirtyRef.current = dirty; }}
+                    requestCloseRef={tabCloseRequestRef}
                   />
                 )}
-                {activeTab === "partners" && <PartnersTab partners={partners} onRefresh={refreshData} kind="شريك" />}
+                {activeTab === "partners" && (
+                  <PartnersTab
+                    partners={partners}
+                    onRefresh={refreshData}
+                    kind="شريك"
+                    requestCloseRef={tabCloseRequestRef}
+                    onDirtyChange={handleDirtyChange}
+                  />
+                )}
                 {activeTab === "partners-financial" && (
                   <PartnersTab
                     partners={partners}
@@ -426,10 +462,26 @@ export default function App() {
                     onAddAccountChange={setAddAccountAction}
                     pendingPartnerOpen={pendingPartnerOpen}
                     onPendingPartnerOpened={() => setPendingPartnerOpen(null)}
+                    requestCloseRef={tabCloseRequestRef}
+                    onDirtyChange={handleDirtyChange}
                   />
                 )}
-                {activeTab === "debtors" && <PartnersTab partners={partners} onRefresh={refreshData} kind="مطلوب" />}
-                {activeTab === "expenses" && <ExpensesTab onAddExpenseChange={setAddExpenseAction} />}
+                {activeTab === "debtors" && (
+                  <PartnersTab
+                    partners={partners}
+                    onRefresh={refreshData}
+                    kind="مطلوب"
+                    requestCloseRef={tabCloseRequestRef}
+                    onDirtyChange={handleDirtyChange}
+                  />
+                )}
+                {activeTab === "expenses" && (
+                  <ExpensesTab
+                    onAddExpenseChange={setAddExpenseAction}
+                    requestCloseRef={tabCloseRequestRef}
+                    onDirtyChange={handleDirtyChange}
+                  />
+                )}
                 {activeTab === "financial-accounts" && <FinancialAccountsTab />}
                 {activeTab === "agencies" && (
                   <AgenciesTab
@@ -437,11 +489,16 @@ export default function App() {
                     agenciesSearchOpen={agenciesSearchOpen}
                     onAgenciesSearchClose={() => setAgenciesSearchOpen(false)}
                     onAddAgencyChange={setAddAgencyAction}
+                    requestCloseRef={tabCloseRequestRef}
+                    onDirtyChange={handleDirtyChange}
                   />
                 )}
                 {activeTab === "financial-transactions" && <FinancialTransactionsTab />}
                 {activeTab === "profit-distribution" && (
                   <ProfitDistributionTab onRefreshAllData={refreshData} onDistributeChange={setAddDistributeAction} />
+                )}
+                {activeTab === "users" && (
+                  <UsersTab onLogout={handleLogout} />
                 )}
               </div>
             </main>
@@ -450,7 +507,21 @@ export default function App() {
 
         <footer className="app-footer">
           <div className="footer-dev">
+            <button
+              type="button"
+              className="footer-export-btn"
+              onClick={handleExportExcel}
+              disabled={exportingExcel}
+              title="تصدير قاعدة البيانات كاملة إلى ملف Excel"
+            >
+              {exportingExcel ? "جاري التصدير..." : "تصدير اكسل"}
+            </button>
             <span className="footer-dev__label">شركة فجر الوادي | امير الزجراوي - منتصر الحيدري</span>
+            {exportMessage && (
+              <span className="footer-export-status" role="status">
+                {exportMessage}
+              </span>
+            )}
           </div>
 
           {/* 
