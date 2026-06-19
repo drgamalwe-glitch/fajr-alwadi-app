@@ -10,6 +10,7 @@ import {
   SelectMenuTrigger,
   SelectMenuValue,
   ActionButton,
+  GoldFxButton,
 } from "@/components/ui";
 
 import { todayIsoDate } from "../utils/dateSegments";
@@ -39,7 +40,8 @@ interface DashboardProps {
   partners: Partner[];
   onRefresh: () => Promise<void>;
   onOpenCarForm: (mode: "new" | "edit", car?: Car) => void;
-  onNavigateToPartner?: (partnerName: string) => void;
+  onNavigateToPartner?: (target: string | { name: string; kind?: string | null; action?: "deposit" | "withdraw" | "settle_installment"; transactionId?: number | null }) => void;
+  onNavigateToTab?: (tab: any, subTab?: string) => void;
 }
 
 interface InstallmentAlert {
@@ -54,17 +56,16 @@ interface InstallmentAlert {
   notes: string;
   carInfo?: string;
   partnerKind?: string;
+  alertKind?: "installment" | "account_positive";
 }
 
 // ── مكون صف قسط ─────────────────────────────────────
 function InstallmentRow({
   alert,
   onPay,
-  onViewAccount,
 }: {
   alert: InstallmentAlert;
   onPay: (a: InstallmentAlert) => void;
-  onViewAccount?: (name: string) => void;
 }) {
   const isOverdue = alert.status === "overdue";
   const isToday = alert.status === "due_today";
@@ -74,7 +75,10 @@ function InstallmentRow({
   const bgColor = isOverdue ? "rgba(77,0,10,0.1)" : isToday ? "rgba(215,168,0,0.06)" : "rgba(122,122,122,0.05)";
 
   const currencyName = alert.currency === "USD" ? "دولار أمريكي" : "دينار عراقي";
-  const waText = `السيد ${alert.buyerName} المحترم،\nنود تذكيركم بأن قسط السيارة المستحق بتاريخ ${alert.dueDate} والبالغ (${alert.amount.toLocaleString("en-US")}) ${currencyName} قد حان موعد سداده.\nنرجو التفضل بتسديد القسط في أقرب وقت ممكن.\nشاكرين لكم حسن تعاونكم، ونتطلع دائماً لخدمتكم.\nمع التقدير والاحترام،\nفجر الوادي لتجارة السيارات`;
+  const isAccountAlert = alert.alertKind === "account_positive";
+  const waText = isAccountAlert
+    ? `السيد ${alert.buyerName} المحترم،\nنود تذكيركم بوجود مستحقات على الحساب بمبلغ (${alert.amount.toLocaleString("en-US")}) ${currencyName}.\nنرجو التفضل بالمراجعة والتسديد.\nمع التقدير والاحترام،\nفجر الوادي لتجارة السيارات`
+    : `السيد ${alert.buyerName} المحترم،\nنود تذكيركم بأن قسط السيارة المستحق بتاريخ ${alert.dueDate} والبالغ (${alert.amount.toLocaleString("en-US")}) ${currencyName} قد حان موعد سداده.\nنرجو التفضل بتسديد القسط في أقرب وقت ممكن.\nشاكرين لكم حسن تعاونكم، ونتطلع دائماً لخدمتكم.\nمع التقدير والاحترام،\nفجر الوادي لتجارة السيارات`;
   const cleanPhone = alert.phone.replace(/\D/g, "").replace(/^0+/, "");
   const waLink = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(waText)}`;
 
@@ -112,7 +116,7 @@ function InstallmentRow({
         <div style={{ fontSize: "var(--fs-sm)", color: "var(--bg2)", display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
           <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", color: "var(--white)" }}>
             <Calendar size={12} />
-            {alert.dueDate}
+            {isAccountAlert ? "نطلب من الحساب" : alert.dueDate}
           </span>
           {isOverdue && (
             <span style={{ color: "#e05070", fontWeight: "var(--fw-medium)" }}>
@@ -140,7 +144,7 @@ function InstallmentRow({
       <div style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
         <button
           type="button"
-          onClick={() => onViewAccount ? onViewAccount(alert.buyerName) : onPay(alert)}
+          onClick={() => onPay(alert)}
           style={{
             padding: "0.35rem 0.75rem",
             background: "linear-gradient(135deg, rgba(215,168,0,0.9), rgba(180,130,0,0.95))",
@@ -156,7 +160,7 @@ function InstallmentRow({
           onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.85")}
           onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
         >
-          تم التسديد ✓
+          {isAccountAlert ? "تسديد" : "تسديد"}
         </button>
         {alert.phone && (
           <button
@@ -199,15 +203,12 @@ function InstallmentRow({
 function CreditorRow({
   creditor,
   onPay,
-  onViewAccount,
 }: {
   creditor: UnifiedAccount;
-  onPay: (name: string) => void;
-  onViewAccount?: (name: string) => void;
+  onPay: (target: UnifiedAccount) => void;
 }) {
-  const isFinancier = creditor.kind === "ممول" || creditor.kind === "شركة";
-  const showUsd = isFinancier ? creditor.usd_balance > 0 : creditor.usd_balance < 0;
-  const showIqd = isFinancier ? creditor.iqd_balance > 0 : creditor.iqd_balance < 0;
+  const showUsd = creditor.usd_balance < 0;
+  const showIqd = creditor.iqd_balance < 0;
 
   const cleanPhone = (creditor.phone || "").replace(/\D/g, "").replace(/^0+/, "");
   const waLink = `https://wa.me/${cleanPhone}`;
@@ -251,7 +252,7 @@ function CreditorRow({
       <div style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
         <button
           type="button"
-          onClick={() => onViewAccount ? onViewAccount(creditor.partner_name) : onPay(creditor.partner_name)}
+          onClick={() => onPay(creditor)}
           style={{
             padding: "0.35rem 0.75rem",
             background: "linear-gradient(135deg, rgba(215,168,0,0.9), rgba(180,130,0,0.95))",
@@ -310,7 +311,7 @@ function CreditorRow({
 // ════════════════════════════════════════════════════════
 // ── المكون الرئيسي: لوحة التحكم ─────────────────────
 // ════════════════════════════════════════════════════════
-export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigateToPartner }: DashboardProps) {
+export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigateToPartner, onNavigateToTab }: DashboardProps) {
 
   const [activeSubTab, setActiveSubTab] = useState<"dashboard" | "company-status">("dashboard");
   const [summary, setSummary] = useState<FinancialSummary | null>(null);
@@ -428,14 +429,52 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
     });
   }, [partners, cars]);
 
-  const creditors = unifiedAccounts.filter((a) => {
-    if (a.iqd_balance < 0 || a.usd_balance < 0) return true;
-    if ((a.kind === "ممول" || a.kind === "شركة") && (a.iqd_balance > 0 || a.usd_balance > 0)) return true;
-    return false;
+  const accountKindsForDashboard = new Set(["مستثمر", "ممول", "شركة"]);
+  const creditorKinds = new Set(["مستثمر", "ممول", "شركة"]);
+
+  const accountReceivableAlerts: InstallmentAlert[] = unifiedAccounts.flatMap((account, index) => {
+    if (!accountKindsForDashboard.has(account.kind)) return [];
+    const alerts: InstallmentAlert[] = [];
+    if (account.iqd_balance > 0) {
+      alerts.push({
+        id: -100000 - index * 2,
+        buyerName: account.partner_name,
+        phone: account.phone || "",
+        dueDate: todayIsoDate(),
+        amount: account.iqd_balance,
+        currency: "IQD",
+        status: "due_today",
+        daysDifference: 0,
+        notes: `نطلب من حساب ${account.kind}`,
+        partnerKind: account.kind,
+        alertKind: "account_positive",
+      });
+    }
+    if (account.usd_balance > 0) {
+      alerts.push({
+        id: -100001 - index * 2,
+        buyerName: account.partner_name,
+        phone: account.phone || "",
+        dueDate: todayIsoDate(),
+        amount: account.usd_balance,
+        currency: "USD",
+        status: "due_today",
+        daysDifference: 0,
+        notes: `نطلب من حساب ${account.kind}`,
+        partnerKind: account.kind,
+        alertKind: "account_positive",
+      });
+    }
+    return alerts;
   });
+
+  const creditors = unifiedAccounts.filter((a) =>
+    creditorKinds.has(a.kind) && (a.iqd_balance < 0 || a.usd_balance < 0)
+  );
   const filteredInstallments = installments.filter(
     (a) => a.status === "overdue" || a.status === "due_today"
   );
+  const dashboardInstallments = [...filteredInstallments, ...accountReceivableAlerts];
 
   // ── نوافذ الإجراءات السريعة ──
   const [showQuickSale, setShowQuickSale] = useState(false);
@@ -486,6 +525,20 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
   const [payMethod, setPayMethod] = useState<"قاصه" | "خارج القاصة" | "ماستر">("قاصه");
 
   const handleOpenPayInstallment = (alert: InstallmentAlert) => {
+    if (onNavigateToPartner) {
+      const action = alert.alertKind === "account_positive"
+        ? "deposit"
+        : alert.partnerKind === "مقترض"
+          ? "settle_installment"
+          : "deposit";
+      onNavigateToPartner({
+        name: alert.buyerName,
+        kind: alert.partnerKind,
+        action,
+        transactionId: alert.alertKind === "account_positive" ? null : alert.id,
+      });
+      return;
+    }
     setSelectedInstallment(alert);
     setPayAmount(String(alert.amount));
     setShowPayInstallmentModal(true);
@@ -555,14 +608,26 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
   // ── تسديد الممولين ──
   const [showPayCreditorModal, setShowPayCreditorModal] = useState(false);
   const [selectedCreditor, setSelectedCreditor] = useState("");
+  const [selectedCreditorKind, setSelectedCreditorKind] = useState("");
   const [creditorAmount, setCreditorAmount] = useState("");
   const [creditorCurrency, setCreditorCurrency] = useState<"IQD" | "USD">("USD");
   const [courierName, setCourierName] = useState("");
   const [creditorCommission, setCreditorCommission] = useState("");
   const [commissionCurrency, setCommissionCurrency] = useState<"IQD" | "USD">("USD");
 
-  const handleOpenPayCreditor = (name?: string) => {
-    if (name) setSelectedCreditor(name);
+  const handleOpenPayCreditor = (account?: UnifiedAccount) => {
+    if (account && onNavigateToPartner) {
+      onNavigateToPartner({
+        name: account.partner_name,
+        kind: account.kind,
+        action: "withdraw",
+      });
+      return;
+    }
+    if (account) {
+      setSelectedCreditor(account.partner_name);
+      setSelectedCreditorKind(account.kind);
+    }
     setShowPayCreditorModal(true);
   };
 
@@ -578,10 +643,12 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
 
       // العثور على الحساب الفعلي للممول المختار في النظام لمعرفة نوع حسابه الحقيقي بدقة (ممول أو مطلوب)
       const matchingPartner = partners.find(
-        (p) => p.partner_name.trim() === cleanCreditorName && (p.kind === "ممول" || p.kind === "مطلوب")
+        (p) => p.partner_name.trim() === cleanCreditorName && (!selectedCreditorKind || p.kind === selectedCreditorKind)
       );
-      const matchingAccount = unifiedAccounts.find((a) => a.partner_name.trim() === cleanCreditorName);
-      const partnerKind = matchingPartner?.kind || matchingAccount?.kind || "ممول";
+      const matchingAccount = unifiedAccounts.find(
+        (a) => a.partner_name.trim() === cleanCreditorName && (!selectedCreditorKind || a.kind === selectedCreditorKind)
+      );
+      const partnerKind = selectedCreditorKind || matchingPartner?.kind || matchingAccount?.kind || "ممول";
 
       // استدعاء السيرفر بالبيانات المظهرة النظيفة تماماً
       await callTauri("pay_financier_from_partners", {
@@ -598,6 +665,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
 
       setShowPayCreditorModal(false);
       setSelectedCreditor("");
+      setSelectedCreditorKind("");
       setCreditorAmount("");
       setCourierName("");
       setCreditorCommission("");
@@ -662,361 +730,390 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
       </div>
 
       {activeSubTab === "company-status" ? (
-        <CompanyStatusTab summary={summary} unifiedAccounts={unifiedAccounts} partners={partners} />
+        <CompanyStatusTab summary={summary} unifiedAccounts={unifiedAccounts} partners={partners} onNavigateToTab={onNavigateToTab} />
       ) : (
         <>
           {/* ═══════════════════════════════════════════════════
               بطاقات الملخص المالي
           ═══════════════════════════════════════════════════ */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "1rem", marginBottom: "1.25rem", marginTop: "1.5rem" }}>
-        <QasaCard cashIqd={summary?.cash_iqd || 0} cashUsd={summary?.cash_usd || 0} />
-        <InventoryCard valueIqd={summary?.inventory_value_iqd || 0} valueUsd={summary?.inventory_value_usd || 0} availableCarsCount={cars.filter((c) => c.status === "متوفرة").length} />
-        <CapitalCard capitalIqd={summary?.cash_iqd || 0} capitalUsd={summary?.cash_usd || 0} />
-        <ProfitCard profitIqd={summary?.monthly_profits_iqd || 0} profitUsd={summary?.monthly_profits_usd || 0} monthName={monthName} />
-      </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "1rem", marginBottom: "1.25rem", marginTop: "1.5rem" }}>
+            <QasaCard cashIqd={summary?.cash_iqd || 0} cashUsd={summary?.cash_usd || 0} />
+            <InventoryCard valueIqd={summary?.inventory_value_iqd || 0} valueUsd={summary?.inventory_value_usd || 0} availableCarsCount={cars.filter((c) => c.status === "متوفرة").length} />
+            <CapitalCard capitalIqd={(summary?.cash_iqd || 0) - (summary?.total_investments_iqd || 0)} capitalUsd={(summary?.cash_usd || 0) - (summary?.total_investments_usd || 0)} />
+            <ProfitCard profitIqd={summary?.monthly_profits_iqd || 0} profitUsd={summary?.monthly_profits_usd || 0} monthName={monthName} />
+          </div>
 
-      {/* ═══════════════════════════════════════════════════
+          {/* ═══════════════════════════════════════════════════
           القسم السفلي: الأقساط + الديون
       ═══════════════════════════════════════════════════ */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.25rem", flex: 1, minHeight: 0 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.25rem", flex: 1, minHeight: 0 }}>
 
-        {/* ── الأقساط المستحقة ── */}
-        <div
-          className="dashboard-panel dashboard-panel--install"
-          style={{ display: "flex", flexDirection: "column", gap: "0.85rem", minHeight: 0 }}
-        >
-          <div className="dashboard-panel__header">
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <span style={{ fontWeight: "var(--fw-bold)", fontSize: "var(--fs-base)", color: "var(--labletext)" }}>
-                الأقساط والمستحقات
-              </span>
-              {filteredInstallments.length > 0 && (
-                <span
-                  style={{
-                    background: "rgba(251,146,60,0.15)",
-                    border: "1px solid rgba(251,146,60,0.35)",
-                    color: "var(--dc-install-accent)",
-                    fontSize: "var(--fs-xs)",
-                    fontWeight: "var(--fw-extrabold)",
-                    padding: "0.1rem 0.45rem",
-                    borderRadius: "20px",
-                    animation: "dc-pulse 2s infinite",
-                  }}
-                >
-                  {filteredInstallments.length}
+            {/* ── الأقساط المستحقة ── */}
+            <div
+              className="dashboard-panel dashboard-panel--install"
+              style={{ display: "flex", flexDirection: "column", gap: "0.85rem", minHeight: 0 }}
+            >
+              <div className="dashboard-panel__header">
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span style={{ fontWeight: "var(--fw-bold)", fontSize: "var(--fs-base)", color: "var(--labletext)" }}>
+                    نطلب
+                  </span>
+                  {dashboardInstallments.length > 0 && (
+                    <span
+                      style={{
+                        background: "rgba(52,211,153,0.12)",
+                        border: "1px solid rgba(52,211,153,0.3)",
+                        color: "var(--dc-install-accent)",
+                        fontSize: "var(--fs-xs)",
+                        fontWeight: "var(--fw-extrabold)",
+                        padding: "0.1rem 0.45rem",
+                        borderRadius: "20px",
+                        animation: "dc-pulse 2s infinite",
+                      }}
+                    >
+                      {dashboardInstallments.length}
+                    </span>
+                  )}
+                </div>
+                <span style={{ fontSize: "var(--fs-xs)", color: "var(--bg2)" }}>
+                  {dashboardInstallments.length} إجمالي
                 </span>
-              )}
+              </div>
+
+              <div
+                className="dashboard-scroll-list"
+                style={{ display: "flex", flexDirection: "column", gap: "0.55rem", flex: 1, overflowY: "auto", minHeight: 0 }}
+              >
+                {loadingPanels ? (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, textAlign: "center" }}>
+                    <div className="spinner" style={{ width: 24, height: 24, marginBottom: "0.5rem" }} />
+                    <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-xs)", opacity: 0.6 }}>جاري التحميل...</div>
+                  </div>
+                ) : dashboardInstallments.length > 0 ? (
+                  dashboardInstallments.map((alert) => (
+                    <InstallmentRow key={`${alert.alertKind || "installment"}_${alert.id}`} alert={alert} onPay={handleOpenPayInstallment} />
+                  ))
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, textAlign: "center", marginTop: "-2rem" }}>
+                    <CheckCircle2 size={36} style={{ color: "var(--dc-install-accent)", margin: "0 auto 0.5rem auto", opacity: 0.6 }} />
+                    <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-sm)" }}>لا توجد مبالغ نطلبها حالياً</div>
+                  </div>
+                )}
+              </div>
             </div>
-            <span style={{ fontSize: "var(--fs-xs)", color: "var(--bg2)" }}>
-              {installments.length} إجمالي
-            </span>
-          </div>
 
-          <div
-            className="dashboard-scroll-list"
-            style={{ display: "flex", flexDirection: "column", gap: "0.55rem", flex: 1, overflowY: "auto", minHeight: 0 }}
-          >
-            {loadingPanels ? (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, textAlign: "center" }}>
-                <div className="spinner" style={{ width: 24, height: 24, marginBottom: "0.5rem" }} />
-                <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-xs)", opacity: 0.6 }}>جاري التحميل...</div>
+            {/* ── الجهات الممولة ── */}
+            <div
+              className="dashboard-panel dashboard-panel--fund"
+              style={{ display: "flex", flexDirection: "column", gap: "0.85rem", minHeight: 0 }}
+            >
+              <div className="dashboard-panel__header">
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span style={{ fontWeight: "var(--fw-bold)", fontSize: "var(--fs-base)", color: "var(--labletext)" }}>
+                    مطلوبين
+                  </span>
+                  {creditors.length > 0 && (
+                    <span
+                      style={{
+                        background: "rgba(239,68,68,0.12)",
+                        border: "1px solid rgba(239,68,68,0.3)",
+                        color: "var(--dc-fund-accent)",
+                        fontSize: "var(--fs-xs)",
+                        fontWeight: "var(--fw-extrabold)",
+                        padding: "0.1rem 0.45rem",
+                        borderRadius: "20px",
+                      }}
+                    >
+                      {creditors.length}
+                    </span>
+                  )}
+                </div>
               </div>
-            ) : filteredInstallments.length > 0 ? (
-              filteredInstallments.map((alert) => (
-                <InstallmentRow key={alert.id} alert={alert} onPay={handleOpenPayInstallment} onViewAccount={onNavigateToPartner} />
-              ))
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, textAlign: "center", marginTop: "-2rem" }}>
-                <CheckCircle2 size={36} style={{ color: "var(--dc-install-accent)", margin: "0 auto 0.5rem auto", opacity: 0.6 }} />
-                <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-sm)" }}>لا توجد أقساط متأخرة أو مستحقة</div>
-              </div>
-            )}
-          </div>
-        </div>
 
-        {/* ── الجهات الممولة ── */}
-        <div
-          className="dashboard-panel dashboard-panel--fund"
-          style={{ display: "flex", flexDirection: "column", gap: "0.85rem", minHeight: 0 }}
-        >
-          <div className="dashboard-panel__header">
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <span style={{ fontWeight: "var(--fw-bold)", fontSize: "var(--fs-base)", color: "var(--labletext)" }}>
-                الجهات الممولة (الدائنون)
-              </span>
-              {creditors.length > 0 && (
-                <span
-                  style={{
-                    background: "rgba(52,211,153,0.12)",
-                    border: "1px solid rgba(52,211,153,0.3)",
-                    color: "var(--dc-fund-accent)",
-                    fontSize: "var(--fs-xs)",
-                    fontWeight: "var(--fw-extrabold)",
-                    padding: "0.1rem 0.45rem",
-                    borderRadius: "20px",
-                  }}
-                >
-                  {creditors.length}
-                </span>
-              )}
+              <div
+                className="dashboard-scroll-list"
+                style={{ display: "flex", flexDirection: "column", gap: "0.55rem", flex: 1, overflowY: "auto", minHeight: 0 }}
+              >
+                {loadingPanels ? (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, textAlign: "center" }}>
+                    <div className="spinner" style={{ width: 24, height: 24, marginBottom: "0.5rem" }} />
+                    <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-xs)", opacity: 0.6 }}>جاري التحميل...</div>
+                  </div>
+                ) : creditors.length > 0 ? (
+                  creditors.map((c) => (
+                    <CreditorRow key={`${c.partner_name}_${c.kind}`} creditor={c} onPay={handleOpenPayCreditor} />
+                  ))
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, textAlign: "center", marginTop: "-2rem" }}>
+                    <PartyPopper size={36} style={{ color: "var(--dc-fund-accent)", margin: "0 auto 0.5rem auto", opacity: 0.6 }} />
+                    <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-sm)" }}>لا توجد مبالغ مطلوبين بها حالياً</div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
-          <div
-            className="dashboard-scroll-list"
-            style={{ display: "flex", flexDirection: "column", gap: "0.55rem", flex: 1, overflowY: "auto", minHeight: 0 }}
-          >
-            {loadingPanels ? (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, textAlign: "center" }}>
-                <div className="spinner" style={{ width: 24, height: 24, marginBottom: "0.5rem" }} />
-                <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-xs)", opacity: 0.6 }}>جاري التحميل...</div>
-              </div>
-            ) : creditors.length > 0 ? (
-              creditors.map((c) => (
-                <CreditorRow key={`${c.partner_name}_${c.kind}`} creditor={c} onPay={handleOpenPayCreditor} onViewAccount={onNavigateToPartner} />
-              ))
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, textAlign: "center", marginTop: "-2rem" }}>
-                <PartyPopper size={36} style={{ color: "var(--dc-fund-accent)", margin: "0 auto 0.5rem auto", opacity: 0.6 }} />
-                <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-sm)" }}>لا توجد مديونيات للممولين حالياً</div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ════════════════════════════════════════════════════
+          {/* ════════════════════════════════════════════════════
           نافذة اختيار سيارة للبيع
       ════════════════════════════════════════════════════ */}
-      {showQuickSale && (
-        <div className="modal-overlay" style={{ zIndex: 1000 }} onClick={() => setShowQuickSale(false)}>
-          <div className="modal-dialog modal-dialog--has-header" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "500px" }}>
-            <div className="modal-dialog__header">
-              <h2 className="modal-dialog__header-title">🚗 بيع سيارة متوفرة</h2>
-              <button type="button" className="modal-dialog__close" onClick={() => setShowQuickSale(false)}>×</button>
-            </div>
-            <div className="modal-dialog__body modal-dialog__body--scroll">
-              <div style={{ marginBottom: "0.5rem", fontSize: "var(--fs-sm)", color: "rgba(255,255,255,0.5)" }}>
-                اختر السيارة المراد بيعها:
+          {showQuickSale && (
+            <div className="modal-overlay" style={{ zIndex: 1000 }} onClick={() => setShowQuickSale(false)}>
+              <div className="modal-dialog modal-dialog--has-header" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "500px" }}>
+                <div className="modal-dialog__header">
+                  <h2 className="modal-dialog__header-title">🚗 بيع سيارة متوفرة</h2>
+                  <button type="button" className="modal-dialog__close" onClick={() => setShowQuickSale(false)}>×</button>
+                </div>
+                <div className="modal-dialog__body modal-dialog__body--scroll">
+                  <div style={{ marginBottom: "0.5rem", fontSize: "var(--fs-sm)", color: "rgba(255,255,255,0.5)" }}>
+                    اختر السيارة المراد بيعها:
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    {cars.filter((c) => c.status === "متوفرة").length === 0 ? (
+                      <div style={{ textAlign: "center", padding: "2rem", color: "var(--bg2)" }}>لا توجد سيارات متوفرة للبيع</div>
+                    ) : (
+                      cars.filter((c) => c.status === "متوفرة").map((c) => (
+                        <button
+                          key={c.car_number}
+                          type="button"
+                          className="modal-select-item"
+                          onClick={() => { setShowQuickSale(false); onOpenCarForm("edit", c); }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: "var(--fs-base)", color: "#fff" }}>{c.car_name} {c.car_model}</div>
+                            <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.4)", marginTop: "0.1rem" }}>
+                              رقم اللوحة: {c.car_number} · سنة {c.car_year}
+                            </div>
+                          </div>
+                          <div style={{ textAlign: "left", flexShrink: 0 }}>
+                            <div style={{ fontSize: "var(--fs-sm)", color: "#d4af37", fontWeight: 700 }}>
+                              {(c.purchase_price || 0).toLocaleString("en-US")} {c.currency === "USD" ? "USD" : "IQ"}
+                            </div>
+                            <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.35)" }}>سعر الشراء</div>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                {cars.filter((c) => c.status === "متوفرة").length === 0 ? (
-                  <div style={{ textAlign: "center", padding: "2rem", color: "var(--bg2)" }}>لا توجد سيارات متوفرة للبيع</div>
-                ) : (
-                  cars.filter((c) => c.status === "متوفرة").map((c) => (
-                    <button
-                      key={c.car_number}
-                      type="button"
-                      className="modal-select-item"
-                      onClick={() => { setShowQuickSale(false); onOpenCarForm("edit", c); }}
-                    >
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: "var(--fs-base)", color: "#fff" }}>{c.car_name} {c.car_model}</div>
-                        <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.4)", marginTop: "0.1rem" }}>
-                          رقم اللوحة: {c.car_number} · سنة {c.car_year}
-                        </div>
-                      </div>
-                      <div style={{ textAlign: "left", flexShrink: 0 }}>
-                        <div style={{ fontSize: "var(--fs-sm)", color: "#d4af37", fontWeight: 700 }}>
-                          {(c.purchase_price || 0).toLocaleString("en-US")} {c.currency === "USD" ? "USD" : "IQ"}
-                        </div>
-                        <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.35)" }}>سعر الشراء</div>
-                      </div>
-                    </button>
-                  ))
-                )}
-              </div>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* ════════════════════════════════════════════════════
+          {/* ════════════════════════════════════════════════════
           نافذة تسجيل مصروف
       ════════════════════════════════════════════════════ */}
-      {showQuickExpense && (
-        <div className="modal-overlay" style={{ zIndex: 1000 }} onClick={() => setShowQuickExpense(false)}>
-          <div className="modal-dialog modal-dialog--has-header" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "460px" }}>
-            <div className="modal-dialog__header">
-              <h2 className="modal-dialog__header-title">💸 تسجيل مصروف جديد</h2>
-              <button type="button" className="modal-dialog__close" onClick={() => setShowQuickExpense(false)}>×</button>
-            </div>
-            <form className="modal-dialog__body" onSubmit={handleExpenseSubmit}>
-              <div className="form-group">
-                <label className="label">بيان المصروف *</label>
-                <TextInput value={expenseDesc} onChange={(e) => setExpenseDesc(e.target.value)} placeholder="وصف المصروف..." required />
-              </div>
-              <div className="form-group">
-                <label className="label">المبلغ والعملة *</label>
-                <PriceInput value={expenseAmt} onChange={setExpenseAmt} currency={expenseCurrency} onCurrencyChange={(cur) => setExpenseCurrency(cur as any)} />
-              </div>
-              <div className="form-group">
-                <label className="label">ربط بسيارة (اختياري)</label>
-                <SelectMenu value={expenseCar} onValueChange={(val) => setExpenseCar(val === " " ? "" : val)}>
-                  <SelectMenuTrigger className="input flex items-center justify-between text-right">
-                    <SelectMenuValue placeholder="-- بدون ربط --" />
-                  </SelectMenuTrigger>
-                  <SelectMenuContent className="z-[1100]">
-                    <SelectMenuItem value=" " className="text-right justify-end">-- بدون ربط --</SelectMenuItem>
-                    {cars.map((c) => (
-                      <SelectMenuItem key={c.car_number} value={c.car_number} className="text-right justify-end">
-                        {c.car_name} {c.car_model} ({c.car_number})
-                      </SelectMenuItem>
-                    ))}
-                  </SelectMenuContent>
-                </SelectMenu>
-              </div>
-              <div className="modal-dialog__actions">
-                <ActionButton type="button" variant="ghost" onClick={() => setShowQuickExpense(false)}>إلغاء</ActionButton>
-                <ActionButton type="submit" variant="danger" disabled={loadingAction || !expenseDesc.trim() || !Number(expenseAmt)}>
-                  {loadingAction ? "جاري التسجيل..." : "تسجيل المصروف"}
-                </ActionButton>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ════════════════════════════════════════════════════
-          نافذة تسديد قسط
-      ════════════════════════════════════════════════════ */}
-      {showPayInstallmentModal && selectedInstallment && (
-        <div className="modal-overlay" style={{ zIndex: 1001 }} onClick={() => setShowPayInstallmentModal(false)}>
-          <div className="modal-dialog modal-dialog--has-header" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "480px" }}>
-            <div className="modal-dialog__header">
-              <h2 className="modal-dialog__header-title">📅 تسديد قسط</h2>
-              <button type="button" className="modal-dialog__close" onClick={() => setShowPayInstallmentModal(false)}>×</button>
-            </div>
-            <div className="modal-dialog__body">
-              <form onSubmit={(e) => { e.preventDefault(); handlePayInstallment(); }}>
-              {/* معلومات القسط */}
-              <div className="modal-info-card" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-                <div>
-                  <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.45)" }}>العميل</div>
-                  <div style={{ fontWeight: 700, color: "#fff" }}>{selectedInstallment.buyerName}</div>
+          {showQuickExpense && (
+            <div className="modal-overlay" style={{ zIndex: 1000 }} onClick={() => setShowQuickExpense(false)}>
+              <div className="modal-dialog modal-dialog--has-header" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "460px" }}>
+                <div className="modal-dialog__header">
+                  <h2 className="modal-dialog__header-title">💸 تسجيل مصروف جديد</h2>
+                  <button type="button" className="modal-dialog__close" onClick={() => setShowQuickExpense(false)}>×</button>
                 </div>
-                <div>
-                  <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.45)" }}>تاريخ الاستحقاق</div>
-                  <div style={{ fontWeight: 600, color: "#d4af37" }}>{selectedInstallment.dueDate}</div>
-                </div>
-                <div style={{ gridColumn: "span 2" }}>
-                  <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.45)" }}>قيمة القسط المستحق</div>
-                  <div style={{ fontWeight: 800, fontSize: "var(--fs-lg)", color: "#d4af37" }}>
-                    {selectedInstallment.amount.toLocaleString("en-US")} {selectedInstallment.currency === "USD" ? "USD" : "IQ"}
+                <form className="modal-dialog__body" onSubmit={handleExpenseSubmit}>
+                  <div className="form-group">
+                    <label className="label">بيان المصروف *</label>
+                    <TextInput value={expenseDesc} onChange={(e) => setExpenseDesc(e.target.value)} placeholder="وصف المصروف..." required />
                   </div>
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="label">المبلغ المسدد</label>
-                <PriceInput value={payAmount} onChange={setPayAmount} currency={selectedInstallment.currency as "IQD" | "USD"} onCurrencyChange={() => { }} />
-                {Number(payAmount) > selectedInstallment.amount && (
-                  <div style={{ marginTop: "0.5rem", padding: "0.6rem 0.75rem", background: "rgba(212,175,55,0.07)", border: "1px solid rgba(212,175,55,0.2)", borderRadius: "8px", fontSize: "var(--fs-xs)", color: "#d4af37" }}>
-                    ✨ الفائض <strong>{(Number(payAmount) - selectedInstallment.amount).toLocaleString("en-US")} {selectedInstallment.currency === "USD" ? "USD" : "IQ"}</strong> سيتم توزيعه على الأقساط القادمة تلقائياً
+                  <div className="form-group">
+                    <label className="label">المبلغ والعملة *</label>
+                    <PriceInput value={expenseAmt} onChange={setExpenseAmt} currency={expenseCurrency} onCurrencyChange={(cur) => setExpenseCurrency(cur as any)} />
                   </div>
-                )}
-              </div>
-              <div className="form-group">
-                <label className="label">يدخل إلى</label>
-                <div className="payment-type-selector">
-                  {(["قاصه", "خارج القاصة", "ماستر"] as const).map((opt) => (
-                    <button key={opt} type="button" className={`payment-type-btn payment-type-btn--${opt === "قاصه" ? "qasa" : opt === "خارج القاصة" ? "external" : "master"} ${payMethod === opt ? "payment-type-btn--active" : ""}`} onClick={() => setPayMethod(opt)}>{opt}</button>
-                  ))}
-                </div>
-              </div>
-              <div className="modal-dialog__actions">
-                <ActionButton type="button" variant="ghost" onClick={() => setShowPayInstallmentModal(false)}>إلغاء</ActionButton>
-                <ActionButton type="submit" variant="primary" disabled={loadingAction || !Number(payAmount)}>
-                  {loadingAction ? "جاري التسديد..." : "تأكيد التسديد"}
-                </ActionButton>
-              </div>
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ════════════════════════════════════════════════════
-          نافذة تسديد الممول
-      ════════════════════════════════════════════════════ */}
-      {showPayCreditorModal && (
-        <div className="modal-overlay" style={{ zIndex: 1001 }} onClick={() => setShowPayCreditorModal(false)}>
-          <div className="modal-dialog modal-dialog--has-header" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "500px" }}>
-            <div className="modal-dialog__header">
-              <h2 className="modal-dialog__header-title">🏦 تسديد دفعة للجهة الممولة</h2>
-              <button type="button" className="modal-dialog__close" onClick={() => setShowPayCreditorModal(false)}>×</button>
-            </div>
-            <div className="modal-dialog__body modal-dialog__body--scroll">
-              <form onSubmit={(e) => { e.preventDefault(); handlePayCreditor(); }}>
-              <div className="form-group">
-                <label className="label">الجهة الممولة / الدائن *</label>
-                {creditors.length > 0 ? (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-                    {creditors.map((c) => (
-                      <button
-                        key={`${c.partner_name}_${c.kind}`}
-                        type="button"
-                        className={`modal-select-item ${selectedCreditor === c.partner_name ? "modal-select-item--active" : ""}`}
-                        onClick={() => setSelectedCreditor(c.partner_name)}
-                      >
-                        <div style={{ textAlign: "right" }}>
-                          <div style={{ fontWeight: 700, fontSize: "var(--fs-sm)", color: "#fff" }}>{c.partner_name}</div>
-                          {c.phone && <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.4)" }}>📞 {c.phone}</div>}
-                        </div>
-                        <div style={{ textAlign: "left", flexShrink: 0 }}>
-                          {c.usd_balance < 0 && <div style={{ fontWeight: 800, color: "#f87171", fontSize: "var(--fs-sm)" }}>{Math.abs(c.usd_balance).toLocaleString("en-US")} USD</div>}
-                          {c.iqd_balance < 0 && <div style={{ fontWeight: 600, color: "#fca5a5", fontSize: "var(--fs-sm)" }}>{Math.abs(c.iqd_balance).toLocaleString("en-US")} IQ</div>}
-                        </div>
-                      </button>
-                    ))}
-                    <SelectMenu value={selectedCreditor} onValueChange={(val) => setSelectedCreditor(val === " " ? "" : val)}>
-                      <SelectMenuTrigger className="input flex items-center justify-between text-right" style={{ marginTop: "0.25rem" }}>
-                        <SelectMenuValue placeholder="-- أو اختر من الكل --" />
+                  <div className="form-group">
+                    <label className="label">ربط بسيارة (اختياري)</label>
+                    <SelectMenu value={expenseCar} onValueChange={(val) => setExpenseCar(val === " " ? "" : val)}>
+                      <SelectMenuTrigger className="input flex items-center justify-between text-right">
+                        <SelectMenuValue placeholder="-- بدون ربط --" />
                       </SelectMenuTrigger>
                       <SelectMenuContent className="z-[1100]">
-                        <SelectMenuItem value=" " className="text-right justify-end">-- أو اختر من الكل --</SelectMenuItem>
-                        {partners.filter((p) => p.kind === "مطلوب" || p.kind === "ممول").map((p) => (
-                          <SelectMenuItem key={`${p.partner_name}_${p.kind}`} value={p.partner_name} className="text-right justify-end">{p.partner_name}</SelectMenuItem>
+                        <SelectMenuItem value=" " className="text-right justify-end">-- بدون ربط --</SelectMenuItem>
+                        {cars.map((c) => (
+                          <SelectMenuItem key={c.car_number} value={c.car_number} className="text-right justify-end">
+                            {c.car_name} {c.car_model} ({c.car_number})
+                          </SelectMenuItem>
                         ))}
                       </SelectMenuContent>
                     </SelectMenu>
                   </div>
-                ) : (
-                  <SelectMenu value={selectedCreditor} onValueChange={(val) => setSelectedCreditor(val === " " ? "" : val)}>
-                    <SelectMenuTrigger className="input flex items-center justify-between text-right">
-                      <SelectMenuValue placeholder="-- اختر الجهة الممولة --" />
-                    </SelectMenuTrigger>
-                    <SelectMenuContent className="z-[1100]">
-                      <SelectMenuItem value=" " className="text-right justify-end">-- اختر الجهة الممولة --</SelectMenuItem>
-                      {partners.filter((p) => p.kind === "مطلوب" || p.kind === "ممول").map((p) => (
-                        <SelectMenuItem key={`${p.partner_name}_${p.kind}`} value={p.partner_name} className="text-right justify-end">{p.partner_name}</SelectMenuItem>
-                      ))}
-                    </SelectMenuContent>
-                  </SelectMenu>
-                )}
+                  <div className="modal-dialog__actions">
+                    <ActionButton type="button" variant="ghost" onClick={() => setShowQuickExpense(false)}>إلغاء</ActionButton>
+                    <ActionButton type="submit" variant="danger" disabled={loadingAction || !expenseDesc.trim() || !Number(expenseAmt)}>
+                      {loadingAction ? "جاري التسجيل..." : "تسجيل المصروف"}
+                    </ActionButton>
+                  </div>
+                </form>
               </div>
-              <div className="form-group">
-                <label className="label">المبلغ المسدد *</label>
-                <PriceInput value={creditorAmount} onChange={setCreditorAmount} currency={creditorCurrency} onCurrencyChange={(cur) => setCreditorCurrency(cur as any)} />
-              </div>
-              <div className="form-group">
-                <label className="label">بيد شخص (الناقل) — اختياري</label>
-                <TextInput value={courierName} onChange={(e) => setCourierName(e.target.value)} placeholder="اسم الشخص الذي سيحمل المبلغ..." />
-              </div>
-              <div className="form-group">
-                <label className="label">عمولة التحويل — اختياري</label>
-                <PriceInput value={creditorCommission} onChange={setCreditorCommission} currency={commissionCurrency} onCurrencyChange={(cur) => setCommissionCurrency(cur as any)} />
-              </div>
-              <div className="modal-dialog__actions">
-                <ActionButton type="button" variant="ghost" onClick={() => setShowPayCreditorModal(false)}>إلغاء</ActionButton>
-                <ActionButton type="submit" variant="primary" disabled={loadingAction || !selectedCreditor || !Number(creditorAmount)}>
-                  {loadingAction ? "جاري التسديد..." : "تأكيد التسديد"}
-                </ActionButton>
-              </div>
-              </form>
             </div>
-          </div>
-        </div>
-      )}
+          )}
+
+          {/* ════════════════════════════════════════════════════
+          نافذة تسديد قسط
+      ════════════════════════════════════════════════════ */}
+          {showPayInstallmentModal && selectedInstallment && (
+            <div className="modal-overlay" style={{ zIndex: 1001 }} onClick={() => setShowPayInstallmentModal(false)}>
+              <div className="modal-dialog modal-dialog--has-header" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "480px" }}>
+                <div className="modal-dialog__header">
+                  <h2 className="modal-dialog__header-title">📅 تسديد قسط</h2>
+                  <button type="button" className="modal-dialog__close" onClick={() => setShowPayInstallmentModal(false)}>×</button>
+                </div>
+                <div className="modal-dialog__body">
+                  <form onSubmit={(e) => { e.preventDefault(); handlePayInstallment(); }}>
+                    {/* معلومات القسط */}
+                    <div className="modal-info-card" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+                      <div>
+                        <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.45)" }}>العميل</div>
+                        <div style={{ fontWeight: 700, color: "#fff" }}>{selectedInstallment.buyerName}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.45)" }}>تاريخ الاستحقاق</div>
+                        <div style={{ fontWeight: 600, color: "#d4af37" }}>{selectedInstallment.dueDate}</div>
+                      </div>
+                      <div style={{ gridColumn: "span 2" }}>
+                        <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.45)" }}>قيمة القسط المستحق</div>
+                        <div style={{ fontWeight: 800, fontSize: "var(--fs-lg)", color: "#d4af37" }}>
+                          {selectedInstallment.amount.toLocaleString("en-US")} {selectedInstallment.currency === "USD" ? "USD" : "IQ"}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label className="label">المبلغ المسدد</label>
+                      <PriceInput value={payAmount} onChange={setPayAmount} currency={selectedInstallment.currency as "IQD" | "USD"} onCurrencyChange={() => { }} />
+                      {Number(payAmount) > selectedInstallment.amount && (
+                        <div style={{ marginTop: "0.5rem", padding: "0.6rem 0.75rem", background: "rgba(212,175,55,0.07)", border: "1px solid rgba(212,175,55,0.2)", borderRadius: "8px", fontSize: "var(--fs-xs)", color: "#d4af37" }}>
+                          ✨ الفائض <strong>{(Number(payAmount) - selectedInstallment.amount).toLocaleString("en-US")} {selectedInstallment.currency === "USD" ? "USD" : "IQ"}</strong> سيتم توزيعه على الأقساط القادمة تلقائياً
+                        </div>
+                      )}
+                    </div>
+                    <div className="form-group">
+                      <label className="label">يدخل إلى</label>
+                      <div className="payment-type-selector">
+                        {(["قاصه", "خارج القاصة", "ماستر"] as const).map((opt) => (
+                          <button key={opt} type="button" className={`payment-type-btn payment-type-btn--${opt === "قاصه" ? "qasa" : opt === "خارج القاصة" ? "external" : "master"} ${payMethod === opt ? "payment-type-btn--active" : ""}`} onClick={() => setPayMethod(opt)}>{opt}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="modal-dialog__actions">
+                      <ActionButton type="button" variant="ghost" onClick={() => setShowPayInstallmentModal(false)}>إلغاء</ActionButton>
+                      <GoldFxButton type="submit" variant="red" style={{ flex: 1, margin: 0 }} disabled={loadingAction || !Number(payAmount)}>
+                        <span className="gold-fx-btn__icon">↑</span>
+                        <span className="gold-fx-btn__label">{loadingAction ? "جاري التسديد..." : "تسديد"}</span>
+                      </GoldFxButton>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════════════════
+          نافذة تسديد الممول
+      ════════════════════════════════════════════════════ */}
+          {showPayCreditorModal && (
+            <div className="modal-overlay" style={{ zIndex: 1001 }} onClick={() => setShowPayCreditorModal(false)}>
+              <div className="modal-dialog modal-dialog--has-header" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "500px" }}>
+                <div className="modal-dialog__header">
+                  <h2 className="modal-dialog__header-title">🏦 تسديد دفعة للجهة الممولة</h2>
+                  <button type="button" className="modal-dialog__close" onClick={() => setShowPayCreditorModal(false)}>×</button>
+                </div>
+                <div className="modal-dialog__body modal-dialog__body--scroll">
+                  <form onSubmit={(e) => { e.preventDefault(); handlePayCreditor(); }}>
+                    <div className="form-group">
+                      <label className="label">الجهة الممولة / الدائن *</label>
+                      {creditors.length > 0 ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                          {creditors.map((c) => (
+                            <button
+                              key={`${c.partner_name}_${c.kind}`}
+                              type="button"
+                              className={`modal-select-item ${selectedCreditor === c.partner_name && selectedCreditorKind === c.kind ? "modal-select-item--active" : ""}`}
+                              onClick={() => {
+                                setSelectedCreditor(c.partner_name);
+                                setSelectedCreditorKind(c.kind);
+                              }}
+                            >
+                              <div style={{ textAlign: "right" }}>
+                                <div style={{ fontWeight: 700, fontSize: "var(--fs-sm)", color: "#fff" }}>{c.partner_name}</div>
+                                {c.phone && <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.4)" }}>📞 {c.phone}</div>}
+                              </div>
+                              <div style={{ textAlign: "left", flexShrink: 0 }}>
+                                {c.usd_balance < 0 && <div style={{ fontWeight: 800, color: "#f87171", fontSize: "var(--fs-sm)" }}>{Math.abs(c.usd_balance).toLocaleString("en-US")} USD</div>}
+                                {c.iqd_balance < 0 && <div style={{ fontWeight: 600, color: "#fca5a5", fontSize: "var(--fs-sm)" }}>{Math.abs(c.iqd_balance).toLocaleString("en-US")} IQ</div>}
+                              </div>
+                            </button>
+                          ))}
+                          <SelectMenu
+                            value={selectedCreditorKind ? `${selectedCreditor}__${selectedCreditorKind}` : selectedCreditor}
+                            onValueChange={(val) => {
+                              if (val === " ") {
+                                setSelectedCreditor("");
+                                setSelectedCreditorKind("");
+                                return;
+                              }
+                              const [name, kind] = val.split("__");
+                              setSelectedCreditor(name || "");
+                              setSelectedCreditorKind(kind || "");
+                            }}
+                          >
+                            <SelectMenuTrigger className="input flex items-center justify-between text-right" style={{ marginTop: "0.25rem" }}>
+                              <SelectMenuValue placeholder="-- أو اختر من الكل --" />
+                            </SelectMenuTrigger>
+                            <SelectMenuContent className="z-[1100]">
+                              <SelectMenuItem value=" " className="text-right justify-end">-- أو اختر من الكل --</SelectMenuItem>
+                              {partners.filter((p) => p.kind === "ممول" || p.kind === "مستثمر" || p.kind === "شركة").map((p) => (
+                                <SelectMenuItem key={`${p.partner_name}_${p.kind}`} value={`${p.partner_name}__${p.kind}`} className="text-right justify-end">{p.partner_name} - {p.kind}</SelectMenuItem>
+                              ))}
+                            </SelectMenuContent>
+                          </SelectMenu>
+                        </div>
+                      ) : (
+                        <SelectMenu
+                          value={selectedCreditorKind ? `${selectedCreditor}__${selectedCreditorKind}` : selectedCreditor}
+                          onValueChange={(val) => {
+                            if (val === " ") {
+                              setSelectedCreditor("");
+                              setSelectedCreditorKind("");
+                              return;
+                            }
+                            const [name, kind] = val.split("__");
+                            setSelectedCreditor(name || "");
+                            setSelectedCreditorKind(kind || "");
+                          }}
+                        >
+                          <SelectMenuTrigger className="input flex items-center justify-between text-right">
+                            <SelectMenuValue placeholder="-- اختر الجهة الممولة --" />
+                          </SelectMenuTrigger>
+                          <SelectMenuContent className="z-[1100]">
+                            <SelectMenuItem value=" " className="text-right justify-end">-- اختر الجهة الممولة --</SelectMenuItem>
+                            {partners.filter((p) => p.kind === "ممول" || p.kind === "مستثمر" || p.kind === "شركة").map((p) => (
+                              <SelectMenuItem key={`${p.partner_name}_${p.kind}`} value={`${p.partner_name}__${p.kind}`} className="text-right justify-end">{p.partner_name} - {p.kind}</SelectMenuItem>
+                            ))}
+                          </SelectMenuContent>
+                        </SelectMenu>
+                      )}
+                    </div>
+                    <div className="form-group">
+                      <label className="label">المبلغ المسدد *</label>
+                      <PriceInput value={creditorAmount} onChange={setCreditorAmount} currency={creditorCurrency} onCurrencyChange={(cur) => setCreditorCurrency(cur as any)} />
+                    </div>
+                    <div className="form-group">
+                      <label className="label">بيد شخص (الناقل) — اختياري</label>
+                      <TextInput value={courierName} onChange={(e) => setCourierName(e.target.value)} placeholder="اسم الشخص الذي سيحمل المبلغ..." />
+                    </div>
+                    <div className="form-group">
+                      <label className="label">عمولة التحويل — اختياري</label>
+                      <PriceInput value={creditorCommission} onChange={setCreditorCommission} currency={commissionCurrency} onCurrencyChange={(cur) => setCommissionCurrency(cur as any)} />
+                    </div>
+                    <div className="modal-dialog__actions">
+                      <ActionButton type="button" variant="ghost" onClick={() => setShowPayCreditorModal(false)}>إلغاء</ActionButton>
+                      <GoldFxButton type="submit" variant="red" style={{ flex: 1, margin: 0 }} disabled={loadingAction || !selectedCreditor || !Number(creditorAmount)}>
+                        <span className="gold-fx-btn__icon">↑</span>
+                        <span className="gold-fx-btn__label">{loadingAction ? "جاري التسديد..." : "تسديد"}</span>
+                      </GoldFxButton>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

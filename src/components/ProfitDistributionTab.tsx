@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { callTauri } from "../api/tauri";
 import type { ProfitDistributionSummary, ProfitDistributionDetail } from "../types";
+import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
 import { PriceDisplay } from "./ui";
 
 interface ProfitDistributionTabProps {
@@ -8,17 +9,32 @@ interface ProfitDistributionTabProps {
   onDistributeChange?: (onDistribute: { action: () => void } | null) => void;
 }
 
+type ProfitDistributionPartnerRow = {
+  partnerName: string;
+  drawingsIQD: number;
+  drawingsUSD: number;
+  profitIQD: number;
+  profitUSD: number;
+};
+
+type ProfitDistributionGroup = {
+  key: string;
+  label: string;
+  sortKey: string;
+  partners: ProfitDistributionPartnerRow[];
+};
+
 export function ProfitDistributionTab({ onRefreshAllData, onDistributeChange }: ProfitDistributionTabProps) {
   const [summary, setSummary] = useState<ProfitDistributionSummary | null>(null);
   const [history, setHistory] = useState<ProfitDistributionDetail[]>([]);
+  const [activeProfitPage, setActiveProfitPage] = useState("current");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      await callTauri("sync_monthly_profit_distributions");
       const [sumData, histData] = await Promise.all([
         callTauri<ProfitDistributionSummary>("get_profit_distribution_summary"),
         callTauri<ProfitDistributionDetail[]>("get_profit_distributions"),
@@ -26,30 +42,64 @@ export function ProfitDistributionTab({ onRefreshAllData, onDistributeChange }: 
       setSummary(sumData);
       setHistory(histData);
       await onRefreshAllData();
+      return { summary: sumData, history: histData };
     } catch (err: any) {
       setError(err.toString() || "فشل تحميل بيانات توزيع الأرباح");
+      return null;
     } finally {
       setLoading(false);
     }
-  };
+  }, [onRefreshAllData]);
+
+  const handleResetProfits = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const newTabKey = await callTauri<string>("reset_profit_distribution_period");
+      await loadData();
+      setActiveProfitPage(newTabKey || "current");
+    } catch (err: any) {
+      setError(err.toString() || "فشل تصفير الأرباح");
+      setLoading(false);
+    }
+  }, [loadData]);
 
   useEffect(() => {
     void loadData();
-  }, []);
+  }, [loadData]);
 
   useEffect(() => {
-    onDistributeChange?.(null);
+    onDistributeChange?.({ action: handleResetProfits });
     return () => {
       onDistributeChange?.(null);
     };
-  }, [onDistributeChange]);
+  }, [onDistributeChange, handleResetProfits]);
 
   const undistributedUSD = summary?.undistributed_usd || 0;
   const undistributedIQD = summary?.undistributed_iqd || 0;
 
-  const monthlyGroups = useMemo(() => {
+  const currentGroup = useMemo<ProfitDistributionGroup>(() => {
+    const partners = summary?.partners || [];
+    const partnerCount = partners.length || 1;
+    return {
+      key: "current",
+      label: "الأرباح الحالية",
+      sortKey: "current",
+      partners: partners.map((partner) => ({
+        partnerName: partner.partner_name,
+        drawingsIQD: partner.drawings_iqd,
+        drawingsUSD: partner.drawings_usd,
+        profitIQD: undistributedIQD / partnerCount,
+        profitUSD: undistributedUSD / partnerCount,
+      })),
+    };
+  }, [summary, undistributedIQD, undistributedUSD]);
+
+  const monthlyGroups = useMemo<ProfitDistributionGroup[]>(() => {
     const groups = new Map<string, {
-      date: string;
+      key: string;
+      label: string;
+      sortKey: string;
       partners: Map<string, {
         partnerName: string;
         drawingsIQD: number;
@@ -61,11 +111,20 @@ export function ProfitDistributionTab({ onRefreshAllData, onDistributeChange }: 
 
     for (const record of history) {
       const date = record.distribution.date;
+      const time = record.distribution.time;
+      const notes = record.distribution.notes || "";
+      const isManualReset = notes.startsWith("manual-reset:");
+      const key = isManualReset ? notes : date;
+      const label = isManualReset ? `${date} ${time}` : date;
+      const sortKey = `${date} ${time} ${record.distribution.id}`;
       const currency = record.distribution.currency === "USD" ? "USD" : "IQD";
-      if (!groups.has(date)) {
-        groups.set(date, { date, partners: new Map() });
+      if (!groups.has(key)) {
+        groups.set(key, { key, label, sortKey, partners: new Map() });
       }
-      const group = groups.get(date)!;
+      const group = groups.get(key)!;
+      if (sortKey > group.sortKey) {
+        group.sortKey = sortKey;
+      }
 
       for (const share of record.shares) {
         if (!group.partners.has(share.partner_name)) {
@@ -89,12 +148,31 @@ export function ProfitDistributionTab({ onRefreshAllData, onDistributeChange }: 
     }
 
     return Array.from(groups.values())
-      .sort((a, b) => b.date.localeCompare(a.date))
+      .sort((a, b) => b.sortKey.localeCompare(a.sortKey))
       .map((group) => ({
-        date: group.date,
+        key: group.key,
+        label: group.label,
+        sortKey: group.sortKey,
         partners: Array.from(group.partners.values()).sort((a, b) => a.partnerName.localeCompare(b.partnerName, "ar")),
       }));
   }, [history]);
+
+  const profitPages = useMemo(() => [currentGroup, ...monthlyGroups], [currentGroup, monthlyGroups]);
+
+  useEffect(() => {
+    if (!profitPages.some((page) => page.key === activeProfitPage)) {
+      setActiveProfitPage("current");
+    }
+  }, [activeProfitPage, profitPages]);
+
+  const selectedGroup = profitPages.find((page) => page.key === activeProfitPage) || currentGroup;
+  const selectedPageIndex = Math.max(0, profitPages.findIndex((page) => page.key === selectedGroup.key));
+  const setProfitPageByIndex = useCallback((pageIndex: number) => {
+    const nextPage = profitPages[pageIndex];
+    if (nextPage) {
+      setActiveProfitPage(nextPage.key);
+    }
+  }, [profitPages]);
 
   if (loading && !summary) {
     return <div className="loading-state"><div className="spinner" />جاري تحميل الحسابات وتفاصيل الأرباح...</div>;
@@ -130,79 +208,96 @@ export function ProfitDistributionTab({ onRefreshAllData, onDistributeChange }: 
         {error && <div className="alert alert--error">{error}</div>}
 
         <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-          <div className="table-card-container">
+          {profitPages.length >= 1 && (
+            <div className="table-page-dots" aria-label="تنقل بين صفحات الأرباح">
+              {profitPages.map((page, idx) => (
+                <button
+                  key={page.key}
+                  type="button"
+                  className={`table-page-dot ${idx === selectedPageIndex ? "is-active" : ""}`}
+                  onClick={() => setActiveProfitPage(page.key)}
+                  aria-label={page.label}
+                />
+              ))}
+            </div>
+          )}
+
+          <div
+            className="table-card-container"
+            onWheel={(e) => handlePaginationWheel(e, selectedPageIndex, profitPages.length, setProfitPageByIndex)}
+            onKeyDown={(e) => handlePaginationKeyDown(e, selectedPageIndex, profitPages.length, setProfitPageByIndex)}
+            tabIndex={0}
+          >
             <div className="table-wrapper" style={{ overflowX: "auto" }}>
-              <table className="data-table">
+              <table className="data-table profit-distribution-table">
                 <thead>
                   <tr>
                     <th rowSpan={2} style={{ width: "50px" }}>ت</th>
                     <th rowSpan={2} style={{ width: "130px" }}>التاريخ</th>
                     <th rowSpan={2} style={{ width: "160px" }}>اسم الشريك</th>
-                    <th colSpan={2} style={{ width: "260px" }}>السحوبات</th>
-                    <th colSpan={2} style={{ width: "260px" }}>الأرباح</th>
-                    <th colSpan={2} style={{ width: "260px" }}>الصافي</th>
+                    <th className="profit-col--drawings" colSpan={2} style={{ width: "260px" }}>السحوبات</th>
+                    <th className="profit-col--profit" colSpan={2} style={{ width: "260px" }}>الأرباح</th>
+                    <th className="profit-col--net" colSpan={2} style={{ width: "260px" }}>الصافي</th>
                   </tr>
                   <tr>
-                    <th>IQD</th>
-                    <th>USD</th>
-                    <th>IQD</th>
-                    <th>USD</th>
-                    <th>IQD</th>
-                    <th>USD</th>
+                    <th className="profit-col--drawings">IQD</th>
+                    <th className="profit-col--drawings">USD</th>
+                    <th className="profit-col--profit">IQD</th>
+                    <th className="profit-col--profit">USD</th>
+                    <th className="profit-col--net">IQD</th>
+                    <th className="profit-col--net">USD</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {monthlyGroups.map((record, groupIdx) => {
-                    const partners = record.partners;
-                    return partners.map((partner, partnerIdx) => {
-                      const netIQD = Math.max(0, partner.profitIQD - partner.drawingsIQD);
-                      const netUSD = Math.max(0, partner.profitUSD - partner.drawingsUSD);
-                      return (
-                        <tr key={`${record.date}-${partner.partnerName}`}>
-                          {partnerIdx === 0 && (
-                            <>
-                              <td className="font-bold" rowSpan={partners.length}>{groupIdx + 1}</td>
-                              <td rowSpan={partners.length}>{record.date}</td>
-                            </>
-                          )}
-                          <td className="font-bold">{partner.partnerName}</td>
-                          <td>
-                            <span style={{ color: partner.drawingsIQD > 0 ? "#ef4444" : "rgba(255,255,255,0.3)" }}>
-                              <PriceDisplay amount={partner.drawingsIQD} currency="IQD" noColor />
-                            </span>
-                          </td>
-                          <td>
-                            <span style={{ color: partner.drawingsUSD > 0 ? "#ef4444" : "rgba(255,255,255,0.3)" }}>
-                              <PriceDisplay amount={partner.drawingsUSD} currency="USD" noColor />
-                            </span>
-                          </td>
-                          <td>
-                            <span className="text-green font-bold">
-                              <PriceDisplay amount={partner.profitIQD} currency="IQD" noColor />
-                            </span>
-                          </td>
-                          <td>
-                            <span className="text-green font-bold">
-                              <PriceDisplay amount={partner.profitUSD} currency="USD" noColor />
-                            </span>
-                          </td>
-                          <td>
-                            <span className="text-gold font-bold">
-                              <PriceDisplay amount={netIQD} currency="IQD" noColor />
-                            </span>
-                          </td>
-                          <td>
-                            <span className="text-gold font-bold">
-                              <PriceDisplay amount={netUSD} currency="USD" noColor />
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    });
+                  {selectedGroup.partners.map((partner, partnerIdx) => {
+                    const partners = selectedGroup.partners;
+                    const netIQD = Math.max(0, partner.profitIQD - partner.drawingsIQD);
+                    const netUSD = Math.max(0, partner.profitUSD - partner.drawingsUSD);
+                    return (
+                      <tr key={`${selectedGroup.key}-${partner.partnerName}`}>
+                        {partnerIdx === 0 && (
+                          <>
+                            <td className="font-bold" rowSpan={partners.length}>{selectedPageIndex + 1}</td>
+                            <td rowSpan={partners.length}>{selectedGroup.label}</td>
+                          </>
+                        )}
+                        <td className="font-bold">{partner.partnerName}</td>
+                        <td className="profit-col--drawings">
+                          <span>
+                            <PriceDisplay amount={partner.drawingsIQD} currency="IQD" noColor />
+                          </span>
+                        </td>
+                        <td className="profit-col--drawings">
+                          <span>
+                            <PriceDisplay amount={partner.drawingsUSD} currency="USD" noColor />
+                          </span>
+                        </td>
+                        <td className="profit-col--profit">
+                          <span className="font-bold">
+                            <PriceDisplay amount={partner.profitIQD} currency="IQD" noColor />
+                          </span>
+                        </td>
+                        <td className="profit-col--profit">
+                          <span className="font-bold">
+                            <PriceDisplay amount={partner.profitUSD} currency="USD" noColor />
+                          </span>
+                        </td>
+                        <td className="profit-col--net">
+                          <span className="font-bold">
+                            <PriceDisplay amount={netIQD} currency="IQD" noColor />
+                          </span>
+                        </td>
+                        <td className="profit-col--net">
+                          <span className="font-bold">
+                            <PriceDisplay amount={netUSD} currency="USD" noColor />
+                          </span>
+                        </td>
+                      </tr>
+                    );
                   })}
-                  {monthlyGroups.length === 0 && (
+                  {selectedGroup.partners.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="empty-cell">لا توجد أرباح شهرية محفوظة في النظام</td>
+                      <td colSpan={9} className="empty-cell">لا توجد أرباح محفوظة في هذا التبويب</td>
                     </tr>
                   )}
                 </tbody>

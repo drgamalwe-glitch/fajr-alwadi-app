@@ -24,10 +24,17 @@ interface PartnersTabProps {
   onPartnersSearchClose?: () => void;
   onPartnerActionsChange?: (actions: { onDeposit: () => void; onWithdraw: () => void; depositLabel?: string; withdrawLabel?: string } | null) => void;
   onAddAccountChange?: (onAddAccount: { action: () => void } | null) => void;
-  pendingPartnerOpen?: string | null;
+  pendingPartnerOpen?: {
+    name: string;
+    kind?: string | null;
+    action?: "deposit" | "withdraw" | "settle_installment";
+    transactionId?: number | null;
+  } | null;
   onPendingPartnerOpened?: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   requestCloseRef?: React.MutableRefObject<{ request: (afterClose?: () => void) => void } | null>;
+  initialSubTab?: "list" | "personal" | null;
+  onInitialSubTabSet?: () => void;
 }
 
 const createEmptyForm = (kind: string) => ({
@@ -58,20 +65,55 @@ const isSaleInstallmentTx = (tx: PartnerTransaction) =>
 const isSameCurrency = (tx: PartnerTransaction, currency: Currency) =>
   (tx.currency || "IQD") === currency;
 
-const parseDecimalInput = (value: string | number) => {
-  const normalized = toEnglishDigits(String(value)).replace(/[٫٬،,]/g, ".");
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : 0;
+
+const isFinancialClientKind = (kind: string) =>
+  kind === "مستثمر" || kind === "ممول" || kind === "شركة";
+
+const isBorrowerKind = (kind: string) => kind === "مقترض";
+
+const transactionDirection = (accountKind: string, isWithdraw: boolean) => {
+  if (isFinancialClientKind(accountKind)) {
+    return {
+      label: isWithdraw ? "تسليم" : "استلام",
+      amountSign: isWithdraw ? 1 : -1,
+      colorClass: isWithdraw ? "text-green" : "text-red",
+      rowClass: isWithdraw ? "partner-tx-row--deposit" : "partner-tx-row--withdraw",
+    };
+  }
+  if (isBorrowerKind(accountKind)) {
+    return {
+      label: isWithdraw ? "باقي" : "واصل",
+      amountSign: isWithdraw ? 1 : -1,
+      colorClass: isWithdraw ? "text-green" : "text-red",
+      rowClass: isWithdraw ? "partner-tx-row--deposit" : "partner-tx-row--withdraw",
+    };
+  }
+  return {
+    label: isWithdraw ? "سحب" : "ايداع",
+    amountSign: isWithdraw ? -1 : 1,
+    colorClass: isWithdraw ? "text-red" : "text-green",
+    rowClass: isWithdraw ? "partner-tx-row--withdraw" : "partner-tx-row--deposit",
+  };
 };
 
-const parseFinancierNotes = (notes: string | null) => {
+const parseFinancierNotes = (notes: string | null, amount?: number) => {
   if (!notes) return { transferBy: "", commission: 0, commissionPercent: 0, originalNotes: "" };
-  if (notes.startsWith("تم تسديد الممول")) {
+  if (notes.startsWith("تم تسديد الممول") || notes.startsWith("تم تسليم الممول")) {
     let commission = 0;
+    let commissionPercent = 0;
     let mainPart = notes;
     const commSplit = notes.split(" - عمولة:");
     if (commSplit.length > 1) {
-      commission = Number(commSplit[commSplit.length - 1].trim()) || 0;
+      const commStr = commSplit[commSplit.length - 1].trim();
+      if (commStr.includes("%")) {
+        const pct = parseFloat(commStr.replace(/[^\d.]/g, "")) || 0;
+        commissionPercent = pct;
+        if (amount) {
+          commission = (amount * pct) / 100;
+        }
+      } else {
+        commission = parseFloat(commStr.replace(/[^\d.]/g, "")) || 0;
+      }
       mainPart = commSplit.slice(0, -1).join(" - عمولة:");
     }
     let transferBy = "";
@@ -89,18 +131,20 @@ const parseFinancierNotes = (notes: string | null) => {
     return {
       transferBy,
       commission,
-      commissionPercent: 0,
+      commissionPercent,
       originalNotes
     };
   }
   const transferByMatch = notes.match(/نقل بواسطة:\s*([^-]+)/);
   const commissionPercentMatch = notes.match(/عمولة:\s*([\d.]+)%/);
+  const pct = commissionPercentMatch ? Number(commissionPercentMatch[1]) : 0;
+  const commission = (pct && amount) ? (amount * pct) / 100 : 0;
   const parts = notes.split(/-\s*عمولة:\s*[\d.]+%[^)]+\)\s*-?\s*/);
   const originalNotes = parts.length > 1 ? parts[1].trim() : "";
   return {
     transferBy: transferByMatch ? transferByMatch[1].trim() : "",
-    commission: 0,
-    commissionPercent: commissionPercentMatch ? Number(commissionPercentMatch[1]) : 1,
+    commission,
+    commissionPercent: pct,
     originalNotes: originalNotes || (notes.startsWith("نقل بواسطة:") ? "" : notes)
   };
 };
@@ -154,6 +198,8 @@ export function PartnersTab({
   onPendingPartnerOpened,
   onDirtyChange,
   requestCloseRef,
+  initialSubTab,
+  onInitialSubTabSet,
 }: PartnersTabProps) {
   const [unifiedAccounts, setUnifiedAccounts] = useState<UnifiedAccount[]>([]);
   const [debtFilter, setDebtFilter] = useState<"all" | "we_owe" | "they_owe">("all");
@@ -192,6 +238,18 @@ export function PartnersTab({
       onPartnerActionsChange?.(null);
     };
   }, [onPartnerActionsChange]);
+
+  useEffect(() => {
+    if (initialSubTab) {
+      setAccountsTab(initialSubTab);
+      setSharikListView(true);
+      setPartnerToView(null);
+      setEditingKey(null);
+      setTransactions([]);
+      onPartnerActionsChange?.(null);
+      onInitialSubTabSet?.();
+    }
+  }, [initialSubTab, onInitialSubTabSet]);
 
   const [form, setForm] = useState(createEmptyForm(kind));
   const formRef = useRef(createEmptyForm(kind));
@@ -314,7 +372,7 @@ export function PartnersTab({
     paymentType: "قاصه" as "قاصه" | "خارج القاصة" | "ماستر" | "مصرف" | "ممول",
     transferBy: "",
     commission: 0,
-    commissionPercent: 1,
+    commissionPercent: 0,
   });
   const [editingTransactionId, setEditingTransactionId] = useState<number | null>(null);
   const [transactionSort, setTransactionSort] = useState<{
@@ -494,20 +552,23 @@ export function PartnersTab({
     setEditingTransactionId(null);
     setTransactionSort({ key: "date", direction: "asc" });
     if (!preserveType) {
-      setTxForm({ type: "ايداع", amount: 0, date: todayIsoDate(), notes: "", installments: 1, paymentType: "قاصه", transferBy: "", commission: 0, commissionPercent: 1 });
+      setTxForm({ type: "ايداع", amount: 0, date: todayIsoDate(), notes: "", installments: 1, paymentType: "قاصه", transferBy: "", commission: 0, commissionPercent: 0 });
     }
     setTransactionsLoading(true);
+    let loadedTransactions: PartnerTransaction[] = [];
     try {
       const txs = await callTauri<PartnerTransaction[]>("get_partner_transactions", {
         partnerName: partner.partner_name,
         kind: partner.kind,
       });
-      setTransactions(txs ?? []);
+      loadedTransactions = txs ?? [];
+      setTransactions(loadedTransactions);
     } catch {
       setTransactions([]);
     } finally {
       setTransactionsLoading(false);
     }
+    return loadedTransactions;
   };
 
   const resetForm = () => {
@@ -637,7 +698,7 @@ export function PartnersTab({
       paymentType: (formRef.current.kind === "ممول" && type === "ايداع") ? "ممول" : "قاصه",
       transferBy: "",
       commission: 0,
-      commissionPercent: 1,
+      commissionPercent: 0,
     });
   };
 
@@ -726,11 +787,12 @@ export function PartnersTab({
     setEditingTransactionId(tx.id);
     const rawPaymentType = tx.payment_type || tx.paymentType || "قاصه";
     const paymentType = (rawPaymentType === "ماستر" || rawPaymentType === "مصرف" || rawPaymentType === "خارج القاصة") ? rawPaymentType : (rawPaymentType === "ممول" ? "ممول" : "قاصه");
+    const currentKind = formRef.current.kind;
 
-    const isFinancierRepayment = form.kind === "ممول" && tx.type_.startsWith("سحب");
-    const parsedNotes = isFinancierRepayment ? parseFinancierNotes(tx.notes) : null;
+    const isFinancierRepayment = currentKind === "ممول" && tx.type_.startsWith("سحب");
+    const parsedNotes = isFinancierRepayment ? parseFinancierNotes(tx.notes, tx.amount) : null;
 
-    const isPaidBorrowerInst = form.kind === "مقترض" && isInstallmentWithdrawal(tx) && paidTransactionIds.has(tx.id);
+    const isPaidBorrowerInst = currentKind === "مقترض" && isInstallmentWithdrawal(tx) && paidTransactionIds.has(tx.id);
     const isWithdraw = (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) && !isPaidBorrowerInst;
 
     setTxForm({
@@ -742,7 +804,7 @@ export function PartnersTab({
       paymentType,
       transferBy: parsedNotes ? parsedNotes.transferBy : "",
       commission: parsedNotes ? parsedNotes.commission : 0,
-      commissionPercent: parsedNotes ? parsedNotes.commissionPercent : 1,
+      commissionPercent: parsedNotes ? parsedNotes.commissionPercent : 0,
     });
     if (tx.currency === "USD" || tx.currency === "IQD") {
       setTxCurrency(tx.currency);
@@ -972,10 +1034,20 @@ export function PartnersTab({
   /* ── متابعة حالة البحث المنبثق ── */
   useEffect(() => {
     if (kind !== "partners-financial" || !pendingPartnerOpen) return;
-    const partner = partners.find((p) => p.partner_name === pendingPartnerOpen);
+    const partner = partners.find(
+      (p) =>
+        p.partner_name === pendingPartnerOpen.name &&
+        (!pendingPartnerOpen.kind || p.kind === pendingPartnerOpen.kind),
+    ) ?? partners.find((p) => p.partner_name === pendingPartnerOpen.name);
     if (partner) {
-      void openPersonalAccount(partner);
-      onPendingPartnerOpened?.();
+      void (async () => {
+        await openPersonalAccount(
+          partner,
+          pendingPartnerOpen.action,
+          pendingPartnerOpen.transactionId ?? undefined,
+        );
+        onPendingPartnerOpened?.();
+      })();
     }
   }, [kind, pendingPartnerOpen, partners, onPendingPartnerOpened]);
 
@@ -1004,18 +1076,52 @@ export function PartnersTab({
     });
   }, [partners, partnersSearch, kind]);
 
-  const openPersonalAccount = useCallback(async (partner: Partner) => {
+  const openPersonalAccount = useCallback(async (
+    partner: Partner,
+    action?: "deposit" | "withdraw" | "settle_installment",
+    transactionId?: number,
+  ) => {
     setPartnerToView(partner);
     setAccountsTab("personal");
     setSharikListView(false);
     setPartnersSearch("");
-    await loadPartner(partner);
-    onPartnerActionsChange?.({
-      onDeposit: openDepositForm,
-      onWithdraw: openWithdrawForm,
-      depositLabel: partner.kind === "مقترض" ? "واصل" : (partner.kind === "ممول" || partner.kind === "شركة" ? "استلام" : undefined),
-      withdrawLabel: partner.kind === "مقترض" ? "باقي" : (partner.kind === "ممول" || partner.kind === "شركة" ? "تسديد" : undefined),
-    });
+    const loadedTransactions = await loadPartner(partner);
+    if (isFinancialClientKind(partner.kind)) {
+      onPartnerActionsChange?.({
+        onDeposit: openWithdrawForm,
+        onWithdraw: openDepositForm,
+        depositLabel: `تسليم الى ${partner.partner_name}`,
+        withdrawLabel: `استلام من ${partner.partner_name}`,
+      });
+    } else if (partner.kind === "مقترض") {
+      onPartnerActionsChange?.({
+        onDeposit: openWithdrawForm,
+        onWithdraw: openDepositForm,
+        depositLabel: `باقي على ${partner.partner_name}`,
+        withdrawLabel: `واصل من ${partner.partner_name}`,
+      });
+    } else {
+      onPartnerActionsChange?.({
+        onDeposit: openDepositForm,
+        onWithdraw: openWithdrawForm,
+      });
+    }
+    if (action === "settle_installment") {
+      const installmentTx = loadedTransactions.find((tx) => tx.id === transactionId);
+      if (installmentTx) {
+        beginSettleInstallment(installmentTx);
+      } else {
+        resetTransactionForm("ايداع");
+        setShowTxModal(true);
+      }
+    } else if (action === "withdraw") {
+      setCompanyPaymentMode("");
+      resetTransactionForm("سحب");
+      setShowTxModal(true);
+    } else if (action === "deposit") {
+      resetTransactionForm("ايداع");
+      setShowTxModal(true);
+    }
   }, [onPartnerActionsChange]);
 
   /* ── Esc key ── */
@@ -1297,7 +1403,7 @@ export function PartnersTab({
       setTransactions(txs ?? []);
       if (editingTransactionId === tx.id) {
         setEditingTransactionId(null);
-        setTxForm({ type: "ايداع" as TransactionType, amount: 0, date: todayIsoDate(), notes: "", installments: 1, paymentType: "قاصه", transferBy: "", commission: 0, commissionPercent: 1 });
+        setTxForm({ type: "ايداع" as TransactionType, amount: 0, date: todayIsoDate(), notes: "", installments: 1, paymentType: "قاصه", transferBy: "", commission: 0, commissionPercent: 0 });
       }
       await onRefresh();
     } catch (err) {
@@ -1567,12 +1673,11 @@ export function PartnersTab({
           const amount = i === installments - 1 ? installmentAmount + remainder : installmentAmount;
           const monthNote = (() => {
             if (form.kind === "ممول" && txForm.type === "سحب") {
-              const pct = txForm.commissionPercent || 0;
-              const commissionVal = (amount * pct) / 100;
+              const commissionVal = txForm.commission || 0;
               const formattedTotal = txCurrency === "USD"
                 ? `$${(amount + commissionVal).toLocaleString("en-US")}`
                 : `${(amount + commissionVal).toLocaleString("en-US")} د.ع`;
-              return `تم تسديد الممول ${form.name} بـ ${formattedTotal} ارسل اليه بواسطة ${txForm.transferBy || "—"}${txForm.notes ? ` - ${txForm.notes}` : ""} - عمولة: ${pct}%`;
+              return `تم تسليم الممول ${form.name} بـ ${formattedTotal} ارسل اليه بواسطة ${txForm.transferBy || "—"}${txForm.notes ? ` - ${txForm.notes}` : ""} - عمولة: ${commissionVal}`;
             }
             return installments > 1
               ? `قسط ${i + 1}/${installments}${txForm.notes ? ` - ${txForm.notes}` : ""}`
@@ -1586,7 +1691,9 @@ export function PartnersTab({
           const transactionPayload = {
             partnerName: editingKey,
             kind: form.kind,
-            type: (form.kind === "مقترض" && txForm.type === "ايداع") ? "تسديد قسط سيارة" : txForm.type,
+            type: form.kind === "شريك" && txForm.type === "سحب"
+              ? "سحب شريك"
+              : (form.kind === "مقترض" && txForm.type === "ايداع") ? "تسديد قسط سيارة" : txForm.type,
             amount,
             date: dateStr_i,
             notes: cashWdrNote,
@@ -1655,17 +1762,17 @@ export function PartnersTab({
     .reduce((sum, t) => sum + t.amount, 0);
 
   const partnerIqdBalance = accountsTab === "personal" && partnerToView
-    ? form.kind === "مقترض"
-      // مقترض: اعرض فقط المتبقي (إجمالي الأقساط بدون خصم الواصل)
-      ? transactions.filter((t) => (t.currency || "IQD") === "IQD" && (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+    ? isFinancialClientKind(form.kind) || form.kind === "مقترض"
+      ? transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      - transactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       : transactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       - transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
     : currencyTotals[0];
 
   const partnerUsdBalance = accountsTab === "personal" && partnerToView
-    ? form.kind === "مقترض"
-      // مقترض: اعرض فقط المتبقي (إجمالي الأقساط بالدولار بدون خصم الواصل)
-      ? transactions.filter((t) => t.currency === "USD" && (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+    ? isFinancialClientKind(form.kind) || form.kind === "مقترض"
+      ? transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      - transactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       : transactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       - transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
     : currencyTotals[1];
@@ -2348,11 +2455,12 @@ export function PartnersTab({
                       const isPaidBorrowerInst = form.kind === "مقترض" && isInstallmentWithdrawal(tx) && paidTransactionIds.has(tx.id);
                       const isWithdraw = (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) && !isPaidBorrowerInst;
                       const isDeposit = tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة") || tx.type_.startsWith("إعادة استثمار") || tx.type_.startsWith("تسوية") || isPaidBorrowerInst;
+                      const direction = transactionDirection(form.kind, isWithdraw);
                       return (
                         <tr
                           key={tx.id}
-                          className={`partner-tx-row ${form.kind === "ممول"
-                            ? (isWithdraw ? "partner-tx-row--withdraw" : "partner-tx-row--deposit")
+                          className={`partner-tx-row ${isFinancialClientKind(form.kind) || form.kind === "مقترض"
+                            ? direction.rowClass
                             : (isDeposit ? "partner-tx-row--deposit" : "partner-tx-row--withdraw")
                             }`}
                           title="اضغط لتعديل المعاملة"
@@ -2362,16 +2470,16 @@ export function PartnersTab({
                           <td className="col-date">{tx.date}</td>
                           <td className="col-time">{tx.time || "00:00"}</td>
                           <td className="col-type">
-                            <span className={form.kind === "ممول" ? (isWithdraw ? "text-red font-bold" : "text-green font-bold") : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
-                              {form.kind === "ممول" ? (isWithdraw ? "تسديد تمويل" : "استلام تمويل") : form.kind === "شركة" ? (isWithdraw ? "تسديد" : "استلام") : form.kind === "مقترض" ? (isWithdraw ? "باقي" : "واصل") : isSaleInstallmentTx(tx) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
+                            <span className={isFinancialClientKind(form.kind) || form.kind === "مقترض" ? `${direction.colorClass} font-bold` : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
+                              {isFinancialClientKind(form.kind) || form.kind === "مقترض" ? direction.label : isSaleInstallmentTx(tx) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
                             </span>
                           </td>
                           <td className={cn(
                             "col-amount font-bold",
-                            form.kind === "مقترض" ? "text-green" : isSaleInstallmentTx(tx) ? "text-green" : form.kind === "ممول" ? (isWithdraw ? "text-red" : "text-green") : (isWithdraw ? "text-red" : "text-green")
+                            isFinancialClientKind(form.kind) || form.kind === "مقترض" ? direction.colorClass : isSaleInstallmentTx(tx) ? "text-green" : (isWithdraw ? "text-red" : "text-green")
                           )}>
                             <PriceDisplay
-                              amount={form.kind === "مقترض" ? tx.amount : isSaleInstallmentTx(tx) ? tx.amount : (isWithdraw ? -tx.amount : tx.amount)}
+                              amount={isFinancialClientKind(form.kind) || form.kind === "مقترض" ? direction.amountSign * tx.amount : isSaleInstallmentTx(tx) ? tx.amount : (isWithdraw ? -tx.amount : tx.amount)}
                               currency={tx.currency}
                               noColor
                             />
@@ -2782,14 +2890,14 @@ export function PartnersTab({
                         </span>
                       </div>
                       <div className="partner-summary-field">
-                        <span className="partner-summary-field__label" style={{ color: "var(--green)" }}>واصل</span>
-                        <span className="partner-summary-field__value" style={{ color: "var(--green)" }}>
+                        <span className="partner-summary-field__label" style={{ color: "var(--red-600)" }}>واصل</span>
+                        <span className="partner-summary-field__value" style={{ color: "var(--red-600)" }}>
                           <PriceDisplay amount={totalDeposits} noColor />
                         </span>
                       </div>
                       <div className="partner-summary-field">
-                        <span className="partner-summary-field__label" style={{ color: "var(--red-600)" }}>باقي</span>
-                        <span className="partner-summary-field__value" style={{ color: "var(--red-600)" }}>
+                        <span className="partner-summary-field__label" style={{ color: "var(--green)" }}>باقي</span>
+                        <span className="partner-summary-field__value" style={{ color: "var(--green)" }}>
                           <PriceDisplay amount={Math.max(0, totalWithdrawals - totalDeposits)} noColor />
                         </span>
                       </div>
@@ -2800,19 +2908,19 @@ export function PartnersTab({
                       <span className="partner-summary-field__value">
                         {form.kind === "ممول" ? (
                           (totalDeposits - totalWithdrawals) > 0 ? (
-                            <span className="text-green">
-                              <PriceDisplay amount={totalDeposits - totalWithdrawals} noColor />
+                            <span className="text-red">
+                              <PriceDisplay amount={-(totalDeposits - totalWithdrawals)} noColor />
                             </span>
                           ) : (totalDeposits - totalWithdrawals) < 0 ? (
-                            <span className="text-red">
+                            <span className="text-green">
                               <PriceDisplay amount={Math.abs(totalDeposits - totalWithdrawals)} noColor />
                             </span>
                           ) : (
                             <span style={{ color: "rgba(255,255,255,0.4)" }}>0IQ</span>
                           )
                         ) : (
-                          <span className={(totalDeposits - totalWithdrawals) >= 0 ? "text-green" : "text-red"}>
-                            <PriceDisplay amount={totalDeposits - totalWithdrawals} noColor />
+                          <span className={isFinancialClientKind(form.kind) ? (totalWithdrawals - totalDeposits >= 0 ? "text-green" : "text-red") : (totalDeposits - totalWithdrawals) >= 0 ? "text-green" : "text-red"}>
+                            <PriceDisplay amount={isFinancialClientKind(form.kind) ? totalWithdrawals - totalDeposits : totalDeposits - totalWithdrawals} noColor />
                           </span>
                         )}
                       </span>
@@ -2934,10 +3042,13 @@ export function PartnersTab({
                                     const isPaidBorrowerInst = form.kind === "مقترض" && isInstallmentWithdrawal(tx) && paidTransactionIds.has(tx.id);
                                     const isWithdraw = (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) && !isPaidBorrowerInst;
                                     const isDeposit = tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة") || isPaidBorrowerInst;
+                                    const direction = transactionDirection(form.kind, isWithdraw);
                                     return (
                                       <tr
                                         key={tx.id}
-                                        className={`partner-tx-row ${form.kind === "ممول" || kind === "مطلوب"
+                                        className={`partner-tx-row ${isFinancialClientKind(form.kind) || form.kind === "مقترض"
+                                          ? direction.rowClass
+                                          : form.kind === "ممول" || kind === "مطلوب"
                                           ? (isWithdraw ? "partner-tx-row--deposit" : "partner-tx-row--withdraw")
                                           : (isDeposit ? "partner-tx-row--deposit" : "partner-tx-row--withdraw")
                                           }`}
@@ -2948,8 +3059,8 @@ export function PartnersTab({
                                         <td className="col-date">{tx.date}</td>
                                         <td className="col-time">{tx.time || "00:00"}</td>
                                         <td className="col-type">
-                                          <span className={form.kind === "ممول" || kind === "مطلوب" ? (isWithdraw ? "text-green font-bold" : "text-red font-bold") : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
-                                            {form.kind === "ممول" ? (isWithdraw ? "سحب" : "ايداع") : kind === "مطلوب" ? (isWithdraw ? "اعطيته" : "اخذت منه") : form.kind === "شركة" ? (isWithdraw ? "تسديد" : "استلام") : form.kind === "مقترض" ? (isWithdraw ? "باقي" : "واصل") : isSaleInstallmentTx(tx) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
+                                          <span className={isFinancialClientKind(form.kind) || form.kind === "مقترض" ? `${direction.colorClass} font-bold` : form.kind === "ممول" || kind === "مطلوب" ? (isWithdraw ? "text-green font-bold" : "text-red font-bold") : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
+                                            {isFinancialClientKind(form.kind) || form.kind === "مقترض" ? direction.label : kind === "مطلوب" ? (isWithdraw ? "اعطيته" : "اخذت منه") : isSaleInstallmentTx(tx) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
                                           </span>
                                         </td>
                                         <td className="col-account">
@@ -2959,13 +3070,14 @@ export function PartnersTab({
                                         </td>
                                         <td className={cn(
                                           "col-amount font-bold",
+                                          isFinancialClientKind(form.kind) || form.kind === "مقترض" ? direction.colorClass :
                                           form.kind === "ممول" ? (isWithdraw ? "text-red" : "text-green") :
                                             kind === "مطلوب" ? (isWithdraw ? "text-green" : "text-red") :
                                               isSaleInstallmentTx(tx) ? "text-green" :
                                                 (isWithdraw ? "text-red" : "text-green")
                                         )}>
                                           <PriceDisplay
-                                            amount={(kind === "مطلوب" || form.kind === "ممول") ? (isWithdraw ? tx.amount : -tx.amount) : isSaleInstallmentTx(tx) ? tx.amount : (isWithdraw ? -tx.amount : tx.amount)}
+                                            amount={isFinancialClientKind(form.kind) || form.kind === "مقترض" ? direction.amountSign * tx.amount : (kind === "مطلوب" || form.kind === "ممول") ? (isWithdraw ? tx.amount : -tx.amount) : isSaleInstallmentTx(tx) ? tx.amount : (isWithdraw ? -tx.amount : tx.amount)}
                                             currency={tx.currency}
                                             noColor
                                           />
@@ -3020,19 +3132,19 @@ export function PartnersTab({
                     <div className="car-form-panel__actions partner-modal-actions" style={{ marginTop: "1rem", display: "flex", gap: "0.5rem" }}>
                       <ActionButton
                         type="button"
-                        variant={kind === "مطلوب" ? "success" : form.kind === "مقترض" ? "secondary" : "success"}
-                        style={{ flex: 1, minWidth: 0, padding: "8px 16px", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", color: "var(--red-600)", backdropFilter: "blur(8px)", borderRadius: "10px", fontWeight: 700, fontSize: "var(--fs-sm)" }}
+                        variant={kind === "مطلوب" ? "success" : form.kind === "مقترض" ? "success" : "success"}
+                        style={{ flex: 1, minWidth: 0, padding: "8px 16px", background: isFinancialClientKind(form.kind) || form.kind === "مقترض" ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)", border: isFinancialClientKind(form.kind) || form.kind === "مقترض" ? "1px solid rgba(34,197,94,0.3)" : "1px solid rgba(239,68,68,0.3)", color: isFinancialClientKind(form.kind) || form.kind === "مقترض" ? "var(--green)" : "var(--red-600)", backdropFilter: "blur(8px)", borderRadius: "10px", fontWeight: 700, fontSize: "var(--fs-sm)" }}
                         onClick={openWithdrawForm}
                       >
-                        {form.kind === "ممول" ? "سحب" : kind === "مطلوب" ? `باقي على ${form.name || "الحساب"}` : form.kind === "مقترض" ? "باقي" : form.kind === "شركة" ? "تسديد" : "سحب"}
+                        {isFinancialClientKind(form.kind) ? "تسليم" : kind === "مطلوب" ? `باقي على ${form.name || "الحساب"}` : form.kind === "مقترض" ? "باقي" : "سحب"}
                       </ActionButton>
                       <ActionButton
                         type="button"
-                        variant={kind === "مطلوب" ? "secondary" : form.kind === "مقترض" ? "success" : "secondary"}
-                        style={{ flex: 1, minWidth: 0, padding: "8px 16px", background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.3)", color: "var(--green)", backdropFilter: "blur(8px)", borderRadius: "10px", fontWeight: 700, fontSize: "var(--fs-sm)" }}
+                        variant={kind === "مطلوب" ? "secondary" : form.kind === "مقترض" ? "secondary" : "secondary"}
+                        style={{ flex: 1, minWidth: 0, padding: "8px 16px", background: isFinancialClientKind(form.kind) || form.kind === "مقترض" ? "rgba(239,68,68,0.12)" : "rgba(34,197,94,0.12)", border: isFinancialClientKind(form.kind) || form.kind === "مقترض" ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(34,197,94,0.3)", color: isFinancialClientKind(form.kind) || form.kind === "مقترض" ? "var(--red-600)" : "var(--green)", backdropFilter: "blur(8px)", borderRadius: "10px", fontWeight: 700, fontSize: "var(--fs-sm)" }}
                         onClick={openDepositForm}
                       >
-                        {form.kind === "ممول" ? "ايداع" : kind === "مطلوب" ? `واصل من ${form.name || "الحساب"}` : form.kind === "مقترض" ? "واصل" : form.kind === "شركة" ? "استلام" : "إيداع"}
+                        {isFinancialClientKind(form.kind) ? "استلام" : kind === "مطلوب" ? `واصل من ${form.name || "الحساب"}` : form.kind === "مقترض" ? "واصل" : "إيداع"}
                       </ActionButton>
                     </div>
                   </>
@@ -3219,17 +3331,17 @@ export function PartnersTab({
             className="mb-dialog tx-dialog"
             role="dialog"
             onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: (form.kind === "ممول" && txForm.type === "سحب") ? 650 : 480 }}
+            style={{ maxWidth: ((form.kind === "ممول" || form.kind === "شركة") && txForm.type === "سحب") ? 650 : 480 }}
           >
             <h3 className="mb-title">
-              {form.kind === "ممول"
+              {isFinancialClientKind(form.kind)
                 ? (txForm.type === "سحب"
-                  ? (editingTransactionId ? `تعديل تسديد تمويل - ${form.name}` : `تسديد تمويل - ${form.name}`)
-                  : (editingTransactionId ? `تعديل استلام تمويل - ${form.name}` : `استلام تمويل - ${form.name}`))
+                  ? (editingTransactionId ? `تعديل تسليم - ${form.name}` : `تسليم - ${form.name}`)
+                  : (editingTransactionId ? `تعديل استلام - ${form.name}` : `استلام - ${form.name}`))
                 : (editingTransactionId ? "تحديث المعاملة" : `إضافة معاملة - ${form.name}`)}
             </h3>
 
-            {!(form.kind === "ممول" && txForm.type === "سحب") && (form.kind === "ممول" || kind === "مطلوب") && (
+            {!(form.kind === "ممول" && txForm.type === "سحب") && (isFinancialClientKind(form.kind) || kind === "مطلوب") && (
               <div style={{
                 margin: "0 0 1rem",
                 padding: "0.6rem",
@@ -3237,18 +3349,18 @@ export function PartnersTab({
                 textAlign: "center",
                 fontWeight: "var(--fw-bold)",
                 fontSize: "var(--fs-sm)",
-                background: form.kind === "ممول"
-                  ? (txForm.type === "سحب" ? "var(--red-bg)" : "var(--green-bg)")
+                background: isFinancialClientKind(form.kind)
+                  ? (txForm.type === "سحب" ? "var(--green-bg)" : "var(--red-bg)")
                   : (txForm.type === "سحب" ? "var(--green-bg)" : "rgba(216, 168, 90, 0.15)"),
-                color: form.kind === "ممول"
-                  ? (txForm.type === "سحب" ? "var(--red-600)" : "var(--green)")
+                color: isFinancialClientKind(form.kind)
+                  ? (txForm.type === "سحب" ? "var(--green)" : "var(--red-600)")
                   : (txForm.type === "سحب" ? "var(--green)" : "var(--gold)"),
-                border: form.kind === "ممول"
-                  ? (txForm.type === "سحب" ? "1px solid var(--red-bd)" : "1px solid var(--green-bd)")
+                border: isFinancialClientKind(form.kind)
+                  ? (txForm.type === "سحب" ? "1px solid var(--green-bd)" : "1px solid var(--red-bd)")
                   : (txForm.type === "سحب" ? "1px solid var(--green-bd)" : "1px solid rgba(216, 168, 90, 0.3)")
               }}>
-                {form.kind === "ممول"
-                  ? (txForm.type === "سحب" ? `تسديد تمويل لحساب ${form.name}` : `استلام تمويل من حساب ${form.name}`)
+                {isFinancialClientKind(form.kind)
+                  ? (txForm.type === "سحب" ? `تسليم إلى ${form.name} (نحن نطلبه)` : `استلام من ${form.name} (هو يطلبنا)`)
                   : (txForm.type === "سحب" ? `باقي على ${form.name} (نطلبه)` : `واصل من ${form.name} (يطلبنا)`)}
               </div>
             )}
@@ -3266,9 +3378,9 @@ export function PartnersTab({
                   onClick={() => setTxForm(prev => ({ ...prev, type: "ايداع" }))}
                   style={{
                     flex: 1, padding: "8px 16px",
-                    background: txForm.type === "ايداع" ? "rgba(34,197,94,0.25)" : "rgba(255,255,255,0.05)",
-                    color: txForm.type === "ايداع" ? "var(--green)" : "rgba(255,255,255,0.6)",
-                    border: txForm.type === "ايداع" ? "1px solid rgba(34,197,94,0.4)" : "1px solid rgba(255,255,255,0.1)",
+                    background: txForm.type === "ايداع" ? "rgba(239,68,68,0.25)" : "rgba(255,255,255,0.05)",
+                    color: txForm.type === "ايداع" ? "var(--red-600)" : "rgba(255,255,255,0.6)",
+                    border: txForm.type === "ايداع" ? "1px solid rgba(239,68,68,0.4)" : "1px solid rgba(255,255,255,0.1)",
                   }}
                 >
                   واصل
@@ -3279,9 +3391,9 @@ export function PartnersTab({
                   onClick={() => setTxForm(prev => ({ ...prev, type: "سحب" }))}
                   style={{
                     flex: 1, padding: "8px 16px",
-                    background: txForm.type === "سحب" ? "rgba(239,68,68,0.25)" : "rgba(255,255,255,0.05)",
-                    color: txForm.type === "سحب" ? "var(--red-600)" : "rgba(255,255,255,0.6)",
-                    border: txForm.type === "سحب" ? "1px solid rgba(239,68,68,0.4)" : "1px solid rgba(255,255,255,0.1)",
+                    background: txForm.type === "سحب" ? "rgba(34,197,94,0.25)" : "rgba(255,255,255,0.05)",
+                    color: txForm.type === "سحب" ? "var(--green)" : "rgba(255,255,255,0.6)",
+                    border: txForm.type === "سحب" ? "1px solid rgba(34,197,94,0.4)" : "1px solid rgba(255,255,255,0.1)",
                   }}
                 >
                   باقي
@@ -3297,6 +3409,7 @@ export function PartnersTab({
                 backdrop-filter: blur(var(--backkground-secondary-blur)) saturate(var(--backkground-secondary-saturate)) !important;
                 -webkit-backdrop-filter: blur(var(--backkground-secondary-blur)) saturate(var(--backkground-secondary-saturate)) !important;
                 box-shadow: 0 8px 32px rgba(0,0,0,0.3) !important;
+                overflow: visible !important;
               }
               .tx-dialog .mb-title {
                 font-size: var(--font-size) !important;
@@ -3340,7 +3453,7 @@ export function PartnersTab({
               }
             `}</style>
             <form className="form tx-dialog-form" onSubmit={handleAddTransaction}>
-              {form.kind === "ممول" && txForm.type === "سحب" ? (
+              {(form.kind === "ممول" || form.kind === "شركة") && txForm.type === "سحب" ? (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem 1.5rem" }}>
                   {/* Row 1: التاريخ - المبلغ */}
                   <div className="form-group">
@@ -3360,45 +3473,92 @@ export function PartnersTab({
                     />
                   </div>
 
-                  {/* Row 2: العمولة - المبلغ مع العمولة */}
-                  <div className="form-group">
-                    <label className="mb-label">العمولة (نسبة مئوية %)</label>
-                    <NumberInput
-                      value={String(txForm.commissionPercent)}
-                      onChange={(val) => setTxForm({ ...txForm, commissionPercent: parseDecimalInput(val) })}
-                      min={0}
-                      step={0.1}
-                      hideArrows
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="mb-label">المبلغ الكلي مع العمولة</label>
-                    <div style={{
-                      padding: "10px 12px",
-                      background: "rgba(255,255,255,0.03)",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                      borderRadius: "8px",
-                      color: "var(--green)",
-                      fontWeight: 700,
-                      fontSize: "var(--fs-md)",
-                      display: "flex",
-                      justifyContent: "center",
-                      alignItems: "center",
-                      height: "42px"
-                    }}>
-                      <PriceDisplay amount={txForm.amount + (txForm.amount * txForm.commissionPercent) / 100} currency={txCurrency} />
-                    </div>
-                  </div>
+                  {form.kind === "ممول" && (
+                    <>
+                      {/* Row 2: العمولة - المبلغ مع العمولة */}
+                      <div className="form-group">
+                        <label className="mb-label">العمولة</label>
+                        <PriceInput
+                          value={String(txForm.commission)}
+                          onChange={(commission) => setTxForm({ ...txForm, commission: Number(commission) || 0 })}
+                          currency={txCurrency}
+                          onCurrencyChange={setTxCurrency}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="mb-label">المبلغ الكلي مع العمولة</label>
+                        <div style={{
+                          padding: "10px 12px",
+                          background: "rgba(255,255,255,0.03)",
+                          border: "1px solid rgba(255,255,255,0.08)",
+                          borderRadius: "8px",
+                          color: "var(--green)",
+                          fontWeight: 700,
+                          fontSize: "var(--fs-md)",
+                          display: "flex",
+                          justifyContent: "center",
+                          alignItems: "center",
+                          height: "42px"
+                        }}>
+                          <PriceDisplay amount={txForm.amount + txForm.commission} currency={txCurrency} />
+                        </div>
+                      </div>
 
-                  {/* Row 3: ارسال المبلغ بيد */}
-                  <div className="form-group" style={{ gridColumn: "span 2" }}>
-                    <label className="mb-label">ارسال المبلغ بيد</label>
-                    <TextInput
-                      value={txForm.transferBy}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTxForm({ ...txForm, transferBy: e.target.value })}
-                      placeholder="اسم ناقل المبلغ..."
-                    />
-                  </div>
+                      {/* Row 3: ارسال المبلغ بيد */}
+                      <div className="form-group" style={{ gridColumn: "span 2" }}>
+                        <label className="mb-label">ارسال المبلغ بيد</label>
+                        <TextInput
+                          value={txForm.transferBy}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTxForm({ ...txForm, transferBy: e.target.value })}
+                          placeholder="اسم ناقل المبلغ..."
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {form.kind === "شركة" && (
+                    <>
+                      {/* Row 2: طريقة الدفع */}
+                      <div className="form-group">
+                        <label className="mb-label">طريقة الدفع</label>
+                        <div className="payment-type-selector" style={{ display: "flex", gap: "4px" }}>
+                          <button
+                            type="button"
+                            className={`payment-type-btn payment-type-btn--green ${companyPaymentMode === "cash" || companyPaymentMode === "" ? "payment-type-btn--active" : ""}`}
+                            onClick={() => setCompanyPaymentMode("cash")}
+                          >
+                            كاش
+                          </button>
+                          <button
+                            type="button"
+                            className={`payment-type-btn payment-type-btn--blue ${companyPaymentMode === "funder" ? "payment-type-btn--active" : ""}`}
+                            onClick={() => setCompanyPaymentMode("funder")}
+                          >
+                            تمويل
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Row 2: اختر الممول */}
+                      <div className="form-group">
+                        {companyPaymentMode === "funder" ? (
+                          <>
+                            <label className="mb-label">اختر الممول</label>
+                            <div className="bg-[var(--car-bg-card)] rounded-xl p-1" style={{ position: "relative" }}>
+                              <SearchableCombobox
+                                value={settleFunderName}
+                                onChange={(name) => setSettleFunderName(name)}
+                                placeholder="اختر الممول"
+                                options={partners.filter(p => p.kind === "ممول").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
+                              />
+                            </div>
+                          </>
+                        ) : (
+                          <div style={{ height: "100%" }} />
+                        )}
+                      </div>
+                    </>
+                  )}
 
                   {/* Row 4: الملاحظات */}
                   <div className="form-group" style={{ gridColumn: "span 2" }}>
@@ -3446,13 +3606,12 @@ export function PartnersTab({
                         />
                       </div>
                       <div className="form-group">
-                        <label className="mb-label">العمولة (نسبة مئوية %)</label>
-                        <NumberInput
-                          value={String(txForm.commissionPercent)}
-                          onChange={(val) => setTxForm({ ...txForm, commissionPercent: parseDecimalInput(val) })}
-                          min={0}
-                          step={0.1}
-                          hideArrows
+                        <label className="mb-label">العمولة</label>
+                        <PriceInput
+                          value={String(txForm.commission)}
+                          onChange={(commission) => setTxForm({ ...txForm, commission: Number(commission) || 0 })}
+                          currency={txCurrency}
+                          onCurrencyChange={setTxCurrency}
                         />
                       </div>
                       <div className="form-group">
@@ -3470,7 +3629,7 @@ export function PartnersTab({
                           alignItems: "center",
                           height: "42px"
                         }}>
-                          <PriceDisplay amount={txForm.amount + (txForm.amount * txForm.commissionPercent) / 100} currency={txCurrency} />
+                          <PriceDisplay amount={txForm.amount + txForm.commission} currency={txCurrency} />
                         </div>
                       </div>
                     </>
@@ -3497,49 +3656,27 @@ export function PartnersTab({
                       onFocus={(e) => setTimeout(() => e.target.select(), 0)}
                     />
                   </div>
-
-                  {form.kind === "شركة" && txForm.type === "سحب" && (
-                    <div className="form-group">
-                      <label className="mb-label">طريقة الدفع</label>
-                      <div className="payment-type-selector" style={{ display: "flex", gap: "4px" }}>
-                        <button
-                          type="button"
-                          className={`payment-type-btn payment-type-btn--green ${companyPaymentMode === "cash" || companyPaymentMode === "" ? "payment-type-btn--active" : ""}`}
-                          onClick={() => setCompanyPaymentMode("cash")}
-                        >
-                          كاش
-                        </button>
-                        <button
-                          type="button"
-                          className={`payment-type-btn payment-type-btn--blue ${companyPaymentMode === "funder" ? "payment-type-btn--active" : ""}`}
-                          onClick={() => setCompanyPaymentMode("funder")}
-                        >
-                          تمويل
-                        </button>
-                      </div>
-                      {companyPaymentMode === "funder" && (
-                        <div className="bg-[var(--car-bg-card)] rounded-xl p-3" style={{ marginTop: "0.75rem" }}>
-                          <SearchableCombobox
-                            value={settleFunderName}
-                            onChange={(name) => setSettleFunderName(name)}
-                            placeholder="اختر الممول"
-                            options={partners.filter(p => p.kind === "ممول").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </>
               )}
 
               <div className="modal-dialog__actions" style={{ marginTop: "1.5rem", display: "flex", gap: "12px" }}>
                 <GoldFxButton
                   type="submit"
-                  variant={form.kind === "ممول" ? (txForm.type === "سحب" ? "red" : "green") : (txForm.type === "ايداع" ? "green" : "gray")}
+                  variant={isFinancialClientKind(form.kind) || form.kind === "مقترض" ? (txForm.type === "سحب" ? "green" : "red") : (txForm.type === "ايداع" ? "green" : "gray")}
                   style={{ flex: 1, margin: 0 }}
                   disabled={saving}
                 >
-                  <span className="gold-fx-btn__label">{saving ? "جاري الحفظ..." : editingTransactionId ? "تحديث" : (form.kind === "ممول" ? (txForm.type === "سحب" ? "تسديد" : "استلام") : form.kind === "شركة" ? (txForm.type === "سحب" ? "تسديد" : "استلام") : "إضافة")}</span>
+                  <span className="gold-fx-btn__label">
+                    {saving
+                      ? "جاري الحفظ..."
+                      : editingTransactionId
+                        ? "تحديث"
+                        : isFinancialClientKind(form.kind)
+                          ? (txForm.type === "سحب" ? "تسليم" : "استلام")
+                          : form.kind === "مقترض"
+                            ? (txForm.type === "سحب" ? "باقي" : "واصل")
+                            : "إضافة"}
+                  </span>
                 </GoldFxButton>
                 <GoldFxButton type="button" variant="gray" style={{ flex: 1, margin: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.7)" }} onClick={() => setShowTxModal(false)}>
                   <span className="gold-fx-btn__label">إلغاء</span>

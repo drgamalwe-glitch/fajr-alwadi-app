@@ -9,7 +9,7 @@ export const MASTER_COLORS = {
   lable_opacity_inactive: 0.3,
   lable_opacity_hover: 0.5,
   labletext: "#303030ff",
-  textinputlabletext: "#d5d5d5ff",
+  textinputlabletext: "#262626ff",
 
   textinputbg: "#ffffff50",
   textinputtext: "#303030ff",

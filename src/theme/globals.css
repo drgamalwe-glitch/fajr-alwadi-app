@@ -435,14 +435,14 @@
   --dc-creditor-border: color-mix(in srgb, var(--gold) 28%, transparent);
   --dc-creditor-icon-bg: color-mix(in srgb, var(--gold) 13%, transparent);
   --dc-creditor-bg: linear-gradient(145deg, color-mix(in srgb, var(--black) 88%, transparent) 0%, color-mix(in srgb, var(--gold) 6%, transparent) 100%);
-  --dc-install-accent: var(--gold);
-  --dc-install-glow: color-mix(in srgb, var(--gold) 20%, transparent);
-  --dc-install-border: color-mix(in srgb, var(--gold) 28%, transparent);
-  --dc-install-bg: linear-gradient(145deg, color-mix(in srgb, var(--black) 85%, transparent) 0%, color-mix(in srgb, var(--gold) 5%, transparent) 100%);
-  --dc-fund-accent: var(--green);
-  --dc-fund-glow: color-mix(in srgb, var(--green) 20%, transparent);
-  --dc-fund-border: color-mix(in srgb, var(--green) 28%, transparent);
-  --dc-fund-bg: linear-gradient(145deg, color-mix(in srgb, var(--black) 85%, transparent) 0%, color-mix(in srgb, var(--green) 5%, transparent) 100%);
+  --dc-install-accent: var(--green);
+  --dc-install-glow: color-mix(in srgb, var(--green) 20%, transparent);
+  --dc-install-border: color-mix(in srgb, var(--green) 28%, transparent);
+  --dc-install-bg: linear-gradient(145deg, color-mix(in srgb, var(--black) 85%, transparent) 0%, color-mix(in srgb, var(--green) 5%, transparent) 100%);
+  --dc-fund-accent: var(--red);
+  --dc-fund-glow: color-mix(in srgb, var(--red) 20%, transparent);
+  --dc-fund-border: color-mix(in srgb, var(--red) 28%, transparent);
+  --dc-fund-bg: linear-gradient(145deg, color-mix(in srgb, var(--black) 85%, transparent) 0%, color-mix(in srgb, var(--red) 5%, transparent) 100%);
   --dc-card-bg: var(--backkground-secondary);
   --dc-card-radius: var(--all-radius);
   --dc-card-padding: 1.35rem 1.5rem;
@@ -817,7 +817,7 @@ textarea,
   flex-shrink: 0 !important;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 0px;
   padding: 20px 12px;
   margin-bottom: 0px;
   border-radius: var(--all-radius);
@@ -911,9 +911,9 @@ textarea,
 }
 
 .sidebar-logo {
-  height: 52px;
-  max-width: 200px;
-  width: 170px;
+  height: 10px;
+  max-width: 1000px;
+  width: 150px;
   filter: none;
   margin-top: -5px;
   margin-bottom: 6px;
@@ -925,7 +925,7 @@ textarea,
   z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 15px;
   /* هنا يتم تحديد التباعد بين التبويبات */
   flex: 1;
 }
@@ -3407,11 +3407,14 @@ select option {
 }
 
 @keyframes toggle-pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: scale(1);
     opacity: 0.9;
     box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
   }
+
   50% {
     transform: scale(1.5);
     opacity: 0.3;
@@ -10464,6 +10467,13 @@ textarea::placeholder {
 .data-table th,
 .data-table td {
   font-size: var(--expenses-font-size) !important;
+}
+
+.profit-distribution-table th,
+.profit-distribution-table td,
+.profit-distribution-table th span,
+.profit-distribution-table td span {
+  color: var(--textinputtext) !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════

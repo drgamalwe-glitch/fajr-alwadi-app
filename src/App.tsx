@@ -14,6 +14,13 @@ import { LoginScreen } from "./components/LoginScreen";
 import { UsersTab } from "./components/UsersTab";
 import type { Car, Partner, TabId, UserInfo } from "./types";
 
+type PartnerOpenTarget = {
+  name: string;
+  kind?: string | null;
+  action?: "deposit" | "withdraw" | "settle_installment";
+  transactionId?: number | null;
+};
+
 // Static array of background paths to optimize build size and prevent file duplication
 const INITIAL_BG_PATHS = ["/backgrounds/bg.jpg"];
 
@@ -34,6 +41,9 @@ const DEFAULT_BG = "/backgrounds/bg.jpg";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
+
+  const [partnersFinancialSubTab, setPartnersFinancialSubTab] = useState<"list" | "personal" | null>(null);
+  const [carsSubTab, setCarsSubTab] = useState<"available" | "sold" | null>(null);
 
   // List of available backgrounds state
   const [bgPaths, setBgPaths] = useState<string[]>(() => {
@@ -119,7 +129,7 @@ export default function App() {
   const [addExpenseAction, setAddExpenseAction] = useState<{ action: () => void } | null>(null);
   const [addDistributeAction, setAddDistributeAction] = useState<{ action: () => void } | null>(null);
   const [agenciesSearchOpen, setAgenciesSearchOpen] = useState(false);
-  const [pendingPartnerOpen, setPendingPartnerOpen] = useState<string | null>(null);
+  const [pendingPartnerOpen, setPendingPartnerOpen] = useState<PartnerOpenTarget | null>(null);
   const [cars, setCars] = useState<Car[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [loading, setLoading] = useState(true);
@@ -421,9 +431,17 @@ export default function App() {
                       handleTabChange("cars");
                       setCarFormTrigger({ mode, car });
                     }}
-                    onNavigateToPartner={(partnerName) => {
+                    onNavigateToPartner={(target) => {
                       navigateTo("partners-financial");
-                      setPendingPartnerOpen(partnerName);
+                      setPendingPartnerOpen(typeof target === "string" ? { name: target } : target);
+                    }}
+                    onNavigateToTab={(tab, subTab) => {
+                      if (tab === "partners-financial") {
+                        setPartnersFinancialSubTab(subTab as any);
+                      } else if (tab === "cars") {
+                        setCarsSubTab(subTab as any);
+                      }
+                      handleTabChange(tab);
                     }}
                   />
                 )}
@@ -440,6 +458,8 @@ export default function App() {
                     onCarFormActionsChange={setCarFormActions}
                     onFormDirtyChange={(dirty) => { dirtyRef.current = dirty; }}
                     requestCloseRef={tabCloseRequestRef}
+                    initialSubTab={carsSubTab}
+                    onInitialSubTabSet={() => setCarsSubTab(null)}
                   />
                 )}
                 {activeTab === "partners" && (
@@ -464,6 +484,8 @@ export default function App() {
                     onPendingPartnerOpened={() => setPendingPartnerOpen(null)}
                     requestCloseRef={tabCloseRequestRef}
                     onDirtyChange={handleDirtyChange}
+                    initialSubTab={partnersFinancialSubTab}
+                    onInitialSubTabSet={() => setPartnersFinancialSubTab(null)}
                   />
                 )}
                 {activeTab === "debtors" && (

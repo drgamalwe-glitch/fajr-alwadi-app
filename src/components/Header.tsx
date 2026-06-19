@@ -185,15 +185,15 @@ export function Header({
           {onAddDistribute && (
             <GoldFxButton
               type="button"
-              variant="green"
+              variant="gold"
               onClick={onAddDistribute}
             >
-              <span className="gold-fx-btn__icon">⚖</span>
-              <span className="gold-fx-btn__label">توزيع الأرباح</span>
+              <span className="gold-fx-btn__icon">↻</span>
+              <span className="gold-fx-btn__label">تصفير الارباح</span>
             </GoldFxButton>
           )}
           {onDeposit && onWithdraw && (
-            <div className="sidebar-action-btns">
+            <div className="sidebar-action-btns sidebar-action-btns--account">
               <GoldFxButton
                 type="button"
                 variant="green"

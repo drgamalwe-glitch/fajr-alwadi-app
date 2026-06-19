@@ -22,6 +22,8 @@ interface CarsTabProps {
   onCarFormActionsChange?: (actions: { onSave: () => void; onCancel: () => void } | null) => void;
   onFormDirtyChange?: (isDirty: boolean) => void;
   requestCloseRef?: React.MutableRefObject<{ request: (afterClose?: () => void) => void } | null>;
+  initialSubTab?: "available" | "sold" | null;
+  onInitialSubTabSet?: () => void;
 }
 
 /** وضع اللوحة الجانبية */
@@ -99,7 +101,11 @@ function carToForm(car: Car): CarFormState {
     saleCurrency: (car.sale_currency as "IQD" | "USD") ?? "IQD",
     purchasePaymentType: (car.purchase_payment_type === "ماستر" ? "ماستر" : car.purchase_payment_type === "خارج القاصة" ? "خارج القاصة" : "قاصه"),
     salePaymentType: (car.sale_payment_type === "ماستر" ? "ماستر" : car.sale_payment_type === "خارج القاصة" ? "خارج القاصة" : "قاصه"),
-    purchaseType: car.purchase_type === "دين" ? "تمويل" : (car.purchase_type as any ?? "كاش"),
+    purchaseType: car.purchase_type === "دين"
+      ? "تمويل"
+      : car.purchase_type === "تمويل" || car.purchase_type === "شركة"
+        ? car.purchase_type
+        : "كاش",
     financerName: car.financer_name ?? "",
     commissionType: (car.commission_type as any) ?? "لا يوجد",
     commissionValue: String(car.commission_value ?? 0),
@@ -118,6 +124,8 @@ export function CarsTab({
   onCarFormActionsChange,
   onFormDirtyChange,
   requestCloseRef,
+  initialSubTab,
+  onInitialSubTabSet,
 }: CarsTabProps) {
   const [form, setForm] = useState<CarFormState>(emptyForm);
   const formRef = useRef<CarFormState>(emptyForm());
@@ -139,6 +147,7 @@ export function CarsTab({
   const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
   const initialFormRef = useRef<CarFormState | null>(null);
   const pendingAfterCloseRef = useRef<(() => void) | null>(null);
+  const [expenseDirty, setExpenseDirty] = useState(false);
 
   const availableCarsList = useMemo(() => cars.filter((c) => c.status === "متوفرة"), [cars]);
   const purchaseIqd = useMemo(() => availableCarsList.filter((c) => c.currency !== "USD").reduce((sum, c) => sum + c.purchase_price + (c.expenses_sum || 0), 0), [availableCarsList]);
@@ -159,8 +168,8 @@ export function CarsTab({
     if (!initialFormRef.current || !panelMode) return false;
     const a = JSON.stringify(initialFormRef.current);
     const b = JSON.stringify(formRef.current);
-    return a !== b;
-  }, [form, panelMode]);
+    return a !== b || expenseDirty;
+  }, [form, panelMode, expenseDirty]);
 
   const hasFormChangesRef = useRef(hasFormChanges);
   hasFormChangesRef.current = hasFormChanges;
@@ -168,6 +177,13 @@ export function CarsTab({
   useEffect(() => {
     onFormDirtyChange?.(hasFormChanges);
   }, [hasFormChanges, onFormDirtyChange]);
+
+  useEffect(() => {
+    if (initialSubTab) {
+      setCarsTab(initialSubTab);
+      onInitialSubTabSet?.();
+    }
+  }, [initialSubTab, onInitialSubTabSet]);
 
   /* ── فلترة وترتيب ── */
   const filteredCars = useMemo(() => {
@@ -243,6 +259,7 @@ export function CarsTab({
     setSelectedId(car.car_number);
     replaceForm(newForm);
     initialFormRef.current = JSON.parse(JSON.stringify(newForm));
+    setExpenseDirty(false);
     setPanelMode("edit");
   };
 
@@ -252,6 +269,7 @@ export function CarsTab({
     setSelectedId(null);
     replaceForm(newForm);
     initialFormRef.current = JSON.parse(JSON.stringify(newForm));
+    setExpenseDirty(false);
     setPanelMode("new");
   };
 
@@ -259,15 +277,20 @@ export function CarsTab({
     setSelectedId(null);
     replaceForm(emptyForm());
     initialFormRef.current = null;
+    setExpenseDirty(false);
     setPanelMode(null);
   };
 
-  const handleUnsavedSave = async () => {
-    await handleAutoSave();
-    closePanel();
+  const handleUnsavedSave = () => {
     setShowUnsavedConfirm(false);
-    pendingAfterCloseRef.current?.();
-    pendingAfterCloseRef.current = null;
+    const formEl = document.getElementById("car-form") as HTMLFormElement | null;
+    if (formEl) {
+      formEl.requestSubmit();
+    } else {
+      closePanel();
+      pendingAfterCloseRef.current?.();
+      pendingAfterCloseRef.current = null;
+    }
   };
 
   const handleUnsavedDiscard = () => {
@@ -720,6 +743,8 @@ export function CarsTab({
     e.preventDefault();
     await handleAutoSave();
     closePanel();
+    pendingAfterCloseRef.current?.();
+    pendingAfterCloseRef.current = null;
   };
 
   const handleClosePanel = () => {
@@ -1233,6 +1258,7 @@ export function CarsTab({
             onChange={patchForm}
             onSubmit={handleSubmit}
             onClose={handleClosePanel}
+            onExpenseDirtyChange={setExpenseDirty}
             onSwitchToSpecs={() => {
               // العودة إلى تبويب مواصفات السيارة
               const formEl = document.getElementById("car-form");

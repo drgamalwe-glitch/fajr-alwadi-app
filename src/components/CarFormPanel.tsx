@@ -25,6 +25,7 @@ interface CarFormPanelProps {
   onClose?: () => void;
   embedMode?: boolean;
   onSwitchToSpecs?: () => void;
+  onExpenseDirtyChange?: (dirty: boolean) => void;
 }
 
 export function CarFormPanel({
@@ -32,6 +33,7 @@ export function CarFormPanel({
   onChange, onSubmit, onClose,
   embedMode = false,
   onSwitchToSpecs,
+  onExpenseDirtyChange,
 }: CarFormPanelProps) {
   const [allPartners, setAllPartners] = useState<Partner[]>([]);
   const [carExpenses, setCarExpenses] = useState<CarExpenseRecord[]>([]);
@@ -64,6 +66,17 @@ export function CarFormPanel({
     loadCarExpenses();
   }, [form.num, form.province]);
 
+  useEffect(() => {
+    onExpenseDirtyChange?.(
+      Boolean(
+        expenseDesc.trim() ||
+        expenseAmt.trim() ||
+        carExpenses.some((exp) => exp.id < 0) ||
+        deletedExpenseIds.length > 0
+      )
+    );
+  }, [expenseDesc, expenseAmt, carExpenses, deletedExpenseIds, onExpenseDirtyChange]);
+
   const prevPage = useRef(formPage);
   useEffect(() => {
     if (prevPage.current === 0 && formPage === 1) {
@@ -95,6 +108,45 @@ export function CarFormPanel({
       setDeletedExpenseIds((prev) => [...prev, id]);
     }
     setCarExpenses((prev) => prev.filter((exp) => exp.id !== id));
+  };
+
+  const saveExpenseChanges = async () => {
+    const carNumber = [form.num.trim(), form.province.trim()].filter(Boolean).join(" ");
+
+    for (const id of deletedExpenseIds) {
+      await callTauri("delete_car_expense_record", { id });
+    }
+
+    for (const exp of carExpenses) {
+      if (exp.id < 0) {
+        await callTauri("add_expense", {
+          description: exp.description,
+          amount: exp.amount,
+          date: exp.date,
+          notes: `مصروف مخصص للسيارة ${form.name || form.model || "سيارة"} رقم ${carNumber}`,
+          currency: exp.currency,
+          carNumber,
+        });
+      }
+    }
+
+    const pendingAmount = Number(expenseAmt) || 0;
+    if (expenseDesc.trim() && pendingAmount > 0) {
+      await callTauri("add_expense", {
+        description: expenseDesc.trim(),
+        amount: pendingAmount,
+        date: todayIsoDate(),
+        notes: `مصروف مخصص للسيارة ${form.name || form.model || "سيارة"} رقم ${carNumber}`,
+        currency: expenseCurrency,
+        carNumber,
+      });
+    }
+
+    setDeletedExpenseIds([]);
+    setCarExpenses((prev) => prev.filter((exp) => exp.id > 0));
+    setExpenseDesc("");
+    setExpenseAmt("");
+    onExpenseDirtyChange?.(false);
   };
 
   const isSold = form.status === "مبيوعة";
@@ -261,26 +313,7 @@ export function CarFormPanel({
 
     // حفظ التغييرات في المصاريف بقاعدة البيانات SQLite فقط عند تأكيد الحفظ
     try {
-      const carNumber = [form.num.trim(), form.province.trim()].filter(Boolean).join(" ");
-
-      // 1. حذف المصاريف التي حدد المستخدم حذفها
-      for (const id of deletedExpenseIds) {
-        await callTauri("delete_car_expense_record", { id });
-      }
-
-      // 2. إضافة المصاريف الجديدة
-      for (const exp of carExpenses) {
-        if (exp.id < 0) {
-          await callTauri("add_expense", {
-            description: exp.description,
-            amount: exp.amount,
-            date: exp.date,
-            notes: `مصروف مخصص للسيارة ${form.name || form.model || "سيارة"} رقم ${carNumber}`,
-            currency: exp.currency,
-            carNumber,
-          });
-        }
-      }
+      await saveExpenseChanges();
     } catch (dbErr) {
       console.error("Failed to save expenses to database:", dbErr);
     }
@@ -518,11 +551,11 @@ export function CarFormPanel({
                     <div className="col-span-2">
                       <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">طريقة الشراء</label>
                       <div className="payment-type-selector" style={{ display: "flex", gap: "4px" }}>
-                        {(["كاش", "موجود", "تمويل", "شركة"] as const).map((opt) => (
+                        {(["كاش", "تمويل", "شركة"] as const).map((opt) => (
                           <button
                             key={opt}
                             type="button"
-                            className={`payment-type-btn payment-type-btn--${opt === "كاش" ? "green" : opt === "تمويل" ? "blue" : opt === "شركة" ? "orange" : "cyan"} ${form.purchaseType === opt ? "payment-type-btn--active" : ""}`}
+                            className={`payment-type-btn payment-type-btn--${opt === "كاش" ? "green" : opt === "تمويل" ? "blue" : "orange"} ${form.purchaseType === opt ? "payment-type-btn--active" : ""}`}
                             onClick={() => {
                               if (opt !== form.purchaseType) {
                                 onChange({ purchaseType: opt, financerName: "" });

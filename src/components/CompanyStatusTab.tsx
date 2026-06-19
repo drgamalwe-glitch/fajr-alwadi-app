@@ -42,7 +42,17 @@ const transactionSignedAmount = (tx: PartnerTransaction) => {
   return 0;
 };
 
-export function CompanyStatusTab({ summary, unifiedAccounts, partners }: { summary: FinancialSummary | null; unifiedAccounts: UnifiedAccount[]; partners: Partner[] }) {
+export function CompanyStatusTab({
+  summary,
+  unifiedAccounts,
+  partners,
+  onNavigateToTab,
+}: {
+  summary: FinancialSummary | null;
+  unifiedAccounts: UnifiedAccount[];
+  partners: Partner[];
+  onNavigateToTab?: (tab: any, subTab?: string) => void;
+}) {
   const sharikPartners = partners.filter((p) => p.kind === "شريك");
   const amirPartner = sharikPartners.find((p) => normalizePartnerName(p.partner_name).includes("امير"));
   const muntasirPartner = sharikPartners.find((p) => normalizePartnerName(p.partner_name).includes("منتصر"));
@@ -102,14 +112,14 @@ export function CompanyStatusTab({ summary, unifiedAccounts, partners }: { summa
   unifiedAccounts.forEach((acc) => {
     if (acc.kind === "ممول" || acc.kind === "مستثمر" || acc.kind === "شركة") {
       if (acc.iqd_balance > 0) {
-        liabilitiesIqd += acc.iqd_balance;
+        receivablesIqd += acc.iqd_balance;
       } else if (acc.iqd_balance < 0) {
-        receivablesIqd += Math.abs(acc.iqd_balance);
+        liabilitiesIqd += Math.abs(acc.iqd_balance);
       }
       if (acc.usd_balance > 0) {
-        liabilitiesUsd += acc.usd_balance;
+        receivablesUsd += acc.usd_balance;
       } else if (acc.usd_balance < 0) {
-        receivablesUsd += Math.abs(acc.usd_balance);
+        liabilitiesUsd += Math.abs(acc.usd_balance);
       }
     } else if (acc.kind === "مقترض" || acc.kind === "مطلوب") {
       if (acc.iqd_balance > 0) {
@@ -121,8 +131,11 @@ export function CompanyStatusTab({ summary, unifiedAccounts, partners }: { summa
     }
   });
 
-  const companyValueIqd = (summary.cash_iqd + summary.inventory_value_iqd + receivablesIqd) - liabilitiesIqd;
-  const companyValueUsd = (summary.cash_usd + summary.inventory_value_usd + receivablesUsd) - liabilitiesUsd;
+  const netCashIqd = summary.cash_iqd - Math.max(0, summary.total_investments_iqd);
+  const netCashUsd = summary.cash_usd - Math.max(0, summary.total_investments_usd);
+
+  const companyValueIqd = (netCashIqd + summary.inventory_value_iqd + receivablesIqd) - liabilitiesIqd;
+  const companyValueUsd = (netCashUsd + summary.inventory_value_usd + receivablesUsd) - liabilitiesUsd;
 
   const formatCompact = (value: number): string => {
     const absVal = Math.abs(value);
@@ -197,10 +210,42 @@ export function CompanyStatusTab({ summary, unifiedAccounts, partners }: { summa
                 </>
               )}
               <div className="company-value__chips" aria-label="تفاصيل قيمة الشركة">
-                <span>الكاش: {formatCompact(summary.cash_iqd)} IQ</span>
-                <span>السيارات: {formatCompact(summary.inventory_value_iqd)} IQ</span>
-                <span>نطلب: {formatCompact(receivablesIqd)} IQ</span>
-                <span>مطلوبين: {formatCompact(liabilitiesIqd)} IQ</span>
+                <span
+                  style={{ cursor: "pointer" }}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onNavigateToTab?.("partners-financial", "personal")}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onNavigateToTab?.("partners-financial", "personal"); }}
+                >
+                  الكاش: {formatCompact(netCashIqd)} IQ
+                </span>
+                <span
+                  style={{ cursor: "pointer" }}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onNavigateToTab?.("cars", "available")}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onNavigateToTab?.("cars", "available"); }}
+                >
+                  السيارات: {formatCompact(summary.inventory_value_iqd)} IQ
+                </span>
+                <span
+                  style={{ cursor: "pointer" }}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onNavigateToTab?.("partners-financial", "list")}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onNavigateToTab?.("partners-financial", "list"); }}
+                >
+                  نطلب: {formatCompact(receivablesIqd)} IQ
+                </span>
+                <span
+                  style={{ cursor: "pointer" }}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onNavigateToTab?.("partners-financial", "list")}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onNavigateToTab?.("partners-financial", "list"); }}
+                >
+                  مطلوبين: {formatCompact(liabilitiesIqd)} IQ
+                </span>
               </div>
             </div>
           </div>
@@ -211,19 +256,41 @@ export function CompanyStatusTab({ summary, unifiedAccounts, partners }: { summa
         <div className="line"></div>
 
         <div className="stats">
-          <div className="card capital">
+          <div
+            className="card capital"
+            style={{ cursor: "pointer" }}
+            role="button"
+            tabIndex={0}
+            onClick={() => onNavigateToTab?.("partners-financial", "personal")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                onNavigateToTab?.("partners-financial", "personal");
+              }
+            }}
+          >
             <div className="card-labels">
               <div className="label">الكاش</div>
             </div>
             <div className="card-values">
-              <div className="number">{formatCompact(summary.cash_iqd)} <span className="card-currency-iq">IQ</span></div>
-              {summary.cash_usd !== 0 && (
-                <div className="card-sub-val">{formatCompact(summary.cash_usd)} <span className="card-currency-usd">USD</span></div>
+              <div className="number">{formatCompact(netCashIqd)} <span className="card-currency-iq">IQ</span></div>
+              {netCashUsd !== 0 && (
+                <div className="card-sub-val">{formatCompact(netCashUsd)} <span className="card-currency-usd">USD</span></div>
               )}
             </div>
           </div>
 
-          <div className="card cars">
+          <div
+            className="card cars"
+            style={{ cursor: "pointer" }}
+            role="button"
+            tabIndex={0}
+            onClick={() => onNavigateToTab?.("cars", "available")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                onNavigateToTab?.("cars", "available");
+              }
+            }}
+          >
             <div className="card-labels">
               <div className="label">قيمة السيارات</div>
             </div>
@@ -234,7 +301,18 @@ export function CompanyStatusTab({ summary, unifiedAccounts, partners }: { summa
               )}
             </div>
           </div>
-          <div className="card payable">
+          <div
+            className="card payable"
+            style={{ cursor: "pointer" }}
+            role="button"
+            tabIndex={0}
+            onClick={() => onNavigateToTab?.("partners-financial", "list")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                onNavigateToTab?.("partners-financial", "list");
+              }
+            }}
+          >
             <div className="card-labels">
               <div className="label">نطلب</div>
             </div>
@@ -245,7 +323,18 @@ export function CompanyStatusTab({ summary, unifiedAccounts, partners }: { summa
               )}
             </div>
           </div>
-          <div className="card receivable">
+          <div
+            className="card receivable"
+            style={{ cursor: "pointer" }}
+            role="button"
+            tabIndex={0}
+            onClick={() => onNavigateToTab?.("partners-financial", "list")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                onNavigateToTab?.("partners-financial", "list");
+              }
+            }}
+          >
             <div className="card-labels">
               <div className="label">مطلوبين</div>
             </div>

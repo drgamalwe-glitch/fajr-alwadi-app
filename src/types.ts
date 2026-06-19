@@ -197,7 +197,7 @@ export interface CarFormState {
   saleCurrency: "IQD" | "USD";
   purchasePaymentType: "قاصه" | "خارج القاصة" | "ماستر";
   salePaymentType: "قاصه" | "خارج القاصة" | "ماستر";
-  purchaseType: "كاش" | "تمويل" | "شركة" | "موجود";
+  purchaseType: "كاش" | "تمويل" | "شركة";
   financerName: string;
   commissionType: "نسبة" | "مقطوع" | "لا يوجد";
   commissionValue: string;

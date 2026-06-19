@@ -2,7 +2,7 @@ export const PAGE_SIZE = 13;
 
 export const CAR_STATUS_OPTIONS = ["متوفرة", "مبيوعة"] as const;
 export const PAYMENT_TYPE_OPTIONS = ["كاش", "موعد", "اقساط"] as const;
-export const PURCHASE_TYPE_OPTIONS = ["كاش", "تمويل", "شركة", "موجود"] as const;
+export const PURCHASE_TYPE_OPTIONS = ["كاش", "تمويل", "شركة"] as const;
 export const COMMISSION_TYPE_OPTIONS = ["نسبة", "مقطوع", "لا يوجد"] as const;
 export const CURRENCY_OPTIONS = ["IQD", "USD"] as const;
 export const PAYMENT_ACCOUNT_OPTIONS = ["قاصه", "خارج القاصة", "ماستر"] as const;

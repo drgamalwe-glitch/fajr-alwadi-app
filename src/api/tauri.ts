@@ -482,10 +482,6 @@ async function mockInvoke<T>(
           type_ = "شراء عن طريق شركة";
           amount = c.purchase_price;
           description = `${c.car_name} - ${c.car_number} (شركة: ${(c.financer_name || "").trim()})`;
-        } else if (purchaseType === "موجود") {
-          type_ = "إضافة سيارة موجودة";
-          amount = c.purchase_price;
-          description = `${c.car_name} - ${c.car_number} (سيارة موجودة)`;
         } else {
           type_ = "شراء سيارة";
           amount = -c.purchase_price;
