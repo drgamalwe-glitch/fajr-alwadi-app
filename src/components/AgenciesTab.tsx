@@ -7,7 +7,7 @@ import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { UnifiedDateField } from "./UnifiedDateField";
-import { englishKeyboardToArabic } from "../utils/keyboardLayout";
+
 import { toEnglishDigits } from "../utils/numberInput";
 import { todayIsoDate } from "../utils/dateSegments";
 import { GoldFxButton } from "./ui/GoldFxButton";
@@ -43,8 +43,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   const pendingAgencyActionRef = useRef<(() => void) | null>(null);
   const pendingAgencyCloseRef = useRef<(() => void) | null>(null);
 
-  const [txForm, setTxForm] = useState({ type: "ايداع" as string, amount: 0, date: todayIsoDate(), notes: "", currency: "IQD" as string });
-  const [txCurrency, setTxCurrency] = useState<"IQD" | "USD">("IQD");
+  const [txForm, setTxForm] = useState({ type: "ايداع" as string, amount: 0, date: todayIsoDate(), notes: "", currency: "IQD" as "IQD" | "USD" });
 
   const [deleteTxConfirm, setDeleteTxConfirm] = useState<AgencyTransaction | null>(null);
   const [deleteAgencyConfirm, setDeleteAgencyConfirm] = useState<Agency | null>(null);
@@ -317,7 +316,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
         amount: txForm.amount,
         date: dateStr,
         notes: txForm.notes || null,
-        currency: txCurrency,
+        currency: txForm.currency,
       });
       resetTxForm(txForm.type);
       setShowTxModal(false);
@@ -574,7 +573,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                   id="agency-old-agent"
                   inputSize="sm"
                   value={selectedAgency.old_agent_name}
-                  onChange={(e) => { setSelectedAgency({ ...selectedAgency, old_agent_name: englishKeyboardToArabic(e.target.value) }); }}
+                  onChange={(e) => { setSelectedAgency({ ...selectedAgency, old_agent_name: e.target.value }); }}
                 />
               </div>
               <div className="agency-field agency-field--lg">
@@ -583,7 +582,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                   id="agency-new-agent"
                   inputSize="sm"
                   value={selectedAgency.new_agent_name}
-                  onChange={(e) => { setSelectedAgency({ ...selectedAgency, new_agent_name: englishKeyboardToArabic(e.target.value) }); }}
+                  onChange={(e) => { setSelectedAgency({ ...selectedAgency, new_agent_name: e.target.value }); }}
                 />
               </div>
               <div className="agency-field agency-field--lg">
@@ -636,9 +635,9 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                   inputMode="decimal"
                   value={selectedAgency.car_number}
                   dir="ltr"
-                  onInput={(e: React.FormEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits((e.target as HTMLInputElement).value).replace(/\D/g, "") }); }}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits(e.target.value).replace(/\D/g, "") }); }}
-                  onBlur={(e: React.FocusEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits(e.target.value).replace(/\D/g, "") }); }}
+                  onInput={(e: React.FormEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits((e.target as HTMLInputElement).value).replace(/[^\w\s\u0600-\u06FF-]/g, "") }); }}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits(e.target.value).replace(/[^\w\s\u0600-\u06FF-]/g, "") }); }}
+                  onBlur={(e: React.FocusEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits(e.target.value).replace(/[^\w\s\u0600-\u06FF-]/g, "") }); }}
                 />
               </div>
               <div className="agency-field agency-field--md">
@@ -890,8 +889,8 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                       <button
                         key={opt}
                         type="button"
-                        className={`payment-type-btn ${txCurrency === opt ? "payment-type-btn--active" : ""}`}
-                        onClick={() => setTxCurrency(opt)}
+                        className={`payment-type-btn ${txForm.currency === opt ? "payment-type-btn--active" : ""}`}
+                        onClick={() => setTxForm({ ...txForm, currency: opt })}
                         style={{ padding: "8px 12px", fontSize: "var(--fs-xs)" }}
                       >
                         {opt}

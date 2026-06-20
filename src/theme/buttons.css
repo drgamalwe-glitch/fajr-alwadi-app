@@ -192,7 +192,7 @@
 
   /* ─────────────────────────────────────────────────────────────────────────────
      ◆ 17. أزرار الدفع — Payment Type Buttons
-         للاستخدام: اختيار طريقة الدفع (قاصة، ماستر، خارجي)
+         للاستخدام: اختيار طريقة الدفع (قاصة، مصرف، خارجي)
      ───────────────────────────────────────────────────────────────────────────── */
   --btn-payment-qasa-bg: #d8a85a;
   --btn-payment-master-bg: #818cf8;
@@ -224,11 +224,11 @@
 
   /* ─────────────────────────────────────────────────────────────────────────────
      ◆ 19. أزرار الشركاء حسب النوع — Partner Kind Buttons
-         للاستخدام: أزرار تصفية الشركاء (شريك، ممول، مقترض، مستثمر، شركة)
+         للاستخدام: أزرار تصفية الشركاء (شريك، ممول، زبون، مستثمر، شركة)
      ───────────────────────────────────────────────────────────────────────────── */
   --btn-partner-sharik-bg: #10b981;
   --btn-partner-mumuol-bg: #3b82f6;
-  --btn-partner-moqtarid-bg: #f59e0b;
+  --btn-partner-zaboun-bg: #f59e0b;
   --btn-partner-mustathmir-bg: #8b5cf6;
   --btn-partner-sharika-bg: #ec4899;
 }
@@ -973,17 +973,17 @@
   border-color: rgba(59, 130, 246, 0.25) !important;
 }
 
-.payment-type-btn--partner-مقترض.payment-type-btn--active {
-  background: var(--btn-partner-moqtarid-bg) !important;
+.payment-type-btn--partner-زبون.payment-type-btn--active {
+  background: var(--btn-partner-zaboun-bg) !important;
   color: #ffffff !important;
   font-weight: var(--fw-extrabold) !important;
   border: 1px solid rgba(255, 255, 255, 0.15) !important;
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.2) !important;
 }
 
-.payment-type-btn--partner-مقترض:hover:not(.payment-type-btn--active) {
+.payment-type-btn--partner-زبون:hover:not(.payment-type-btn--active) {
   background: rgba(245, 158, 11, 0.08) !important;
-  color: var(--btn-partner-moqtarid-bg) !important;
+  color: var(--btn-partner-zaboun-bg) !important;
   border-color: rgba(245, 158, 11, 0.25) !important;
 }
 
@@ -1088,4 +1088,10 @@
   border: none;
   clip-path: polygon(0 42%, 38% 34%, 50% 0, 62% 34%, 100% 42%, 100% 58%, 62% 66%, 50% 100%, 38% 66%, 0 58%);
   box-shadow: 0 0 6px rgba(255, 255, 255, 0.42), 0 0 12px rgba(255, 255, 255, 0.18);
+}
+
+.payment-type-btn--sm {
+  padding: 6px 10px !important;
+  font-size: 12px !important;
+  border-radius: 6px !important;
 }

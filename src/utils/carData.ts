@@ -50,8 +50,9 @@ export const CAR_COLORS = [
   "رمادي داكن",
 ] as const;
 
-/** سنوات الصنع 2026 → 2000 */
+/** سنوات الصنع ديناميكية من السنة القادمة → 2000 */
+const currentYear = new Date().getFullYear();
 export const CAR_YEARS: string[] = Array.from(
-  { length: 2026 - 2000 + 1 },
-  (_, i) => String(2026 - i),
+  { length: (currentYear + 1) - 2000 + 1 },
+  (_, i) => String((currentYear + 1) - i),
 );

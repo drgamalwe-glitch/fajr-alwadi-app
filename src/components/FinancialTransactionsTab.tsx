@@ -7,11 +7,11 @@ import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
 
 /**
- * سجل المعاملات – يعرض جميع سجل المعاملات من كافة الحسابات (قاصه + ماستر + مصرف)
+ * سجل المعاملات – يعرض جميع سجل المعاملات من كافة الحسابات (قاصه + مصرف + خارج القاصة)
  * مجمّعة في جدول واحد.
  */
 export function FinancialTransactionsTab() {
-  const [entries, setEntries] = useState<(CashRegisterEntry & { _source?: "قاصه" | "خارج القاصة" | "ماستر" | "مصرف" })[]>([]);
+  const [entries, setEntries] = useState<(CashRegisterEntry & { _source?: "قاصه" | "خارج القاصة" | "مصرف" })[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
@@ -31,7 +31,7 @@ export function FinancialTransactionsTab() {
       }
 
       const all = (entriesData ?? []).map(entry => {
-        let source: "قاصه" | "خارج القاصة" | "ماستر" | "مصرف" = "قاصه";
+        let source: "قاصه" | "خارج القاصة" | "مصرف" = "قاصه";
 
         // التحقق مما إذا كانت الحركة متعلقة بسيارة
         const isCarEntry = [
@@ -49,7 +49,7 @@ export function FinancialTransactionsTab() {
             const car = carsMap.get(carNum);
             if (car && car.purchase_payment_type) {
               const pType = car.purchase_payment_type.trim();
-              if (pType === "ماستر" || pType === "مصرف" || pType === "قاصه" || pType === "خارج القاصة") {
+              if (pType === "مصرف" || pType === "قاصه" || pType === "خارج القاصة") {
                 source = pType as any;
               }
             }
@@ -69,8 +69,21 @@ export function FinancialTransactionsTab() {
         return (a.time ?? "").localeCompare(b.time ?? "");
       });
 
-      const lastPage = Math.max(0, Math.ceil(all.length / PAGE_SIZE) - 1);
-      setEntries(all);
+      let iqdRunning = 0;
+      let usdRunning = 0;
+      const allWithBalance = all.map(entry => {
+        const curr = entry.currency === "USD" ? "USD" : "IQD";
+        if (curr === "USD") {
+          usdRunning += entry.amount;
+          return { ...entry, balance: usdRunning };
+        } else {
+          iqdRunning += entry.amount;
+          return { ...entry, balance: iqdRunning };
+        }
+      });
+
+      const lastPage = Math.max(0, Math.ceil(allWithBalance.length / PAGE_SIZE) - 1);
+      setEntries(allWithBalance);
       setPage(lastPage);
     } catch {
       setEntries([]);
@@ -99,7 +112,7 @@ export function FinancialTransactionsTab() {
       let valA: any = a[key as keyof typeof a] ?? "";
       let valB: any = b[key as keyof typeof b] ?? "";
 
-      if (key === "amount" || key === "id") {
+      if (key === "amount" || key === "balance" || key === "id") {
         return (Number(valA) - Number(valB)) * sign;
       }
       if (key === "date") {
@@ -160,13 +173,14 @@ export function FinancialTransactionsTab() {
                 <th className={sortConfig?.key === "type_" ? "th--sorted" : ""} onClick={() => handleSort("type_")} style={{ width: "200px", cursor: "pointer" }}>نوع العملية</th>
                 <th className={`col-money ${sortConfig?.key === "amount" ? "th--sorted" : ""}`} onClick={() => handleSort("amount")} style={{ width: "200px", cursor: "pointer" }}>المبلغ</th>
                 <th className={sortConfig?.key === "description" ? "th--sorted" : ""} onClick={() => handleSort("description")} style={{ cursor: "pointer" }}>التفاصيل</th>
+                <th className={`col-money ${sortConfig?.key === "balance" ? "th--sorted" : ""}`} onClick={() => handleSort("balance")} style={{ width: "200px", cursor: "pointer" }}>الرصيد</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} className="empty-cell">جاري التحميل...</td></tr>
+                <tr><td colSpan={8} className="empty-cell">جاري التحميل...</td></tr>
               ) : entries.length === 0 ? (
-                <tr><td colSpan={7} className="empty-cell">لا توجد حركات مالية</td></tr>
+                <tr><td colSpan={8} className="empty-cell">لا توجد حركات مالية</td></tr>
               ) : (
                 <>
                   {pageEntries.map((entry, idx) => (
@@ -204,11 +218,22 @@ export function FinancialTransactionsTab() {
                           <span className="text-muted" style={{ marginRight: "0.5rem" }}>({entry.notes})</span>
                         ) : null}
                       </td>
+                      <td
+                        className={`col-money ${entry.currency === "USD"
+                            ? "tx-amount-usd"
+                            : entry.balance >= 0
+                              ? "tx-amount-iqd-pos"
+                              : "tx-amount-iqd-neg"
+                          }`}
+                      >
+                        <PriceDisplay amount={entry.balance} currency={entry.currency} />
+                      </td>
                     </tr>
                   ))}
                   {Array.from({ length: PAGE_SIZE - pageEntries.length }).map((_, i) => (
                     <tr key={`empty-${i}`} style={{ pointerEvents: "none" }}>
                       <td className="cell-num">&nbsp;</td>
+                      <td>&nbsp;</td>
                       <td>&nbsp;</td>
                       <td>&nbsp;</td>
                       <td>&nbsp;</td>

@@ -1,6 +1,4 @@
-import { useEffect, useState } from "react";
-import { callTauri } from "../api/tauri";
-import type { FinancialSummary, UnifiedAccount, Partner, PartnerTransaction } from "../types";
+import type { FinancialSummary, UnifiedAccount, Partner } from "../types";
 
 const normalizePartnerName = (name: string) =>
   name
@@ -21,26 +19,7 @@ const getPartnerImage = (name: string) => {
   return undefined;
 };
 
-const transactionSignedAmount = (tx: PartnerTransaction) => {
-  const type = tx.type_ || "";
-  if (type.startsWith("تحويل")) return 0;
-  if (
-    type.startsWith("ايداع") ||
-    type.startsWith("إيداع") ||
-    type.startsWith("مقدمة") ||
-    type.startsWith("استلام") ||
-    type.startsWith("إستلام") ||
-    type.startsWith("إعادة استثمار") ||
-    type.startsWith("تسوية") ||
-    type.startsWith("تسديد")
-  ) {
-    return tx.amount;
-  }
-  if (type.startsWith("سحب") || type.startsWith("باقي")) {
-    return -tx.amount;
-  }
-  return 0;
-};
+const ACCOUNT_LIST_KINDS = new Set(["مستثمر", "ممول", "زبون", "شركة"]);
 
 export function CompanyStatusTab({
   summary,
@@ -59,41 +38,6 @@ export function CompanyStatusTab({
   const fallbackPartners = sharikPartners.filter((p) => p !== amirPartner && p !== muntasirPartner);
   const partner1 = amirPartner ?? fallbackPartners[0] ?? null;
   const partner2 = muntasirPartner ?? fallbackPartners.find((p) => p !== partner1) ?? null;
-  const [partnerUsdBalances, setPartnerUsdBalances] = useState<Record<string, number>>({});
-
-  useEffect(() => {
-    const selectedPartners = [partner1, partner2].filter(Boolean) as Partner[];
-    if (selectedPartners.length === 0) {
-      setPartnerUsdBalances({});
-      return;
-    }
-
-    let cancelled = false;
-    void Promise.all(
-      selectedPartners.map(async (partner) => {
-        const transactions = await callTauri<PartnerTransaction[]>("get_partner_transactions", {
-          partnerName: partner.partner_name,
-          kind: partner.kind,
-        });
-        const usdBalance = (transactions ?? [])
-          .filter((tx) => (tx.currency || "IQD") === "USD")
-          .reduce((total, tx) => total + transactionSignedAmount(tx), 0);
-        return [normalizePartnerName(partner.partner_name), usdBalance] as const;
-      }),
-    )
-      .then((entries) => {
-        if (!cancelled) setPartnerUsdBalances(Object.fromEntries(entries));
-      })
-      .catch((err) => {
-        console.error("Failed to load partner USD balances:", err);
-        if (!cancelled) setPartnerUsdBalances({});
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [partner1?.partner_name, partner1?.kind, partner2?.partner_name, partner2?.kind]);
-
   if (!summary) {
     return (
       <div className="wadhisharikah-container">
@@ -110,29 +54,21 @@ export function CompanyStatusTab({
   let receivablesUsd = 0;
 
   unifiedAccounts.forEach((acc) => {
-    if (acc.kind === "ممول" || acc.kind === "مستثمر" || acc.kind === "شركة") {
-      if (acc.iqd_balance > 0) {
-        receivablesIqd += acc.iqd_balance;
-      } else if (acc.iqd_balance < 0) {
-        liabilitiesIqd += Math.abs(acc.iqd_balance);
-      }
-      if (acc.usd_balance > 0) {
-        receivablesUsd += acc.usd_balance;
-      } else if (acc.usd_balance < 0) {
-        liabilitiesUsd += Math.abs(acc.usd_balance);
-      }
-    } else if (acc.kind === "مقترض" || acc.kind === "مطلوب") {
-      if (acc.iqd_balance > 0) {
-        receivablesIqd += acc.iqd_balance;
-      }
-      if (acc.usd_balance > 0) {
-        receivablesUsd += acc.usd_balance;
-      }
+    if (!ACCOUNT_LIST_KINDS.has(acc.kind)) return;
+    if (acc.iqd_balance > 0) {
+      receivablesIqd += acc.iqd_balance;
+    } else if (acc.iqd_balance < 0) {
+      liabilitiesIqd += Math.abs(acc.iqd_balance);
+    }
+    if (acc.usd_balance > 0) {
+      receivablesUsd += acc.usd_balance;
+    } else if (acc.usd_balance < 0) {
+      liabilitiesUsd += Math.abs(acc.usd_balance);
     }
   });
 
-  const netCashIqd = summary.cash_iqd - Math.max(0, summary.total_investments_iqd);
-  const netCashUsd = summary.cash_usd - Math.max(0, summary.total_investments_usd);
+  const netCashIqd = sharikPartners.reduce((sum, p) => sum + (p.iqd_balance ?? 0), 0);
+  const netCashUsd = sharikPartners.reduce((sum, p) => sum + (p.usd_balance ?? 0), 0);
 
   const companyValueIqd = (netCashIqd + summary.inventory_value_iqd + receivablesIqd) - liabilitiesIqd;
   const companyValueUsd = (netCashUsd + summary.inventory_value_usd + receivablesUsd) - liabilitiesUsd;
@@ -157,10 +93,10 @@ export function CompanyStatusTab({
   const sharedIqd = (summary.inventory_value_iqd + receivablesIqd - liabilitiesIqd) / 2;
   const sharedUsd = (summary.inventory_value_usd + receivablesUsd - liabilitiesUsd) / 2;
 
-  const p1CapitalIqd = partner1 ? partner1.total_amount + sharedIqd : 0;
-  const p1CapitalUsd = partner1 ? (partnerUsdBalances[normalizePartnerName(partner1.partner_name)] ?? 0) + sharedUsd : 0;
-  const p2CapitalIqd = partner2 ? partner2.total_amount + sharedIqd : 0;
-  const p2CapitalUsd = partner2 ? (partnerUsdBalances[normalizePartnerName(partner2.partner_name)] ?? 0) + sharedUsd : 0;
+  const p1CapitalIqd = partner1 ? (partner1.iqd_balance ?? 0) + sharedIqd : 0;
+  const p1CapitalUsd = partner1 ? (partner1.usd_balance ?? 0) + sharedUsd : 0;
+  const p2CapitalIqd = partner2 ? (partner2.iqd_balance ?? 0) + sharedIqd : 0;
+  const p2CapitalUsd = partner2 ? (partner2.usd_balance ?? 0) + sharedUsd : 0;
 
   const renderPartnerCard = (partner: Partner | null, capitalIqd: number, capitalUsd: number, colorClass: string) => {
     if (!partner) return null;
@@ -232,8 +168,8 @@ export function CompanyStatusTab({
                   style={{ cursor: "pointer" }}
                   role="button"
                   tabIndex={0}
-                  onClick={() => onNavigateToTab?.("partners-financial", "list")}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onNavigateToTab?.("partners-financial", "list"); }}
+                  onClick={() => onNavigateToTab?.("partners-financial", "receivables")}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onNavigateToTab?.("partners-financial", "receivables"); }}
                 >
                   نطلب: {formatCompact(receivablesIqd)} IQ
                 </span>
@@ -241,10 +177,10 @@ export function CompanyStatusTab({
                   style={{ cursor: "pointer" }}
                   role="button"
                   tabIndex={0}
-                  onClick={() => onNavigateToTab?.("partners-financial", "list")}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onNavigateToTab?.("partners-financial", "list"); }}
+                  onClick={() => onNavigateToTab?.("partners-financial", "liabilities")}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onNavigateToTab?.("partners-financial", "liabilities"); }}
                 >
-                  مطلوبين: {formatCompact(liabilitiesIqd)} IQ
+                  خصوم: {formatCompact(liabilitiesIqd)} IQ
                 </span>
               </div>
             </div>
@@ -306,10 +242,10 @@ export function CompanyStatusTab({
             style={{ cursor: "pointer" }}
             role="button"
             tabIndex={0}
-            onClick={() => onNavigateToTab?.("partners-financial", "list")}
+            onClick={() => onNavigateToTab?.("partners-financial", "receivables")}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
-                onNavigateToTab?.("partners-financial", "list");
+                onNavigateToTab?.("partners-financial", "receivables");
               }
             }}
           >
@@ -328,15 +264,15 @@ export function CompanyStatusTab({
             style={{ cursor: "pointer" }}
             role="button"
             tabIndex={0}
-            onClick={() => onNavigateToTab?.("partners-financial", "list")}
+            onClick={() => onNavigateToTab?.("partners-financial", "liabilities")}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
-                onNavigateToTab?.("partners-financial", "list");
+                onNavigateToTab?.("partners-financial", "liabilities");
               }
             }}
           >
             <div className="card-labels">
-              <div className="label">مطلوبين</div>
+              <div className="label">خصوم</div>
             </div>
             <div className="card-values">
               <div className="number">{formatCompact(liabilitiesIqd)} <span className="card-currency-iq">IQ</span></div>

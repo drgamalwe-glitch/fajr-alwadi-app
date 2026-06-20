@@ -21,6 +21,8 @@ type PartnerOpenTarget = {
   transactionId?: number | null;
 };
 
+type PartnersFinancialSubTab = "receivables" | "liabilities" | "personal";
+
 // Static array of background paths to optimize build size and prevent file duplication
 const INITIAL_BG_PATHS = ["/backgrounds/bg.jpg"];
 
@@ -42,7 +44,7 @@ const DEFAULT_BG = "/backgrounds/bg.jpg";
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
 
-  const [partnersFinancialSubTab, setPartnersFinancialSubTab] = useState<"list" | "personal" | null>(null);
+  const [partnersFinancialSubTab, setPartnersFinancialSubTab] = useState<PartnersFinancialSubTab | null>(null);
   const [carsSubTab, setCarsSubTab] = useState<"available" | "sold" | null>(null);
 
   // List of available backgrounds state
@@ -125,6 +127,7 @@ export default function App() {
   const [carFormActions, setCarFormActions] = useState<{ onSave: () => void; onCancel: () => void } | null>(null);
   const [addAccountAction, setAddAccountAction] = useState<{ action: () => void } | null>(null);
   const [addCarAction, setAddCarAction] = useState<{ action: () => void } | null>(null);
+  const [addBatchCarAction, setAddBatchCarAction] = useState<{ action: () => void } | null>(null);
   const [addAgencyAction, setAddAgencyAction] = useState<{ action: () => void } | null>(null);
   const [addExpenseAction, setAddExpenseAction] = useState<{ action: () => void } | null>(null);
   const [addDistributeAction, setAddDistributeAction] = useState<{ action: () => void } | null>(null);
@@ -211,7 +214,7 @@ export default function App() {
 
   // Update CSS property and persist background selection
   useEffect(() => {
-    document.documentElement.style.setProperty("--backkground", `url('${currentBg}')`);
+    document.documentElement.style.setProperty("--background", `url('${currentBg}')`);
     localStorage.setItem("app_selected_background", currentBg);
   }, [currentBg]);
 
@@ -393,6 +396,7 @@ export default function App() {
           withdrawLabel={partnerActions?.withdrawLabel}
           onAddAccount={addAccountAction?.action}
           onAddCar={addCarAction?.action}
+          onAddBatchCar={addBatchCarAction?.action}
           onAddAgency={addAgencyAction?.action}
           onAddExpense={addExpenseAction?.action}
           onAddDistribute={addDistributeAction?.action}
@@ -455,20 +459,12 @@ export default function App() {
                     searchOpen={carsSearchOpen}
                     onSearchClose={() => setCarsSearchOpen(false)}
                     onAddCarChange={setAddCarAction}
+                    onAddBatchCarChange={setAddBatchCarAction}
                     onCarFormActionsChange={setCarFormActions}
                     onFormDirtyChange={(dirty) => { dirtyRef.current = dirty; }}
                     requestCloseRef={tabCloseRequestRef}
                     initialSubTab={carsSubTab}
                     onInitialSubTabSet={() => setCarsSubTab(null)}
-                  />
-                )}
-                {activeTab === "partners" && (
-                  <PartnersTab
-                    partners={partners}
-                    onRefresh={refreshData}
-                    kind="شريك"
-                    requestCloseRef={tabCloseRequestRef}
-                    onDirtyChange={handleDirtyChange}
                   />
                 )}
                 {activeTab === "partners-financial" && (
@@ -486,15 +482,6 @@ export default function App() {
                     onDirtyChange={handleDirtyChange}
                     initialSubTab={partnersFinancialSubTab}
                     onInitialSubTabSet={() => setPartnersFinancialSubTab(null)}
-                  />
-                )}
-                {activeTab === "debtors" && (
-                  <PartnersTab
-                    partners={partners}
-                    onRefresh={refreshData}
-                    kind="مطلوب"
-                    requestCloseRef={tabCloseRequestRef}
-                    onDirtyChange={handleDirtyChange}
                   />
                 )}
                 {activeTab === "expenses" && (
@@ -566,7 +553,7 @@ export default function App() {
         */}
 
           <div className="footer-brand" dir="ltr">
-            <span className="footer-brand__text">VERSIOIN: 1.4 | DEVOLOPERD BY DHRUGHAM ALALAWI: 07806539291</span>
+            <span className="footer-brand__text">VERSION: 1.4 | DEVELOPED BY DHRUGHAM ALALAWI: 07806539291</span>
           </div>
         </footer>
       </div>

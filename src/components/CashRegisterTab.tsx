@@ -34,6 +34,28 @@ const parseCommissionText = (notes: string | null | undefined, currency?: string
   return "—";
 };
 
+const parseCommissionNumeric = (notes: string | null | undefined, amount?: number): number => {
+  if (!notes) return 0;
+  const parts = notes.split("عمولة:");
+  if (parts.length > 1) {
+    const cleanPart = parts[1].split("%")[0].trim();
+    if (parts[1].includes("%")) {
+      const pct = parseFloat(cleanPart);
+      if (!isNaN(pct)) {
+        if (amount !== undefined) {
+          return (Math.abs(amount) * pct) / 100;
+        }
+        return pct;
+      }
+    }
+    const val = parseFloat(cleanPart);
+    if (!isNaN(val)) {
+      return val;
+    }
+  }
+  return 0;
+};
+
 interface CashRegisterTabProps {
   paymentType?: string;
 }
@@ -81,11 +103,11 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
       let valB: any = b[key as keyof CashRegisterEntry] ?? "";
 
       if (key === "commission") {
-        valA = parseCommissionText(a.notes, a.currency, a.amount);
-        valB = parseCommissionText(b.notes, b.currency, b.amount);
+        valA = parseCommissionNumeric(a.notes, a.amount);
+        valB = parseCommissionNumeric(b.notes, b.amount);
       }
 
-      if (key === "amount" || key === "balance" || key === "id") {
+      if (key === "amount" || key === "balance" || key === "id" || key === "commission") {
         return (Number(valA) - Number(valB)) * sign;
       }
       if (key === "date") {

@@ -335,7 +335,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
   };
 
   const loadInstallments = async () => {
-    const debtors = partners.filter((p) => p.kind === "مطلوب" || p.kind === "مقترض");
+    const debtors = partners.filter((p) => p.kind === "زبون");
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const alerts: InstallmentAlert[] = [];
@@ -348,9 +348,9 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
         });
         if (!txs || txs.length === 0) return;
 
-        // للمقترض: حساب الأقساط المدفوعة لاستبعادها
+        // للزبون: حساب الأقساط المدفوعة لاستبعادها
         const paidIds = new Set<number>();
-        if (debtor.kind === "مقترض") {
+        if (debtor.kind === "زبون") {
           const paymentTxs = txs.filter((tx: any) =>
             tx.type_.startsWith("تسديد") ||
             tx.type_.startsWith("استلام قسط") ||
@@ -382,7 +382,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
 
         for (const tx of txs) {
           if (tx.type_ !== "سحب" && !tx.type_.startsWith("باقي")) continue;
-          if (debtor.kind === "مقترض" && paidIds.has(tx.id)) continue;
+          if (debtor.kind === "زبون" && paidIds.has(tx.id)) continue;
 
           const cleanDate = (tx.date || "").replace(/\//g, "-").trim();
           const parts = cleanDate.split("-");
@@ -430,7 +430,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
   }, [partners, cars]);
 
   const accountKindsForDashboard = new Set(["مستثمر", "ممول", "شركة"]);
-  const creditorKinds = new Set(["مستثمر", "ممول", "شركة"]);
+  const creditorKinds = new Set(["مستثمر", "ممول", "شركة", "زبون"]);
 
   const accountReceivableAlerts: InstallmentAlert[] = unifiedAccounts.flatMap((account, index) => {
     if (!accountKindsForDashboard.has(account.kind)) return [];
@@ -522,13 +522,13 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
   const [showPayInstallmentModal, setShowPayInstallmentModal] = useState(false);
   const [selectedInstallment, setSelectedInstallment] = useState<InstallmentAlert | null>(null);
   const [payAmount, setPayAmount] = useState("");
-  const [payMethod, setPayMethod] = useState<"قاصه" | "خارج القاصة" | "ماستر">("قاصه");
+  const [payMethod, setPayMethod] = useState<"قاصه" | "خارج القاصة">("قاصه");
 
   const handleOpenPayInstallment = (alert: InstallmentAlert) => {
     if (onNavigateToPartner) {
       const action = alert.alertKind === "account_positive"
         ? "deposit"
-        : alert.partnerKind === "مقترض"
+        : alert.partnerKind === "زبون"
           ? "settle_installment"
           : "deposit";
       onNavigateToPartner({
@@ -548,7 +548,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
     if (!selectedInstallment || !Number(payAmount)) return;
     setLoadingAction(true);
     try {
-      const partnerKind = selectedInstallment.partnerKind || "مطلوب";
+      const partnerKind = selectedInstallment.partnerKind || "زبون";
       await callTauri("add_partner_transaction", {
         partnerName: selectedInstallment.buyerName,
         kind: partnerKind,
@@ -641,7 +641,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
       const amountNum = Number(creditorAmount);
       const commissionNum = Number(creditorCommission) || 0;
 
-      // العثور على الحساب الفعلي للممول المختار في النظام لمعرفة نوع حسابه الحقيقي بدقة (ممول أو مطلوب)
+      // العثور على الحساب الفعلي للممول المختار في النظام لمعرفة نوع حسابه الحقيقي بدقة
       const matchingPartner = partners.find(
         (p) => p.partner_name.trim() === cleanCreditorName && (!selectedCreditorKind || p.kind === selectedCreditorKind)
       );
@@ -739,7 +739,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "1rem", marginBottom: "1.25rem", marginTop: "1.5rem" }}>
             <QasaCard cashIqd={summary?.cash_iqd || 0} cashUsd={summary?.cash_usd || 0} />
             <InventoryCard valueIqd={summary?.inventory_value_iqd || 0} valueUsd={summary?.inventory_value_usd || 0} availableCarsCount={cars.filter((c) => c.status === "متوفرة").length} />
-            <CapitalCard capitalIqd={(summary?.cash_iqd || 0) - (summary?.total_investments_iqd || 0)} capitalUsd={(summary?.cash_usd || 0) - (summary?.total_investments_usd || 0)} />
+            <CapitalCard capitalIqd={summary?.net_capital_iqd || 0} capitalUsd={summary?.net_capital_usd || 0} />
             <ProfitCard profitIqd={summary?.monthly_profits_iqd || 0} profitUsd={summary?.monthly_profits_usd || 0} monthName={monthName} />
           </div>
 
@@ -810,7 +810,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
               <div className="dashboard-panel__header">
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                   <span style={{ fontWeight: "var(--fw-bold)", fontSize: "var(--fs-base)", color: "var(--labletext)" }}>
-                    مطلوبين
+                    خصوم
                   </span>
                   {creditors.length > 0 && (
                     <span
@@ -846,7 +846,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, textAlign: "center", marginTop: "-2rem" }}>
                     <PartyPopper size={36} style={{ color: "var(--dc-fund-accent)", margin: "0 auto 0.5rem auto", opacity: 0.6 }} />
-                    <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-sm)" }}>لا توجد مبالغ مطلوبين بها حالياً</div>
+                    <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-sm)" }}>لا توجد خصوم بها حالياً</div>
                   </div>
                 )}
               </div>
@@ -986,8 +986,8 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
                     <div className="form-group">
                       <label className="label">يدخل إلى</label>
                       <div className="payment-type-selector">
-                        {(["قاصه", "خارج القاصة", "ماستر"] as const).map((opt) => (
-                          <button key={opt} type="button" className={`payment-type-btn payment-type-btn--${opt === "قاصه" ? "qasa" : opt === "خارج القاصة" ? "external" : "master"} ${payMethod === opt ? "payment-type-btn--active" : ""}`} onClick={() => setPayMethod(opt)}>{opt}</button>
+                         {(["قاصه", "خارج القاصة"] as const).map((opt) => (
+                          <button key={opt} type="button" className={`payment-type-btn payment-type-btn--${opt === "قاصه" ? "qasa" : "external"} ${payMethod === opt ? "payment-type-btn--active" : ""}`} onClick={() => setPayMethod(opt)}>{opt}</button>
                         ))}
                       </div>
                     </div>

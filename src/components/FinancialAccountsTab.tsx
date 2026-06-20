@@ -4,11 +4,11 @@ import type { FinancialSummary } from "../types";
 import { CashRegisterTab } from "./CashRegisterTab";
 import { PriceDisplay } from "@/components/ui";
 
-type PaymentTab = "قاصه" | "خارج القاصة" | "ماستر";
+type PaymentTab = "قاصه" | "الكاش";
 
 const PAYMENT_TABS: { id: PaymentTab; label: string }[] = [
   { id: "قاصه", label: "قاصه" },
-  { id: "ماستر", label: "ماستر" },
+  { id: "الكاش", label: "الكاش" },
 ];
 
 
@@ -23,10 +23,17 @@ export function FinancialAccountsTab() {
       const data = await callTauri<FinancialSummary>("get_financial_summary", {
         paymentType: tab,
       });
-      setBalance({
-        iqd: data?.cash_iqd || 0,
-        usd: data?.cash_usd || 0,
-      });
+      if (tab === "الكاش") {
+        setBalance({
+          iqd: data?.net_capital_iqd || 0,
+          usd: data?.net_capital_usd || 0,
+        });
+      } else {
+        setBalance({
+          iqd: data?.cash_iqd || 0,
+          usd: data?.cash_usd || 0,
+        });
+      }
     } catch {
       setBalance({ iqd: 0, usd: 0 });
     } finally {
@@ -50,7 +57,7 @@ export function FinancialAccountsTab() {
             <div className="financial-tabs">
               {PAYMENT_TABS.map((tab) => {
                 const isActive = activeTab === tab.id;
-                const isQasaOrExternal = tab.id === "قاصه" || tab.id === "خارج القاصة";
+                const isQasaOrExternal = tab.id === "قاصه" || tab.id === "الكاش";
                 return (
                   <button
                     key={tab.id}
@@ -89,8 +96,7 @@ export function FinancialAccountsTab() {
       </div>
 
       {activeTab === "قاصه" && <CashRegisterTab paymentType="قاصه" />}
-      {activeTab === "خارج القاصة" && <CashRegisterTab paymentType="خارج القاصة" />}
-      {activeTab === "ماستر" && <CashRegisterTab paymentType="ماستر" />}
+      {activeTab === "الكاش" && <CashRegisterTab paymentType="الكاش" />}
     </div>
   );
 }

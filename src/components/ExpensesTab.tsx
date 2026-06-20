@@ -112,12 +112,41 @@ export function ExpensesTab({ onAddExpenseChange, onDirtyChange, requestCloseRef
     initialExpenseRef.current = "";
   };
 
-  const handleExpenseSaveConfirmSave = async () => {
-    setShowExpenseSaveConfirm(false);
+  const validateExpenseForm = (): boolean => {
+    let hasError = false;
+    const descInput = document.getElementById("expense-description") as HTMLElement | null;
+    const amountInput = document.getElementById("expense-amount") as HTMLElement | null;
+    const dateInput = document.getElementById("expense-date") as HTMLElement | null;
+
+    if (!description.trim()) {
+      descInput?.classList.add("input--error");
+      if (!hasError) descInput?.focus();
+      hasError = true;
+    } else {
+      descInput?.classList.remove("input--error");
+    }
+
+    if (!amount || Number(amount) <= 0) {
+      amountInput?.classList.add("input--error");
+      if (!hasError) amountInput?.focus();
+      hasError = true;
+    } else {
+      amountInput?.classList.remove("input--error");
+    }
+
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
+      dateInput?.classList.add("input--error");
+      if (!hasError) dateInput?.focus();
+      hasError = true;
+    } else {
+      dateInput?.classList.remove("input--error");
+    }
+
+    return !hasError;
+  };
+
+  const saveExpense = async () => {
     if (editingExpense) {
-      if (!description.trim() || !amount || Number(amount) <= 0 || !date || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
-        return;
-      }
       await callTauri("update_expense", {
         id: editingExpense.id,
         description: description.trim(),
@@ -127,9 +156,6 @@ export function ExpensesTab({ onAddExpenseChange, onDirtyChange, requestCloseRef
         currency,
       });
     } else {
-      if (!description.trim() || !amount || Number(amount) <= 0 || !date || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
-        return;
-      }
       await callTauri("add_expense", {
         description: description.trim(),
         amount: Number(amount),
@@ -137,6 +163,16 @@ export function ExpensesTab({ onAddExpenseChange, onDirtyChange, requestCloseRef
         notes: notes.trim() || null,
         currency,
       });
+    }
+  };
+
+  const handleExpenseSaveConfirmSave = async () => {
+    setShowExpenseSaveConfirm(false);
+    if (!validateExpenseForm()) return;
+    try {
+      await saveExpense();
+    } catch (err) {
+      console.error(err);
     }
     forceCloseModal();
     void load();
@@ -190,57 +226,13 @@ export function ExpensesTab({ onAddExpenseChange, onDirtyChange, requestCloseRef
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (expenseSaving) return;
-    let hasError = false;
-    const descInput = document.getElementById("expense-description") as HTMLElement | null;
-    const amountInput = document.getElementById("expense-amount") as HTMLElement | null;
-    const dateInput = document.getElementById("expense-date") as HTMLElement | null;
-
-    if (!description.trim()) {
-      descInput?.classList.add("input--error");
-      if (!hasError) descInput?.focus();
-      hasError = true;
-    } else {
-      descInput?.classList.remove("input--error");
-    }
-
-    if (!amount || Number(amount) <= 0) {
-      amountInput?.classList.add("input--error");
-      if (!hasError) amountInput?.focus();
-      hasError = true;
-    } else {
-      amountInput?.classList.remove("input--error");
-    }
-
-    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
-      dateInput?.classList.add("input--error");
-      if (!hasError) dateInput?.focus();
-      hasError = true;
-    } else {
-      dateInput?.classList.remove("input--error");
-    }
-
-    if (hasError) return;
+    if (!validateExpenseForm()) return;
 
     setExpenseSaving(true);
     try {
-      if (editingExpense) {
-        await callTauri("update_expense", {
-          id: editingExpense.id,
-          description: description.trim(),
-          amount: Number(amount),
-          date,
-          notes: notes.trim() || null,
-          currency,
-        });
-      } else {
-        await callTauri("add_expense", {
-          description: description.trim(),
-          amount: Number(amount),
-          date,
-          notes: notes.trim() || null,
-          currency,
-        });
-      }
+      await saveExpense();
+    } catch (err) {
+      console.error(err);
     } finally {
       setExpenseSaving(false);
     }

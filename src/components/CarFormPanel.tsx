@@ -3,7 +3,7 @@ import type { CarFormState, Partner, CarExpenseRecord } from "../types";
 import { callTauri } from "../api/tauri";
 import { SearchableCombobox } from "./SearchableCombobox";
 
-import { arabicKeyboardToEnglish, englishKeyboardToArabic, toChassisText } from "../utils/keyboardLayout";
+import { toChassisText } from "../utils/keyboardLayout";
 import { toEnglishDigits } from "../utils/numberInput";
 import { todayIsoDate } from "../utils/dateSegments";
 import { UnifiedDateField } from "./UnifiedDateField";
@@ -53,7 +53,7 @@ export function CarFormPanel({
 
   const loadCarExpenses = () => {
     if (!form.num) return;
-    const carNumber = [form.num.trim(), form.province.trim()].filter(Boolean).join(" ");
+    const carNumber = form.num.trim();
     callTauri<CarExpenseRecord[]>("get_car_expense_records", { carNumber })
       .then((res) => {
         setCarExpenses(res || []);
@@ -64,7 +64,7 @@ export function CarFormPanel({
   useEffect(() => {
     setDeletedExpenseIds([]);
     loadCarExpenses();
-  }, [form.num, form.province]);
+  }, [form.num]);
 
   useEffect(() => {
     onExpenseDirtyChange?.(
@@ -89,7 +89,7 @@ export function CarFormPanel({
 
   const handleAddExpense = () => {
     if (!expenseDesc.trim() || !Number(expenseAmt)) return;
-    const carNumber = [form.num.trim(), form.province.trim()].filter(Boolean).join(" ");
+    const carNumber = form.num.trim();
     const newExpense: CarExpenseRecord = {
       id: -Date.now(), // Unique temporary negative ID
       date: todayIsoDate(),
@@ -111,7 +111,7 @@ export function CarFormPanel({
   };
 
   const saveExpenseChanges = async () => {
-    const carNumber = [form.num.trim(), form.province.trim()].filter(Boolean).join(" ");
+    const carNumber = form.num.trim();
 
     for (const id of deletedExpenseIds) {
       await callTauri("delete_car_expense_record", { id });
@@ -300,6 +300,25 @@ export function CarFormPanel({
       }
     }
 
+    if (isSold) {
+      const selling = Number(form.selling) || 0;
+      const paid = Number(form.amountPaid) || 0;
+      const remaining = Number(form.amountRemaining) || 0;
+      if (Math.abs(selling - (paid + remaining)) > 0.01) {
+        alert("تنبيه: مجموع (المبلغ المدفوع + المبلغ المتبقي) يجب أن يساوي سعر البيع!");
+        const elPaid = formEl.querySelector<HTMLElement>("#amount-paid");
+        const elRemaining = formEl.querySelector<HTMLElement>("#amount-remaining");
+        elPaid?.classList.add("input--error");
+        elRemaining?.classList.add("input--error");
+        elPaid?.focus();
+        formEl.classList.add("form--submitted");
+        if (formPage === 0) {
+          setFormPage(1);
+        }
+        return;
+      }
+    }
+
     if (formEl.classList.contains("form--submitted")) {
       if (formPage === 0 && firstSaleErrorId) {
         setFormPage(1);
@@ -436,9 +455,9 @@ export function CarFormPanel({
                         id="car-model"
                         inputSize="sm"
                         value={form.model}
-                        onInput={(e: React.FormEvent<HTMLInputElement>) => onChange({ model: arabicKeyboardToEnglish((e.target as HTMLInputElement).value).toUpperCase() })}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ model: arabicKeyboardToEnglish(e.target.value).toUpperCase() })}
-                        onBlur={(e: React.FocusEvent<HTMLInputElement>) => onChange({ model: arabicKeyboardToEnglish(e.target.value).toUpperCase() })}
+                        onInput={(e: React.FormEvent<HTMLInputElement>) => onChange({ model: (e.target as HTMLInputElement).value.toUpperCase() })}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ model: e.target.value.toUpperCase() })}
+                        onBlur={(e: React.FocusEvent<HTMLInputElement>) => onChange({ model: e.target.value.toUpperCase() })}
                         placeholder="الموديل"
                         dir="ltr"
                         required
@@ -461,9 +480,9 @@ export function CarFormPanel({
                       id="car-color"
                       inputSize="sm"
                       value={form.color}
-                      onInput={(e: React.FormEvent<HTMLInputElement>) => onChange({ color: englishKeyboardToArabic((e.target as HTMLInputElement).value) })}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ color: englishKeyboardToArabic(e.target.value) })}
-                      onBlur={(e: React.FocusEvent<HTMLInputElement>) => onChange({ color: englishKeyboardToArabic(e.target.value) })}
+                      onInput={(e: React.FormEvent<HTMLInputElement>) => onChange({ color: (e.target as HTMLInputElement).value })}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ color: e.target.value })}
+                      onBlur={(e: React.FocusEvent<HTMLInputElement>) => onChange({ color: e.target.value })}
                       placeholder="لون"
                       required
                     />
@@ -477,9 +496,9 @@ export function CarFormPanel({
                       inputMode="decimal"
                       value={form.num}
                       dir="ltr"
-                      onInput={(e: React.FormEvent<HTMLInputElement>) => onChange({ num: toEn((e.target as HTMLInputElement).value).replace(/\D/g, "") })}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ num: toEn(e.target.value).replace(/\D/g, "") })}
-                      onBlur={(e: React.FocusEvent<HTMLInputElement>) => onChange({ num: toEn(e.target.value).replace(/\D/g, "") })}
+                      onInput={(e: React.FormEvent<HTMLInputElement>) => onChange({ num: toEn((e.target as HTMLInputElement).value).replace(/[^\w\s\u0600-\u06FF-]/g, "") })}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ num: toEn(e.target.value).replace(/[^\w\s\u0600-\u06FF-]/g, "") })}
+                      onBlur={(e: React.FocusEvent<HTMLInputElement>) => onChange({ num: toEn(e.target.value).replace(/[^\w\s\u0600-\u06FF-]/g, "") })}
                       onFocus={(e: React.FocusEvent<HTMLInputElement>) => e.target.select()}
                       placeholder="12345"
                       required

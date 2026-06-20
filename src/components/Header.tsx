@@ -15,6 +15,7 @@ interface HeaderProps {
   withdrawLabel?: string;
   onAddAccount?: () => void;
   onAddCar?: () => void;
+  onAddBatchCar?: () => void;
   onAddAgency?: () => void;
   onAddExpense?: () => void;
   onAddDistribute?: () => void;
@@ -46,6 +47,7 @@ export function Header({
   withdrawLabel = "سحب",
   onAddAccount,
   onAddCar,
+  onAddBatchCar,
   onAddAgency,
   onAddExpense,
   onAddDistribute,
@@ -134,14 +136,26 @@ export function Header({
               </GoldFxButton>
           )}
           {onAddCar && !onSaveCar && (
-             <GoldFxButton
-                type="button"
-                variant="gold"
-                onClick={onAddCar}
-              >
-                <span className="gold-fx-btn__icon">+</span>
-                <span className="gold-fx-btn__label">إضافة سيارة</span>
-              </GoldFxButton>
+             <div className="flex flex-col gap-2 w-full">
+               <GoldFxButton
+                  type="button"
+                  variant="gold"
+                  onClick={onAddCar}
+                >
+                  <span className="gold-fx-btn__icon">+</span>
+                  <span className="gold-fx-btn__label">إضافة سيارة</span>
+                </GoldFxButton>
+                {onAddBatchCar && (
+                  <GoldFxButton
+                    type="button"
+                    variant="gold"
+                    onClick={onAddBatchCar}
+                  >
+                    <span className="gold-fx-btn__icon">+</span>
+                    <span className="gold-fx-btn__label">إضافة مجموعة</span>
+                  </GoldFxButton>
+                )}
+             </div>
           )}
           {onSaveCar && onCancelCar && (
             <div className="sidebar-action-btns">

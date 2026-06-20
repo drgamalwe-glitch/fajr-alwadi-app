@@ -12,7 +12,6 @@ export interface CarPartner {
 export interface Car {
   car_number: string;
   car_plate_num: string;
-  car_province: string;
   chassis_number?: string | null;
   car_model: string;
   car_year: string;
@@ -52,6 +51,8 @@ export interface Partner {
   partner_name: string;
   phone: string;
   total_amount: number;
+  iqd_balance: number;
+  usd_balance: number;
   kind: string;
   total_withdrawals: number;
 }
@@ -150,7 +151,7 @@ export interface LoginResult {
   error?: string | null;
 }
 
-export type TabId = "dashboard" | "company-status" | "cars" | "partners" | "partners-financial" | "debtors" | "cashregister" | "expenses" | "financial-accounts" | "financial-transactions" | "agencies" | "profit-distribution" | "users";
+export type TabId = "dashboard" | "company-status" | "cars" | "partners-financial" | "cashregister" | "expenses" | "financial-accounts" | "financial-transactions" | "agencies" | "profit-distribution" | "users";
 
 export interface FinancialSummary {
   cash_iqd: number;
@@ -173,7 +174,6 @@ export interface FinancialSummary {
 
 export interface CarFormState {
   num: string;
-  province: string;
   chassis: string;
   model: string;
   year: string;
@@ -195,8 +195,8 @@ export interface CarFormState {
   firstPaymentDate: string;
   currency: "IQD" | "USD";
   saleCurrency: "IQD" | "USD";
-  purchasePaymentType: "قاصه" | "خارج القاصة" | "ماستر";
-  salePaymentType: "قاصه" | "خارج القاصة" | "ماستر";
+  purchasePaymentType: "قاصه" | "خارج القاصة";
+  salePaymentType: "قاصه" | "خارج القاصة";
   purchaseType: "كاش" | "تمويل" | "شركة";
   financerName: string;
   commissionType: "نسبة" | "مقطوع" | "لا يوجد";
@@ -206,8 +206,8 @@ export interface CarFormState {
 
 export interface PartnerDistributionInfo {
   partner_name: string;
-  capital_iqd: number;
-  capital_usd: number;
+  profit_iqd: number;
+  profit_usd: number;
   drawings_iqd: number;
   drawings_usd: number;
 }

@@ -2,13 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { buildCarInvokeArgs, callTauri } from "../api/tauri";
 import type { Car, CarFormState, Partner, PartnerTransaction } from "../types";
 import { carNetProfit, carProfitPercentage } from "../utils/finance";
-import { cleanAndNormalizeNumbers } from "../utils/numberInput";
+import { cleanAndNormalizeNumbers, toEnglishDigits } from "../utils/numberInput";
 import { todayIsoDate } from "../utils/dateSegments";
 import { CarFormPanel } from "./CarFormPanel";
-import { ActionButton, PriceDisplay } from "@/components/ui";
+import { ActionButton, PriceDisplay, TextInput, PriceInput } from "@/components/ui";
 import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
 import { GoldFxButton } from "./ui/GoldFxButton";
+import { SearchableCombobox } from "./SearchableCombobox";
+import { toChassisText } from "../utils/keyboardLayout";
+import { YearScrollField } from "./YearScrollField";
 
 interface CarsTabProps {
   cars: Car[];
@@ -19,6 +22,7 @@ interface CarsTabProps {
   searchOpen?: boolean;
   onSearchClose?: () => void;
   onAddCarChange?: (onAddCar: { action: () => void } | null) => void;
+  onAddBatchCarChange?: (onAddBatchCar: { action: () => void } | null) => void;
   onCarFormActionsChange?: (actions: { onSave: () => void; onCancel: () => void } | null) => void;
   onFormDirtyChange?: (isDirty: boolean) => void;
   requestCloseRef?: React.MutableRefObject<{ request: (afterClose?: () => void) => void } | null>;
@@ -27,7 +31,7 @@ interface CarsTabProps {
 }
 
 /** وضع اللوحة الجانبية */
-type PanelMode = "edit" | "new";
+type PanelMode = "edit" | "new" | "batch";
 type CarSortKey =
   | "model"
   | "year"
@@ -56,7 +60,7 @@ const CARS_TABS: { id: CarsTabId; label: string }[] = [
 ];
 
 const emptyForm = (): CarFormState => ({
-  num: "", province: "", chassis: "",
+  num: "", chassis: "",
   model: "", year: "", name: "",
   color: "", details: "",
   purchase: "", selling: "",
@@ -76,7 +80,6 @@ const emptyForm = (): CarFormState => ({
 function carToForm(car: Car): CarFormState {
   return {
     num: car.car_plate_num ?? car.car_number,
-    province: car.car_province ?? "",
     oldNum: car.car_number,
     chassis: car.chassis_number ?? "",
     model: car.car_model ?? "",
@@ -99,13 +102,11 @@ function carToForm(car: Car): CarFormState {
     firstPaymentDate: car.first_payment_date ?? "",
     currency: (car.currency as "IQD" | "USD") ?? "IQD",
     saleCurrency: (car.sale_currency as "IQD" | "USD") ?? "IQD",
-    purchasePaymentType: (car.purchase_payment_type === "ماستر" ? "ماستر" : car.purchase_payment_type === "خارج القاصة" ? "خارج القاصة" : "قاصه"),
-    salePaymentType: (car.sale_payment_type === "ماستر" ? "ماستر" : car.sale_payment_type === "خارج القاصة" ? "خارج القاصة" : "قاصه"),
-    purchaseType: car.purchase_type === "دين"
-      ? "تمويل"
-      : car.purchase_type === "تمويل" || car.purchase_type === "شركة"
-        ? car.purchase_type
-        : "كاش",
+    purchasePaymentType: (car.purchase_payment_type === "خارج القاصة" ? "خارج القاصة" : "قاصه") as any,
+    salePaymentType: (car.sale_payment_type === "خارج القاصة" ? "خارج القاصة" : "قاصه") as any,
+    purchaseType: car.purchase_type === "تمويل" || car.purchase_type === "شركة" || car.purchase_type === "دين"
+      ? (car.purchase_type === "دين" ? "تمويل" : car.purchase_type)
+      : "كاش",
     financerName: car.financer_name ?? "",
     commissionType: (car.commission_type as any) ?? "لا يوجد",
     commissionValue: String(car.commission_value ?? 0),
@@ -121,6 +122,7 @@ export function CarsTab({
   searchOpen = false,
   onSearchClose,
   onAddCarChange,
+  onAddBatchCarChange,
   onCarFormActionsChange,
   onFormDirtyChange,
   requestCloseRef,
@@ -131,6 +133,109 @@ export function CarsTab({
   const formRef = useRef<CarFormState>(emptyForm());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode | null>(null);
+
+  // Batch Car states
+  interface BatchCarRow {
+    model: string;
+    year: string;
+    color: string;
+    purchase: string;
+    currency: "IQD" | "USD";
+    purchaseType: "كاش" | "تمويل" | "شركة";
+    financerName: string;
+    num: string;
+    chassis: string;
+  }
+  const [batchRows, setBatchRows] = useState<BatchCarRow[]>([]);
+  const [batchDirty, setBatchDirty] = useState(false);
+  const [batchSaving, setBatchSaving] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
+  const [showBatchCountModal, setShowBatchCountModal] = useState(false);
+  const [batchCountDraft, setBatchCountDraft] = useState(10);
+
+  const handleRow1Change = (patch: Partial<BatchCarRow>) => {
+    setBatchRows((prev) => {
+      return prev.map((row, idx) => {
+        return {
+          ...row,
+          ...patch,
+          num: idx === 0 ? (patch.num !== undefined ? patch.num : row.num) : row.num,
+          chassis: idx === 0 ? (patch.chassis !== undefined ? patch.chassis : row.chassis) : row.chassis,
+        };
+      });
+    });
+  };
+
+  const handleRowNChange = (idx: number, patch: Partial<Pick<BatchCarRow, "num" | "chassis">>) => {
+    setBatchRows((prev) => {
+      return prev.map((row, i) => {
+        if (i === idx) {
+          return { ...row, ...patch };
+        }
+        return row;
+      });
+    });
+  };
+
+  const createEmptyBatchRows = (count: number) =>
+    Array.from({ length: count }, () => ({
+      model: "",
+      year: "",
+      color: "",
+      purchase: "",
+      currency: "IQD" as const,
+      purchaseType: "كاش" as const,
+      financerName: "",
+      num: "",
+      chassis: "",
+    }));
+
+  const openBatchCountModal = () => {
+    setBatchCountDraft(10);
+    setShowBatchCountModal(true);
+  };
+
+  const startNewBatch = (count = batchCountDraft) => {
+    const safeCount = Math.max(1, Math.min(50, Number(count) || 10));
+    setBatchRows(
+      createEmptyBatchRows(safeCount)
+    );
+    setBatchDirty(false);
+    setShowBatchCountModal(false);
+    setPanelMode("batch");
+  };
+
+  const rowToFormState = (row: BatchCarRow, purchaseDate: string): CarFormState => ({
+    num: row.num,
+    chassis: row.chassis,
+    model: row.model,
+    year: row.year,
+    name: [row.model, row.year].filter(Boolean).join(" "),
+    color: row.color,
+    details: "",
+    purchase: row.purchase,
+    selling: "",
+    status: "متوفرة",
+    paymentType: "كاش",
+    amountPaid: "",
+    amountRemaining: "",
+    installmentMonths: "1",
+    buyerName: "",
+    phone: "",
+    purchaseDate,
+    saleDate: "",
+    deliveryDate: "",
+    firstPaymentDate: "",
+    currency: row.currency,
+    saleCurrency: "IQD",
+    purchasePaymentType: "قاصه",
+    salePaymentType: "قاصه",
+    purchaseType: row.purchaseType,
+    financerName: row.financerName,
+    commissionType: "لا يوجد",
+    commissionValue: "",
+  });
+
   const [search, setSearch] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [searchHighlightIdx, setSearchHighlightIdx] = useState(0);
@@ -165,11 +270,12 @@ export function CarsTab({
   const isEditing = panelMode === "edit";
 
   const hasFormChanges = useMemo(() => {
+    if (panelMode === "batch") return batchDirty;
     if (!initialFormRef.current || !panelMode) return false;
     const a = JSON.stringify(initialFormRef.current);
     const b = JSON.stringify(formRef.current);
     return a !== b || expenseDirty;
-  }, [form, panelMode, expenseDirty]);
+  }, [form, panelMode, expenseDirty, batchDirty]);
 
   const hasFormChangesRef = useRef(hasFormChanges);
   hasFormChangesRef.current = hasFormChanges;
@@ -199,8 +305,7 @@ export function CarsTab({
         (car.car_model ?? "").toLowerCase().includes(q) ||
         (car.car_year ?? "").includes(q) ||
         (car.chassis_number ?? "").toLowerCase().includes(q) ||
-        (car.color ?? "").toLowerCase().includes(q) ||
-        (car.car_province ?? "").toLowerCase().includes(q);
+        (car.color ?? "").toLowerCase().includes(q);
       return matchesStatus && matchesSearch;
     });
 
@@ -336,18 +441,27 @@ export function CarsTab({
 
   useEffect(() => {
     onAddCarChange?.({ action: startNewCar });
+    onAddBatchCarChange?.({ action: openBatchCountModal });
     return () => {
       onAddCarChange?.(null);
+      onAddBatchCarChange?.(null);
     };
-  }, [onAddCarChange]);
+  }, [onAddCarChange, onAddBatchCarChange]);
 
   useEffect(() => {
     if (panelMode !== null) {
       onCarFormActionsChange?.({
         onSave: () => {
-          const formEl = document.getElementById("car-form") as HTMLFormElement;
-          if (formEl) {
-            formEl.requestSubmit();
+          if (panelMode === "batch") {
+            const formEl = document.getElementById("batch-car-form") as HTMLFormElement;
+            if (formEl) {
+              formEl.requestSubmit();
+            }
+          } else {
+            const formEl = document.getElementById("car-form") as HTMLFormElement;
+            if (formEl) {
+              formEl.requestSubmit();
+            }
           }
         },
         onCancel: () => {
@@ -404,6 +518,10 @@ export function CarsTab({
     const originalCar = cars.find((c) => c.car_number === selectedId);
     const wasSold = originalCar?.status === "مبيوعة";
     const isSaleOnly = isEditing && wasSold;
+    const oldBuyerName = originalCar?.buyer_name?.trim() || "";
+    const nextBuyerName = data.buyerName.trim();
+    const oldWasDeferredSale = wasSold && (originalCar?.payment_type === "موعد" || originalCar?.payment_type === "اقساط");
+    const nextIsDeferredSale = data.status === "مبيوعة" && (data.paymentType === "موعد" || data.paymentType === "اقساط");
 
     const isNewSale = (() => {
       if (panelMode === "new") return data.status === "مبيوعة";
@@ -411,6 +529,7 @@ export function CarsTab({
     })();
 
     const isPaymentChange = isEditing && wasSold && originalCar?.payment_type !== data.paymentType;
+    const isBuyerChange = isEditing && oldWasDeferredSale && nextIsDeferredSale && !!oldBuyerName && !!nextBuyerName && oldBuyerName !== nextBuyerName;
 
     try {
       const carArgs = buildCarInvokeArgs(data);
@@ -422,7 +541,10 @@ export function CarsTab({
 
       await handlePurchaseAutomation(data, originalCar);
 
-      if (data.status === "مبيوعة" && data.paymentType !== "كاش" && (isNewSale || isPaymentChange)) {
+      if (isBuyerChange) {
+        await deleteCustomerAccountCompletely(oldBuyerName);
+        await executeSaleAutomation(data);
+      } else if (data.status === "مبيوعة" && data.paymentType !== "كاش" && (isNewSale || isPaymentChange)) {
         if (isPaymentChange && originalCar?.buyer_name?.trim()) {
           const oldBuyer = originalCar.buyer_name.trim();
           const chassis = originalCar.chassis_number?.trim();
@@ -431,7 +553,7 @@ export function CarsTab({
           try {
             const existingTxns = await callTauri<PartnerTransaction[]>(
               "get_partner_transactions",
-              { partnerName: oldBuyer, kind: "مقترض" },
+              { partnerName: oldBuyer, kind: "زبون" },
             );
             const relatedTxs = existingTxns?.filter(
               (tx) => tx.notes?.includes(saleLabel) && (tx.type_ === "باقي قسط" || tx.type_ === "باقي" || tx.type_?.includes("باقي"))
@@ -440,7 +562,7 @@ export function CarsTab({
               await callTauri("delete_partner_transaction", {
                 id: tx.id,
                 partnerName: oldBuyer,
-                kind: "مقترض",
+                kind: "زبون",
               });
             }
           } catch (delErr) {
@@ -456,6 +578,34 @@ export function CarsTab({
       }
     } catch (err) {
       console.error("Auto-save failed:", err);
+    }
+  };
+
+  const deleteCustomerAccountCompletely = async (buyerName: string) => {
+    const cleanBuyer = buyerName.trim();
+    if (!cleanBuyer) return;
+
+    try {
+      const txs = await callTauri<PartnerTransaction[]>(
+        "get_partner_transactions",
+        { partnerName: cleanBuyer, kind: "زبون" },
+      );
+
+      for (const tx of txs || []) {
+        await callTauri("delete_partner_transaction", {
+          id: tx.id,
+          partnerName: cleanBuyer,
+          kind: "زبون",
+        });
+      }
+
+      await callTauri("delete_partner", {
+        name: cleanBuyer,
+        kind: "زبون",
+      });
+    } catch (err) {
+      console.error("Failed to delete old customer account after buyer change:", err);
+      throw err;
     }
   };
 
@@ -504,7 +654,7 @@ export function CarsTab({
     if (!buyerName) return;
 
     // 2. استخدام نوع الحساب الصحيح المتوافق مع الفلترة والتحويل
-    const partnerKind = "مقترض";
+    const partnerKind = "زبون";
 
     try {
       // استدعاء الحفظ بالاسم النظيف تماماً ليتطابق مع قيود قاعدة البيانات
@@ -603,7 +753,7 @@ export function CarsTab({
   const handlePurchaseAutomation = async (formData: CarFormState, originalCar?: Car) => {
     try {
       const currentFinancer = formData.purchaseType === "تمويل" ? formData.financerName.trim() : "";
-      const oldFinancer = originalCar?.purchase_type === "دين" ? originalCar.financer_name?.trim() : "";
+      const oldFinancer = (originalCar?.purchase_type === "تمويل" || originalCar?.purchase_type === "دين") ? originalCar.financer_name?.trim() : "";
       const currentChassis = formData.chassis.trim();
       const oldChassis = originalCar?.chassis_number?.trim();
 
@@ -739,6 +889,85 @@ export function CarsTab({
     }
   };
 
+  const handleBatchSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    // 1. Clear previous error indicators
+    const formEl = e.currentTarget as HTMLFormElement;
+    formEl.querySelectorAll(".input--error").forEach(el => el.classList.remove("input--error"));
+    formEl.classList.remove("form--submitted");
+
+    // 2. Perform validations
+    const checks: { id: string; valid: () => boolean }[] = [];
+
+    batchRows.forEach((row, idx) => {
+      checks.push(
+        { id: `batch-model-${idx}`, valid: () => !!row.model.trim() },
+        { id: `batch-year-${idx}`, valid: () => !!row.year.trim() },
+        { id: `batch-color-${idx}`, valid: () => !!row.color.trim() },
+        { id: `batch-purchase-${idx}`, valid: () => row.purchase !== "" && Number(row.purchase) > 0 },
+        { id: `batch-num-${idx}`, valid: () => !!row.num.trim() },
+        { id: `batch-chassis-${idx}`, valid: () => !!row.chassis.trim() }
+      );
+      if (idx === 0 && (row.purchaseType === "تمويل" || row.purchaseType === "شركة")) {
+        checks.push({
+          id: "batch-financer-0",
+          valid: () => !!row.financerName.trim()
+        });
+      }
+    });
+
+    let firstErrorId: string | null = null;
+    for (const { id, valid } of checks) {
+      if (!valid()) {
+        const el = formEl.querySelector<HTMLElement>(`#${id}`);
+        el?.classList.add("input--error");
+        formEl.classList.add("form--submitted");
+        if (!firstErrorId) {
+          firstErrorId = id;
+          if (id === "batch-financer-0") {
+            const input = el?.querySelector<HTMLInputElement>('.combobox-trigger');
+            input?.focus();
+          } else {
+            el?.focus();
+          }
+        }
+      }
+    }
+
+    if (firstErrorId) {
+      return;
+    }
+
+    // 3. Sequential saving
+    setBatchSaving(true);
+    setBatchProgress({ current: 0, total: batchRows.length });
+
+    try {
+      const purchaseDate = todayIsoDate();
+      for (let i = 0; i < batchRows.length; i++) {
+        setBatchProgress({ current: i + 1, total: batchRows.length });
+        const row = batchRows[i];
+        const formState = rowToFormState(row, purchaseDate);
+
+        // Save car in Tauri command
+        await callTauri("add_car", buildCarInvokeArgs(formState));
+
+        // Execute companion automation for financer or company
+        await handlePurchaseAutomation(formState, undefined);
+      }
+
+      showToast(`تم حفظ ${batchRows.length} سيارات بنجاح.`);
+      closePanel();
+      await onRefresh();
+    } catch (err) {
+      console.error("Failed to save batch:", err);
+      showToast("حدث خطأ أثناء حفظ المجموعة.");
+    } finally {
+      setBatchSaving(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await handleAutoSave();
@@ -808,7 +1037,7 @@ export function CarsTab({
       }
 
       // 2. Delete funder transaction (تمويل)
-      if (purchaseType === "دين" && financerName && chassis) {
+      if ((purchaseType === "تمويل" || purchaseType === "دين") && financerName && chassis) {
         try {
           const txs = await callTauri<PartnerTransaction[]>(
             "get_partner_transactions",
@@ -847,19 +1076,19 @@ export function CarsTab({
         }
       }
 
-      // 5. Delete buyer (مقترض) transactions related to this car
+      // 5. Delete buyer (زبون) transactions related to this car
       if (buyerName && chassis) {
         try {
           const txs = await callTauri<PartnerTransaction[]>(
             "get_partner_transactions",
-            { partnerName: buyerName, kind: "مقترض" }
+            { partnerName: buyerName, kind: "زبون" }
           );
           const relatedTxs = txs?.filter(t => t.notes?.includes(chassis) || t.notes?.includes(carNumber)) || [];
           for (const tx of relatedTxs) {
             await callTauri("delete_partner_transaction", {
               id: tx.id,
               partnerName: buyerName,
-              kind: "مقترض",
+              kind: "زبون",
             });
           }
         } catch (txnErr) {
@@ -1014,9 +1243,6 @@ export function CarsTab({
                             <span className="search-popup__item-plate">
                               {highlight(car.car_plate_num ?? car.car_number)}
                             </span>
-                            {car.car_province && (
-                              <span className="search-popup__item-province">{car.car_province}</span>
-                            )}
                             {car.color && (
                               <span className="search-popup__item-color">
                                 <span className="search-popup__item-dot" aria-hidden>•</span>
@@ -1187,9 +1413,6 @@ export function CarsTab({
                           <td className="ct-color">{car.color || "—"}</td>
                           <td className="ct-num cell-bold">
                             <span className="ct-plate">{car.car_plate_num ?? car.car_number}</span>
-                            {car.car_province && (
-                              <span className="ct-province">{car.car_province}</span>
-                            )}
                           </td>
                           <td className="ct-chassis">{car.chassis_number || "—"}</td>
                           <td className="ct-price">
@@ -1240,6 +1463,257 @@ export function CarsTab({
             </div>
           </section>
         </div>
+      ) : panelMode === "batch" ? (
+        <div
+          key="batch-form-view"
+          className="batch-form-view"
+          style={{
+            position: "relative",
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+            flex: 1,
+            padding: "0"
+          }}
+        >
+          <form
+            id="batch-car-form"
+            onSubmit={handleBatchSubmit}
+            onInput={() => setBatchDirty(true)}
+            onChange={() => setBatchDirty(true)}
+            className="flex-1 flex flex-col overflow-hidden font-arabic"
+          >
+            <div className="table-wrapper batch-table-wrapper flex-1 overflow-y-auto overflow-x-auto">
+              <table className="data-table batch-data-table w-full text-right">
+                <colgroup>
+                  <col className="batch-col-seq" />
+                  <col className="batch-col-model" />
+                  <col className="batch-col-year" />
+                  <col className="batch-col-color" />
+                  <col className="batch-col-price" />
+                  <col className="batch-col-type" />
+                  <col className="batch-col-plate" />
+                  <col className="batch-col-chassis" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>ت</th>
+                    <th>نوع السيارة</th>
+                    <th>الموديل</th>
+                    <th>اللون</th>
+                    <th>سعر الشراء</th>
+                    <th>طريقة الشراء</th>
+                    <th>رقم اللوحة</th>
+                    <th>رقم الشاصي</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {batchRows.map((row, idx) => {
+                    const isRow1 = idx === 0;
+                    return (
+                      <tr key={idx} className="batch-tr">
+                        <td className="cell-num text-center">{idx + 1}</td>
+                        
+                        {/* نوع السيارة */}
+                        <td>
+                          {isRow1 ? (
+                            <TextInput
+                              id="batch-model-0"
+                              inputSize="sm"
+                              value={row.model}
+                              onInput={(e: React.FormEvent<HTMLInputElement>) => {
+                                const val = (e.target as HTMLInputElement).value.toUpperCase();
+                                handleRow1Change({ model: val });
+                              }}
+                              placeholder="نوع السيارة"
+                              dir="ltr"
+                              required
+                            />
+                          ) : (
+                            <TextInput
+                              disabled
+                              inputSize="sm"
+                              value={row.model}
+                              placeholder="تلقائي من الصف الأول"
+                              dir="ltr"
+                            />
+                          )}
+                        </td>
+
+                        {/* الموديل (السنة) */}
+                        <td>
+                          {isRow1 ? (
+                            <YearScrollField
+                              id="batch-year-0"
+                              value={row.year}
+                              onChange={(year: string) => handleRow1Change({ year })}
+                              required
+                            />
+                          ) : (
+                            <TextInput
+                              disabled
+                              inputSize="sm"
+                              value={row.year}
+                              placeholder="تلقائي"
+                              dir="ltr"
+                            />
+                          )}
+                        </td>
+
+                        {/* اللون */}
+                        <td>
+                          {isRow1 ? (
+                            <TextInput
+                              id="batch-color-0"
+                              inputSize="sm"
+                              value={row.color}
+                              onInput={(e: React.FormEvent<HTMLInputElement>) => {
+                                const val = (e.target as HTMLInputElement).value;
+                                handleRow1Change({ color: val });
+                              }}
+                              placeholder="اللون"
+                              required
+                            />
+                          ) : (
+                            <TextInput
+                              disabled
+                              inputSize="sm"
+                              value={row.color}
+                              placeholder="تلقائي"
+                            />
+                          )}
+                        </td>
+
+                        {/* سعر الشراء */}
+                        <td>
+                          {isRow1 ? (
+                            <PriceInput
+                              id="batch-purchase-0"
+                              value={row.purchase}
+                              onChange={(purchase) => handleRow1Change({ purchase })}
+                              currency={row.currency}
+                              onCurrencyChange={(currency) => handleRow1Change({ currency: currency as any })}
+                              required
+                            />
+                          ) : (
+                            <div className="flex items-center justify-center h-[38px] bg-white/[0.02] border border-white/5 rounded-xl text-sm font-semibold text-white/50" dir="ltr">
+                              {row.purchase ? Number(row.purchase).toLocaleString() : "0"} {row.currency}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* طريقة الشراء */}
+                        <td>
+                          {isRow1 ? (
+                            <div className="flex flex-col gap-1">
+                              <div className="flex gap-1 justify-center">
+                                {(["كاش", "تمويل", "شركة"] as const).map((opt) => (
+                                  <button
+                                    key={opt}
+                                    type="button"
+                                    className={`payment-type-btn payment-type-btn--sm payment-type-btn--${opt === "كاش" ? "green" : opt === "تمويل" ? "blue" : "orange"} ${row.purchaseType === opt ? "payment-type-btn--active" : ""}`}
+                                    onClick={() => handleRow1Change({ purchaseType: opt, financerName: "" })}
+                                  >
+                                    {opt}
+                                  </button>
+                                ))}
+                              </div>
+                              {(row.purchaseType === "تمويل" || row.purchaseType === "شركة") && (
+                                <div id="batch-financer-0" className="mt-1">
+                                  {row.purchaseType === "تمويل" && (
+                                    <SearchableCombobox
+                                      value={row.financerName}
+                                      onChange={(name) => handleRow1Change({ financerName: name })}
+                                      placeholder="اختر الممول"
+                                      options={partners.filter(p => (p.kind || "").trim().replace(/ة/g, "ه") === "ممول").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
+                                    />
+                                  )}
+                                  {row.purchaseType === "شركة" && (
+                                    <SearchableCombobox
+                                      value={row.financerName}
+                                      onChange={(name) => handleRow1Change({ financerName: name })}
+                                      placeholder="اختر الشركة"
+                                      options={partners.filter((p) => (p.kind || "").trim().replace(/ة/g, "ه") === "شركه").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
+                                    />
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-center font-semibold text-white/50 text-sm">
+                              {row.purchaseType === "كاش" ? "كاش" : `${row.purchaseType} - ${row.financerName || "..."}`}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* رقم اللوحة */}
+                        <td>
+                          <TextInput
+                            id={`batch-num-${idx}`}
+                            inputSize="sm"
+                            value={row.num}
+                            onInput={(e: React.FormEvent<HTMLInputElement>) => {
+                              const val = (e.target as HTMLInputElement).value;
+                              const cleanVal = toEnglishDigits(val).replace(/[^\w\s\u0600-\u06FF-]/g, "");
+                              if (isRow1) {
+                                handleRow1Change({ num: cleanVal });
+                              } else {
+                                handleRowNChange(idx, { num: cleanVal });
+                              }
+                            }}
+                            placeholder="رقم اللوحة"
+                            dir="ltr"
+                            required
+                          />
+                        </td>
+
+                        {/* رقم الشاصي */}
+                        <td>
+                          <TextInput
+                            id={`batch-chassis-${idx}`}
+                            inputSize="sm"
+                            value={row.chassis}
+                            onInput={(e: React.FormEvent<HTMLInputElement>) => {
+                              const val = (e.target as HTMLInputElement).value;
+                              const cleanVal = toChassisText(val);
+                              if (isRow1) {
+                                handleRow1Change({ chassis: cleanVal });
+                              } else {
+                                handleRowNChange(idx, { chassis: cleanVal });
+                              }
+                            }}
+                            placeholder="رقم الشاصي"
+                            dir="ltr"
+                            required
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </form>
+          
+          {/* Progress Overlay */}
+          {batchSaving && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+              <div className="bg-[#1c1c1e] border border-white/10 rounded-2xl p-6 text-center max-w-sm w-full mx-4 shadow-2xl font-arabic">
+                <div className="spinner mb-4 mx-auto" />
+                <h4 className="text-lg font-bold text-white mb-2">جاري حفظ المجموعة</h4>
+                <p className="text-white/60 text-sm">
+                  تم حفظ {batchProgress.current} من {batchProgress.total} سيارات...
+                </p>
+                <div className="w-full bg-white/10 h-2 rounded-full overflow-hidden mt-4">
+                  <div 
+                    className="bg-[var(--gold-primary)] h-full transition-all duration-300"
+                    style={{ width: `${(batchProgress.current / batchProgress.total) * 100}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       ) : (
         <div
           key="form-view"
@@ -1268,6 +1742,63 @@ export function CarsTab({
               }
             }}
           />
+        </div>
+      )}
+
+      {showBatchCountModal && (
+        <div className="fx-confirm-overlay" role="presentation" onClick={() => setShowBatchCountModal(false)}>
+          <div
+            className="fx-confirm-dialog batch-count-dialog"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="fx-confirm-title">عدد سيارات المجموعة</h3>
+            <p className="fx-confirm-message">
+              اختر عدد الصفوف التي تريد إدخالها دفعة واحدة.
+            </p>
+            <div className="batch-count-dialog__field">
+              <label htmlFor="batch-count-input">عدد السيارات</label>
+              <input
+                id="batch-count-input"
+                type="number"
+                min={1}
+                max={50}
+                value={batchCountDraft}
+                onChange={(e) => setBatchCountDraft(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
+                onFocus={(e) => setTimeout(() => e.target.select(), 0)}
+                autoFocus
+              />
+            </div>
+            <div className="batch-count-dialog__quick">
+              {[5, 10, 20, 30, 50].map((count) => (
+                <button
+                  key={count}
+                  type="button"
+                  className={batchCountDraft === count ? "batch-count-chip batch-count-chip--active" : "batch-count-chip"}
+                  onClick={() => setBatchCountDraft(count)}
+                >
+                  {count}
+                </button>
+              ))}
+            </div>
+            <div className="fx-confirm-actions">
+              <GoldFxButton
+                type="button"
+                variant="gold"
+                onClick={() => startNewBatch(batchCountDraft)}
+              >
+                <span className="gold-fx-btn__label">إنشاء الجدول</span>
+              </GoldFxButton>
+              <ActionButton
+                type="button"
+                variant="ghost"
+                onClick={() => setShowBatchCountModal(false)}
+              >
+                إلغاء
+              </ActionButton>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1341,12 +1872,12 @@ export function CarsTab({
         </div>
       )}
 
-      {/* نافذة تأكيد إنشاء حساب مقترض */}
+      {/* نافذة تأكيد إنشاء حساب زبون */}
       {showSaleConfirm && pendingSaleData && (() => {
         const buyerName = pendingSaleData.buyerName.trim();
         const phone = pendingSaleData.phone.trim();
         const existingBuyer = partners.some(
-          (p) => p.partner_name.trim() === buyerName && p.kind === "مقترض"
+          (p) => p.partner_name.trim() === buyerName && p.kind === "زبون"
         );
         const message = existingBuyer
           ? `هل تريد الشراء لـ ${buyerName} الموجود اسمه مسبقاً؟`

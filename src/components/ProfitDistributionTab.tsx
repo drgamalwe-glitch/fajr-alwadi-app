@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { callTauri } from "../api/tauri";
-import type { ProfitDistributionSummary, ProfitDistributionDetail } from "../types";
-import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
+import type { ProfitDistributionSummary } from "../types";
 import { PriceDisplay } from "./ui";
 
 interface ProfitDistributionTabProps {
@@ -9,25 +8,10 @@ interface ProfitDistributionTabProps {
   onDistributeChange?: (onDistribute: { action: () => void } | null) => void;
 }
 
-type ProfitDistributionPartnerRow = {
-  partnerName: string;
-  drawingsIQD: number;
-  drawingsUSD: number;
-  profitIQD: number;
-  profitUSD: number;
-};
-
-type ProfitDistributionGroup = {
-  key: string;
-  label: string;
-  sortKey: string;
-  partners: ProfitDistributionPartnerRow[];
-};
-
 export function ProfitDistributionTab({ onRefreshAllData, onDistributeChange }: ProfitDistributionTabProps) {
   const [summary, setSummary] = useState<ProfitDistributionSummary | null>(null);
-  const [history, setHistory] = useState<ProfitDistributionDetail[]>([]);
-  const [activeProfitPage, setActiveProfitPage] = useState("current");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,148 +19,36 @@ export function ProfitDistributionTab({ onRefreshAllData, onDistributeChange }: 
     setLoading(true);
     setError(null);
     try {
-      const [sumData, histData] = await Promise.all([
-        callTauri<ProfitDistributionSummary>("get_profit_distribution_summary"),
-        callTauri<ProfitDistributionDetail[]>("get_profit_distributions"),
-      ]);
+      const sumData = await callTauri<ProfitDistributionSummary>("get_profit_distribution_summary", {
+        startDate: startDate || null,
+        endDate: endDate || null,
+      });
       setSummary(sumData);
-      setHistory(histData);
       await onRefreshAllData();
-      return { summary: sumData, history: histData };
     } catch (err: any) {
       setError(err.toString() || "فشل تحميل بيانات توزيع الأرباح");
-      return null;
     } finally {
       setLoading(false);
     }
-  }, [onRefreshAllData]);
-
-  const handleResetProfits = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const newTabKey = await callTauri<string>("reset_profit_distribution_period");
-      await loadData();
-      setActiveProfitPage(newTabKey || "current");
-    } catch (err: any) {
-      setError(err.toString() || "فشل تصفير الأرباح");
-      setLoading(false);
-    }
-  }, [loadData]);
+  }, [onRefreshAllData, startDate, endDate]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
 
+  // Clean up any distribution action on sidebar
   useEffect(() => {
-    onDistributeChange?.({ action: handleResetProfits });
+    onDistributeChange?.(null);
     return () => {
       onDistributeChange?.(null);
     };
-  }, [onDistributeChange, handleResetProfits]);
+  }, [onDistributeChange]);
 
-  const undistributedUSD = summary?.undistributed_usd || 0;
-  const undistributedIQD = summary?.undistributed_iqd || 0;
+  const partners = summary?.partners || [];
 
-  const currentGroup = useMemo<ProfitDistributionGroup>(() => {
-    const partners = summary?.partners || [];
-    const partnerCount = partners.length || 1;
-    return {
-      key: "current",
-      label: "الأرباح الحالية",
-      sortKey: "current",
-      partners: partners.map((partner) => ({
-        partnerName: partner.partner_name,
-        drawingsIQD: partner.drawings_iqd,
-        drawingsUSD: partner.drawings_usd,
-        profitIQD: undistributedIQD / partnerCount,
-        profitUSD: undistributedUSD / partnerCount,
-      })),
-    };
-  }, [summary, undistributedIQD, undistributedUSD]);
-
-  const monthlyGroups = useMemo<ProfitDistributionGroup[]>(() => {
-    const groups = new Map<string, {
-      key: string;
-      label: string;
-      sortKey: string;
-      partners: Map<string, {
-        partnerName: string;
-        drawingsIQD: number;
-        drawingsUSD: number;
-        profitIQD: number;
-        profitUSD: number;
-      }>;
-    }>();
-
-    for (const record of history) {
-      const date = record.distribution.date;
-      const time = record.distribution.time;
-      const notes = record.distribution.notes || "";
-      const isManualReset = notes.startsWith("manual-reset:");
-      const key = isManualReset ? notes : date;
-      const label = isManualReset ? `${date} ${time}` : date;
-      const sortKey = `${date} ${time} ${record.distribution.id}`;
-      const currency = record.distribution.currency === "USD" ? "USD" : "IQD";
-      if (!groups.has(key)) {
-        groups.set(key, { key, label, sortKey, partners: new Map() });
-      }
-      const group = groups.get(key)!;
-      if (sortKey > group.sortKey) {
-        group.sortKey = sortKey;
-      }
-
-      for (const share of record.shares) {
-        if (!group.partners.has(share.partner_name)) {
-          group.partners.set(share.partner_name, {
-            partnerName: share.partner_name,
-            drawingsIQD: 0,
-            drawingsUSD: 0,
-            profitIQD: 0,
-            profitUSD: 0,
-          });
-        }
-        const partner = group.partners.get(share.partner_name)!;
-        if (currency === "USD") {
-          partner.drawingsUSD += share.drawings_deducted;
-          partner.profitUSD += share.profit_share;
-        } else {
-          partner.drawingsIQD += share.drawings_deducted;
-          partner.profitIQD += share.profit_share;
-        }
-      }
-    }
-
-    return Array.from(groups.values())
-      .sort((a, b) => b.sortKey.localeCompare(a.sortKey))
-      .map((group) => ({
-        key: group.key,
-        label: group.label,
-        sortKey: group.sortKey,
-        partners: Array.from(group.partners.values()).sort((a, b) => a.partnerName.localeCompare(b.partnerName, "ar")),
-      }));
-  }, [history]);
-
-  const profitPages = useMemo(() => [currentGroup, ...monthlyGroups], [currentGroup, monthlyGroups]);
-
-  useEffect(() => {
-    if (!profitPages.some((page) => page.key === activeProfitPage)) {
-      setActiveProfitPage("current");
-    }
-  }, [activeProfitPage, profitPages]);
-
-  const selectedGroup = profitPages.find((page) => page.key === activeProfitPage) || currentGroup;
-  const selectedPageIndex = Math.max(0, profitPages.findIndex((page) => page.key === selectedGroup.key));
-  const setProfitPageByIndex = useCallback((pageIndex: number) => {
-    const nextPage = profitPages[pageIndex];
-    if (nextPage) {
-      setActiveProfitPage(nextPage.key);
-    }
-  }, [profitPages]);
-
-  if (loading && !summary) {
-    return <div className="loading-state"><div className="spinner" />جاري تحميل الحسابات وتفاصيل الأرباح...</div>;
-  }
+  // Calculate totals for summary cards
+  const totalProfitUSD = partners.reduce((sum, p) => sum + p.profit_usd, 0);
+  const totalProfitIQD = partners.reduce((sum, p) => sum + p.profit_iqd, 0);
 
   return (
     <div className="dashboard">
@@ -187,19 +59,50 @@ export function ProfitDistributionTab({ onRefreshAllData, onDistributeChange }: 
               type="button"
               className="top-btn-one top-btn-one--active"
             >
-              الأرباح
+              عرض الأرباح والسحوبات للشركاء
             </button>
           </div>
         </div>
-        <div className="unified-toolbar__center"></div>
+        
+        {/* Date Filter Toolbar */}
+        <div className="unified-toolbar__center" style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div className="date-filter-group" style={{ display: "flex", alignItems: "center", gap: "8px", background: "rgba(255,255,255,0.05)", padding: "4px 12px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.1)" }}>
+            <span style={{ color: "#d4af37", fontSize: "14px", fontWeight: "bold" }}>من:</span>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="form-input"
+              style={{ background: "transparent", border: "none", color: "#fff", fontSize: "14px", outline: "none", cursor: "pointer" }}
+            />
+            <span style={{ color: "#d4af37", fontSize: "14px", fontWeight: "bold", marginLeft: "10px" }}>إلى:</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="form-input"
+              style={{ background: "transparent", border: "none", color: "#fff", fontSize: "14px", outline: "none", cursor: "pointer" }}
+            />
+            {(startDate || endDate) && (
+              <button
+                type="button"
+                onClick={() => { setStartDate(""); setEndDate(""); }}
+                style={{ background: "rgba(255, 68, 68, 0.2)", border: "none", color: "#ff4444", padding: "2px 8px", borderRadius: "4px", fontSize: "12px", cursor: "pointer", marginLeft: "8px" }}
+              >
+                تفريغ
+              </button>
+            )}
+          </div>
+        </div>
+
         <div className="unified-toolbar__left">
           <div className="currency-card currency-card--usd">
             <div className="usd-glow-ring" />
-            <PriceDisplay amount={undistributedUSD} currency="USD" />
+            <PriceDisplay amount={totalProfitUSD} currency="USD" />
           </div>
           <div className="currency-card currency-card--iqd">
             <span className="iqd-star">★</span>
-            <PriceDisplay amount={undistributedIQD} currency="IQD" />
+            <PriceDisplay amount={totalProfitIQD} currency="IQD" />
           </div>
         </div>
       </div>
@@ -207,103 +110,94 @@ export function ProfitDistributionTab({ onRefreshAllData, onDistributeChange }: 
       <div style={{ display: "flex", flexDirection: "column", gap: "25px", padding: "0 24px 24px", overflowY: "auto", flex: 1 }}>
         {error && <div className="alert alert--error">{error}</div>}
 
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-          {profitPages.length >= 1 && (
-            <div className="table-page-dots" aria-label="تنقل بين صفحات الأرباح">
-              {profitPages.map((page, idx) => (
-                <button
-                  key={page.key}
-                  type="button"
-                  className={`table-page-dot ${idx === selectedPageIndex ? "is-active" : ""}`}
-                  onClick={() => setActiveProfitPage(page.key)}
-                  aria-label={page.label}
-                />
-              ))}
-            </div>
-          )}
+        {/* بطاقات ملخص الأرباح غير الموزعة */}
+        <div className="dashboard-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "20px" }}>
+          <div className="dashboard-card" style={{ background: "linear-gradient(135deg, rgba(216, 168, 90, 0.15) 0%, rgba(216, 168, 90, 0.02) 100%)", border: "1px solid rgba(216, 168, 90, 0.2)", borderRadius: "12px", padding: "20px", display: "flex", flexDirection: "column", gap: "10px" }}>
+            <span style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>الأرباح غير الموزعة (IQD)</span>
+            <span className="dashboard-card__val font-bold" style={{ fontSize: "var(--fs-xl)", color: "#d8a85a", display: "flex", alignItems: "center", gap: "8px" }}>
+              <PriceDisplay amount={summary?.undistributed_iqd ?? 0} currency="IQD" />
+            </span>
+          </div>
+          <div className="dashboard-card" style={{ background: "linear-gradient(135deg, rgba(34, 197, 94, 0.15) 0%, rgba(34, 197, 94, 0.02) 100%)", border: "1px solid rgba(34, 197, 94, 0.2)", borderRadius: "12px", padding: "20px", display: "flex", flexDirection: "column", gap: "10px" }}>
+            <span style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>الأرباح غير الموزعة (USD)</span>
+            <span className="dashboard-card__val font-bold" style={{ fontSize: "var(--fs-xl)", color: "#22c55e", display: "flex", alignItems: "center", gap: "8px" }}>
+              <PriceDisplay amount={summary?.undistributed_usd ?? 0} currency="USD" />
+            </span>
+          </div>
+        </div>
 
-          <div
-            className="table-card-container"
-            onWheel={(e) => handlePaginationWheel(e, selectedPageIndex, profitPages.length, setProfitPageByIndex)}
-            onKeyDown={(e) => handlePaginationKeyDown(e, selectedPageIndex, profitPages.length, setProfitPageByIndex)}
-            tabIndex={0}
-          >
+        <div className="table-card-container" tabIndex={0}>
+          {loading ? (
+            <div className="loading-state" style={{ padding: "40px" }}>
+              <div className="spinner" />
+              جاري تحميل وتحديث أرقام الأرباح...
+            </div>
+          ) : (
             <div className="table-wrapper" style={{ overflowX: "auto" }}>
               <table className="data-table profit-distribution-table">
                 <thead>
                   <tr>
-                    <th rowSpan={2} style={{ width: "50px" }}>ت</th>
-                    <th rowSpan={2} style={{ width: "130px" }}>التاريخ</th>
-                    <th rowSpan={2} style={{ width: "160px" }}>اسم الشريك</th>
-                    <th className="profit-col--drawings" colSpan={2} style={{ width: "260px" }}>السحوبات</th>
-                    <th className="profit-col--profit" colSpan={2} style={{ width: "260px" }}>الأرباح</th>
-                    <th className="profit-col--net" colSpan={2} style={{ width: "260px" }}>الصافي</th>
+                    <th rowSpan={2} style={{ width: "60px" }}>ت</th>
+                    <th rowSpan={2} style={{ width: "220px" }}>اسم الشريك</th>
+                    <th colSpan={3} style={{ background: "rgba(212, 175, 55, 0.05)", borderBottom: "2px solid #d4af37", color: "#d4af37" }}>
+                      معاملات الدينار العراقي (IQD)
+                    </th>
+                    <th colSpan={3} style={{ background: "rgba(0, 170, 255, 0.05)", borderBottom: "2px solid #00aaff", color: "#00aaff" }}>
+                      معاملات الدولار الأمريكي (USD)
+                    </th>
                   </tr>
                   <tr>
-                    <th className="profit-col--drawings">IQD</th>
-                    <th className="profit-col--drawings">USD</th>
-                    <th className="profit-col--profit">IQD</th>
-                    <th className="profit-col--profit">USD</th>
-                    <th className="profit-col--net">IQD</th>
-                    <th className="profit-col--net">USD</th>
+                    <th style={{ background: "rgba(212, 175, 55, 0.02)" }}>الأرباح</th>
+                    <th style={{ background: "rgba(212, 175, 55, 0.02)" }}>السحوبات الشخصية</th>
+                    <th style={{ background: "rgba(212, 175, 55, 0.04)", fontWeight: "bold" }}>الصافي</th>
+                    
+                    <th style={{ background: "rgba(0, 170, 255, 0.02)" }}>الأرباح</th>
+                    <th style={{ background: "rgba(0, 170, 255, 0.02)" }}>السحوبات الشخصية</th>
+                    <th style={{ background: "rgba(0, 170, 255, 0.04)", fontWeight: "bold" }}>الصافي</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {selectedGroup.partners.map((partner, partnerIdx) => {
-                    const partners = selectedGroup.partners;
-                    const netIQD = Math.max(0, partner.profitIQD - partner.drawingsIQD);
-                    const netUSD = Math.max(0, partner.profitUSD - partner.drawingsUSD);
+                  {partners.map((partner, idx) => {
+                    const netIQD = partner.profit_iqd - partner.drawings_iqd;
+                    const netUSD = partner.profit_usd - partner.drawings_usd;
                     return (
-                      <tr key={`${selectedGroup.key}-${partner.partnerName}`}>
-                        {partnerIdx === 0 && (
-                          <>
-                            <td className="font-bold" rowSpan={partners.length}>{selectedPageIndex + 1}</td>
-                            <td rowSpan={partners.length}>{selectedGroup.label}</td>
-                          </>
-                        )}
-                        <td className="font-bold">{partner.partnerName}</td>
-                        <td className="profit-col--drawings">
-                          <span>
-                            <PriceDisplay amount={partner.drawingsIQD} currency="IQD" noColor />
-                          </span>
+                      <tr key={partner.partner_name}>
+                        <td className="font-bold">{idx + 1}</td>
+                        <td className="font-bold" style={{ color: "#d4af37" }}>{partner.partner_name}</td>
+                        
+                        {/* IQD columns */}
+                        <td>
+                          <PriceDisplay amount={partner.profit_iqd} currency="IQD" noColor />
                         </td>
-                        <td className="profit-col--drawings">
-                          <span>
-                            <PriceDisplay amount={partner.drawingsUSD} currency="USD" noColor />
-                          </span>
+                        <td style={{ color: "#ff4444" }}>
+                          <PriceDisplay amount={partner.drawings_iqd} currency="IQD" noColor />
                         </td>
-                        <td className="profit-col--profit">
-                          <span className="font-bold">
-                            <PriceDisplay amount={partner.profitIQD} currency="IQD" noColor />
-                          </span>
+                        <td className="font-bold" style={{ color: netIQD >= 0 ? "#00c851" : "#ff4444" }}>
+                          <PriceDisplay amount={netIQD} currency="IQD" noColor />
                         </td>
-                        <td className="profit-col--profit">
-                          <span className="font-bold">
-                            <PriceDisplay amount={partner.profitUSD} currency="USD" noColor />
-                          </span>
+
+                        {/* USD columns */}
+                        <td>
+                          <PriceDisplay amount={partner.profit_usd} currency="USD" noColor />
                         </td>
-                        <td className="profit-col--net">
-                          <span className="font-bold">
-                            <PriceDisplay amount={netIQD} currency="IQD" noColor />
-                          </span>
+                        <td style={{ color: "#ff4444" }}>
+                          <PriceDisplay amount={partner.drawings_usd} currency="USD" noColor />
                         </td>
-                        <td className="profit-col--net">
-                          <span className="font-bold">
-                            <PriceDisplay amount={netUSD} currency="USD" noColor />
-                          </span>
+                        <td className="font-bold" style={{ color: netUSD >= 0 ? "#00c851" : "#ff4444" }}>
+                          <PriceDisplay amount={netUSD} currency="USD" noColor />
                         </td>
                       </tr>
                     );
                   })}
-                  {selectedGroup.partners.length === 0 && (
+                  {partners.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="empty-cell">لا توجد أرباح محفوظة في هذا التبويب</td>
+                      <td colSpan={8} className="empty-cell">لا توجد بيانات أرباح متوفرة للشركاء</td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
