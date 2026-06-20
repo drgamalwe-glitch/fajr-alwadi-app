@@ -522,7 +522,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
   const [showPayInstallmentModal, setShowPayInstallmentModal] = useState(false);
   const [selectedInstallment, setSelectedInstallment] = useState<InstallmentAlert | null>(null);
   const [payAmount, setPayAmount] = useState("");
-  const [payMethod, setPayMethod] = useState<"قاصه" | "خارج القاصة">("قاصه");
+  const [payMethod, setPayMethod] = useState<"قاصه">("قاصه");
 
   const handleOpenPayInstallment = (alert: InstallmentAlert) => {
     if (onNavigateToPartner) {
@@ -810,7 +810,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
               <div className="dashboard-panel__header">
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                   <span style={{ fontWeight: "var(--fw-bold)", fontSize: "var(--fs-base)", color: "var(--labletext)" }}>
-                    خصوم
+                    مطلوبين
                   </span>
                   {creditors.length > 0 && (
                     <span
@@ -846,7 +846,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, textAlign: "center", marginTop: "-2rem" }}>
                     <PartyPopper size={36} style={{ color: "var(--dc-fund-accent)", margin: "0 auto 0.5rem auto", opacity: 0.6 }} />
-                    <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-sm)" }}>لا توجد خصوم بها حالياً</div>
+                    <div style={{ color: "var(--textinputtext)", fontSize: "var(--fs-sm)" }}>لا توجد مطلوبين بها حالياً</div>
                   </div>
                 )}
               </div>
@@ -986,7 +986,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
                     <div className="form-group">
                       <label className="label">يدخل إلى</label>
                       <div className="payment-type-selector">
-                         {(["قاصه", "خارج القاصة"] as const).map((opt) => (
+                        {(["قاصه"] as const).map((opt) => (
                           <button key={opt} type="button" className={`payment-type-btn payment-type-btn--${opt === "قاصه" ? "qasa" : "external"} ${payMethod === opt ? "payment-type-btn--active" : ""}`} onClick={() => setPayMethod(opt)}>{opt}</button>
                         ))}
                       </div>

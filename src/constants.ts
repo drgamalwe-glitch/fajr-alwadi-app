@@ -5,7 +5,7 @@ export const PAYMENT_TYPE_OPTIONS = ["كاش", "موعد", "اقساط"] as cons
 export const PURCHASE_TYPE_OPTIONS = ["كاش", "تمويل", "شركة"] as const;
 export const COMMISSION_TYPE_OPTIONS = ["نسبة", "مقطوع", "لا يوجد"] as const;
 export const CURRENCY_OPTIONS = ["IQD", "USD"] as const;
-export const PAYMENT_ACCOUNT_OPTIONS = ["قاصه", "خارج القاصة"] as const;
+export const PAYMENT_ACCOUNT_OPTIONS = ["قاصه"] as const;
 
 export const TRANSACTION_TYPES = ["ايداع", "سحب"] as const;
 
@@ -16,5 +16,4 @@ export const AGENCY_TABS = [
 
 export const FINANCIAL_ACCOUNT_TABS = [
   { id: "قاصه" as const, label: "قاصه" },
-  { id: "خارج القاصة" as const, label: "خارج القاصة" },
 ] as const;

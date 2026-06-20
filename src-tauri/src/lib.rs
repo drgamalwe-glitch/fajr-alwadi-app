@@ -734,7 +734,36 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
 
     let _ = recalculate_all_partners(conn);
 
+    // Migration: تحويل أي قيمة "خارج القاصة" إلى "قاصه"
+    let _ = conn.execute(
+        "UPDATE cars SET purchase_payment_type = 'قاصه' WHERE purchase_payment_type IS NULL OR purchase_payment_type = '' OR purchase_payment_type = 'خارج القاصة'",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE cars SET sale_payment_type = 'قاصه' WHERE sale_payment_type IS NULL OR sale_payment_type = '' OR sale_payment_type = 'خارج القاصة'",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE partner_transactions SET payment_type = 'قاصه' WHERE payment_type IS NULL OR payment_type = '' OR payment_type = 'خارج القاصة'",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE financial_ledger SET account_id = 'قاصه' WHERE account_type = 'cash' AND (account_id IS NULL OR account_id = '' OR account_id = 'خارج القاصة')",
+        [],
+    );
+
     Ok(())
+}
+
+fn is_deposit_type(tx_type: &str) -> bool {
+    tx_type.starts_with("ايداع")
+        || tx_type.starts_with("إيداع")
+        || tx_type.starts_with("مقدمة")
+        || tx_type.starts_with("استلام")
+        || tx_type.starts_with("إستلام")
+        || tx_type.starts_with("إعادة استثمار")
+        || tx_type.starts_with("تسوية")
+        || tx_type.starts_with("تسديد")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -885,12 +914,80 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
 
     let curr = curr_opt.unwrap_or_else(|| "IQD".to_string());
     let notes = notes_opt.unwrap_or_default();
+    let ref_id = tx_id.to_string();
 
-    let is_deposit = tx_type.starts_with("ايداع")
-        || tx_type.starts_with("إيداع")
-        || tx_type.starts_with("مقدمة")
-        || tx_type.starts_with("تسديد")
-        || tx_type.starts_with("استلام");
+    let is_deposit = is_deposit_type(&tx_type);
+
+    if kind == "زبون" {
+        if is_deposit {
+            record_ledger_entry(
+                conn,
+                &tx_date,
+                &tx_time,
+                "cash",
+                Some(&payment_type),
+                amount,
+                0.0,
+                &curr,
+                "partner_transaction",
+                &ref_id,
+                "ايداع زبون",
+                &format!("إيداع زبون: {}", p_name),
+                Some(&notes),
+            )
+            .map_err(|e| e.to_string())?;
+            record_ledger_entry(
+                conn,
+                &tx_date,
+                &tx_time,
+                "receivable",
+                Some(&p_name),
+                0.0,
+                amount,
+                &curr,
+                "partner_transaction",
+                &ref_id,
+                "ايداع زبون مديونية",
+                &format!("تخفيض مديونية الزبون {}", p_name),
+                Some(&notes),
+            )
+            .map_err(|e| e.to_string())?;
+        } else if tx_type.starts_with("سحب") {
+            record_ledger_entry(
+                conn,
+                &tx_date,
+                &tx_time,
+                "receivable",
+                Some(&p_name),
+                amount,
+                0.0,
+                &curr,
+                "partner_transaction",
+                &ref_id,
+                "سحب زبون مديونية",
+                &format!("زيادة مديونية الزبون {}", p_name),
+                Some(&notes),
+            )
+            .map_err(|e| e.to_string())?;
+            record_ledger_entry(
+                conn,
+                &tx_date,
+                &tx_time,
+                "cash",
+                Some(&payment_type),
+                0.0,
+                amount,
+                &curr,
+                "partner_transaction",
+                &ref_id,
+                "سحب زبون",
+                &format!("سحب نقدي زبون: {}", p_name),
+                Some(&notes),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        return Ok(());
+    }
 
     if tx_type.starts_with("سحب شراء سيارة")
         || tx_type.starts_with("ايداع بيع سيارة")
@@ -904,7 +1001,6 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
         || tx_type.starts_with("تحويل")
         || notes.starts_with("ارجاع (الكاش")
         || notes.contains("شراكة سيارة")
-        || ((kind == "ممول" || kind == "شركة") && is_deposit)
         || tx_type.starts_with("توزيع أرباح")
         || tx_type.starts_with("سحب أرباح")
         || tx_type.starts_with("تسوية مسحوبات")
@@ -913,8 +1009,6 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
     {
         return Ok(());
     }
-
-    let ref_id = tx_id.to_string();
 
     match kind.as_str() {
         "شريك" => {
@@ -1063,22 +1157,6 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
                     conn,
                     &tx_date,
                     &tx_time,
-                    "cash",
-                    Some(&payment_type),
-                    amount,
-                    0.0,
-                    &curr,
-                    "partner_transaction",
-                    &ref_id,
-                    "ايداع ممول",
-                    &format!("إيداع ممول: {}", p_name),
-                    Some(&notes),
-                )
-                .map_err(|e| e.to_string())?;
-                record_ledger_entry(
-                    conn,
-                    &tx_date,
-                    &tx_time,
                     "funder",
                     Some(&p_name),
                     0.0,
@@ -1128,22 +1206,6 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
         }
         "شركة" => {
             if is_deposit {
-                record_ledger_entry(
-                    conn,
-                    &tx_date,
-                    &tx_time,
-                    "cash",
-                    Some(&payment_type),
-                    amount,
-                    0.0,
-                    &curr,
-                    "partner_transaction",
-                    &ref_id,
-                    "ايداع شركة",
-                    &format!("إيداع شركة: {}", p_name),
-                    Some(&notes),
-                )
-                .map_err(|e| e.to_string())?;
                 record_ledger_entry(
                     conn,
                     &tx_date,
@@ -1508,7 +1570,7 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
                 ],
             )?;
 
-            if purchase_type == "تمويل" || purchase_type == "شركة" || purchase_type == "دين" {
+            if purchase_type == "تمويل" || purchase_type == "دين" {
                 let financer_name = financer_name_opt.unwrap_or_default().trim().to_string();
                 let acc_id = if financer_name.is_empty() {
                     "ممول عام".to_string()
@@ -1526,6 +1588,26 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
                         currency,
                         car_number,
                         format!("تمويل شراء سيارة: {} ({}) من قبل {}", car_name, car_number, acc_id)
+                    ],
+                )?;
+            } else if purchase_type == "شركة" {
+                let financer_name = financer_name_opt.unwrap_or_default().trim().to_string();
+                let acc_id = if financer_name.is_empty() {
+                    "شركة عامة".to_string()
+                } else {
+                    financer_name
+                };
+                conn.execute(
+                    "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
+                     VALUES (?1, ?2, 'payable', ?3, 0.0, ?4, ?5, 'car', ?6, 'شراء سيارة عن طريق شركة', ?7, NULL)",
+                    params![
+                        purchase_date,
+                        purchase_time,
+                        acc_id,
+                        purchase_price,
+                        currency,
+                        car_number,
+                        format!("شراء سيارة: {} ({}) عن طريق شركة {}", car_name, car_number, acc_id)
                     ],
                 )?;
             } else {
@@ -1784,6 +1866,33 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
             || tx_type.starts_with("تسديد")
             || tx_type.starts_with("استلام");
 
+        if kind == "زبون" {
+            if is_deposit {
+                conn.execute(
+                    "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
+                     VALUES (?1, ?2, 'cash', ?3, ?4, 0.0, ?5, 'partner_transaction', ?6, 'ايداع زبون', ?7, ?8)",
+                    params![tx_date, tx_time, payment_type, amount, curr, id.to_string(), format!("إيداع زبون: {}", p_name), notes],
+                )?;
+                conn.execute(
+                    "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
+                     VALUES (?1, ?2, 'receivable', ?3, 0.0, ?4, ?5, 'partner_transaction', ?6, 'ايداع زبون مديونية', ?7, ?8)",
+                    params![tx_date, tx_time, p_name, amount, curr, id.to_string(), format!("تخفيض مديونية الزبون {}", p_name), notes],
+                )?;
+            } else if tx_type.starts_with("سحب") {
+                conn.execute(
+                    "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
+                     VALUES (?1, ?2, 'receivable', ?3, ?4, 0.0, ?5, 'partner_transaction', ?6, 'سحب زبون مديونية', ?7, ?8)",
+                    params![tx_date, tx_time, p_name, amount, curr, id.to_string(), format!("زيادة مديونية الزبون {}", p_name), notes],
+                )?;
+                conn.execute(
+                    "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
+                     VALUES (?1, ?2, 'cash', ?3, 0.0, ?4, ?5, 'partner_transaction', ?6, 'سحب زبون', ?7, ?8)",
+                    params![tx_date, tx_time, payment_type, amount, curr, id.to_string(), format!("سحب نقدي زبون: {}", p_name), notes],
+                )?;
+            }
+            continue;
+        }
+
         if tx_type.starts_with("سحب شراء سيارة")
             || tx_type.starts_with("ايداع بيع سيارة")
             || tx_type.starts_with("مقدمة بيع سيارة")
@@ -1861,11 +1970,6 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
                 if is_deposit {
                     conn.execute(
                         "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-                         VALUES (?1, ?2, 'cash', ?3, ?4, 0.0, ?5, 'partner_transaction', ?6, 'ايداع ممول', ?7, ?8)",
-                        params![tx_date, tx_time, payment_type, amount, curr, id.to_string(), format!("إيداع ممول: {}", p_name), notes],
-                    )?;
-                    conn.execute(
-                        "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
                          VALUES (?1, ?2, 'funder', ?3, 0.0, ?4, ?5, 'partner_transaction', ?6, 'تمويل ممول اموال', ?7, ?8)",
                         params![tx_date, tx_time, p_name, amount, curr, id.to_string(), format!("استلام تمويل من الممول {}", p_name), notes],
                     )?;
@@ -1884,11 +1988,6 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
             }
             "شركة" => {
                 if is_deposit {
-                    conn.execute(
-                        "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-                         VALUES (?1, ?2, 'cash', ?3, ?4, 0.0, ?5, 'partner_transaction', ?6, 'ايداع شركة', ?7, ?8)",
-                        params![tx_date, tx_time, payment_type, amount, curr, id.to_string(), format!("إيداع شركة: {}", p_name), notes],
-                    )?;
                     conn.execute(
                         "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
                          VALUES (?1, ?2, 'payable', ?3, 0.0, ?4, ?5, 'partner_transaction', ?6, 'ايداع شركة اموال', ?7, ?8)",
@@ -2116,7 +2215,7 @@ fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), St
         )
         .map_err(|e| e.to_string())?;
 
-        if purchase_type == "تمويل" || purchase_type == "شركة" || purchase_type == "دين" {
+        if purchase_type == "تمويل" || purchase_type == "دين" {
             let f_name = financer_name_opt.unwrap_or_default().trim().to_string();
             let acc_id = if f_name.is_empty() {
                 "ممول عام".to_string()
@@ -2137,6 +2236,32 @@ fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), St
                 "تمويل شراء سيارة",
                 &format!(
                     "تمويل شراء سيارة: {} ({}) من قبل {}",
+                    car_name, car_number, acc_id
+                ),
+                None,
+            )
+            .map_err(|e| e.to_string())?;
+        } else if purchase_type == "شركة" {
+            let f_name = financer_name_opt.unwrap_or_default().trim().to_string();
+            let acc_id = if f_name.is_empty() {
+                "شركة عامة".to_string()
+            } else {
+                f_name
+            };
+            record_ledger_entry(
+                db,
+                &p_date,
+                &p_time,
+                "payable",
+                Some(&acc_id),
+                0.0,
+                purchase_price,
+                &currency,
+                "car",
+                car_number,
+                "شراء سيارة عن طريق شركة",
+                &format!(
+                    "شراء سيارة: {} ({}) عن طريق شركة {}",
                     car_name, car_number, acc_id
                 ),
                 None,
@@ -2686,6 +2811,7 @@ fn add_car(
         let total_cost_for_profit = purchase + expenses_sum_for_profit;
 
         // توزيع 50% للشركاء عند بيع السيارة
+        let purchase_curr = currency.as_deref().unwrap_or("IQD");
         let sale_curr = sale_currency.as_deref().unwrap_or("IQD");
         let sale_payment_type = payment_type.as_deref().unwrap_or("قاصه");
         let sale_date_str = sale_date.as_deref().unwrap_or("");
@@ -2693,12 +2819,12 @@ fn add_car(
         if payment_type.as_deref() == Some("كاش") {
             let total_cost = total_cost_for_profit;
 
-            // 50% من التكلفة الكلية لكل حسابات الشركاء
+            // 50% من التكلفة الكلية لكل حسابات الشركاء (بعملة الشراء)
             if total_cost > 0.0 {
                 distribute_to_partners_50(
                     &db,
                     total_cost,
-                    sale_curr,
+                    purchase_curr,
                     sale_date_str,
                     sale_payment_type,
                     "ايداع بيع سيارة",
@@ -2706,18 +2832,20 @@ fn add_car(
                 )?;
             }
 
-            // 50% من أرباح السيارة لكل حسابات الشركاء
-            let profit = selling - total_cost;
-            if profit > 0.0 {
-                distribute_to_partners_50(
-                    &db,
-                    profit,
-                    sale_curr,
-                    sale_date_str,
-                    sale_payment_type,
-                    "ايداع ارباح سيارة",
-                    &profit_note,
-                )?;
+            // 50% من أرباح السيارة لكل حسابات الشركاء (فقط إذا تطابقت عملتا الشراء والبيع)
+            if purchase_curr == sale_curr {
+                let profit = selling - total_cost;
+                if profit > 0.0 {
+                    distribute_to_partners_50(
+                        &db,
+                        profit,
+                        sale_curr,
+                        sale_date_str,
+                        sale_payment_type,
+                        "ايداع ارباح سيارة",
+                        &profit_note,
+                    )?;
+                }
             }
         } else {
             // لا نوزع الأرباح هنا لأن السيارة بيعت بالتقسيط أو بموعد تسليم والأرباح لم تقبض بالكامل بعد

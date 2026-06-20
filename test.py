@@ -204,7 +204,7 @@ def add_partner(conn: sqlite3.Connection, account: Account) -> None:
 
 
 def is_deposit(tx_type: str) -> bool:
-    return tx_type.startswith(("ايداع", "إيداع", "مقدمة", "تسديد", "استلام", "إستلام"))
+    return tx_type.startswith(("ايداع", "إيداع", "مقدمة", "تسديد", "استلام", "إستلام", "إعادة استثمار", "تسوية"))
 
 
 def record_partner_ledger(conn: sqlite3.Connection, tx_id: int) -> None:
@@ -232,6 +232,17 @@ def record_partner_ledger(conn: sqlite3.Connection, tx_id: int) -> None:
     payment_type = tx["payment_type"]
     ref_id = str(tx_id)
 
+    dep = is_deposit(tx_type)
+
+    if kind == "زبون":
+        if dep:
+            record_ledger(conn, date=date, time=time, account_type="cash", account_id="قاصه", debit=amount, credit=0.0, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="ايداع زبون", description=f"إيداع زبون: {name}", notes=notes)
+            record_ledger(conn, date=date, time=time, account_type="receivable", account_id=name, debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="ايداع زبون مديونية", description=f"تخفيض مديونية الزبون {name}", notes=notes)
+        elif tx_type.startswith("سحب"):
+            record_ledger(conn, date=date, time=time, account_type="receivable", account_id=name, debit=amount, credit=0.0, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="سحب زبون مديونية", description=f"زيادة مديونية الزبون {name}", notes=notes)
+            record_ledger(conn, date=date, time=time, account_type="cash", account_id="قاصه", debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="سحب زبون", description=f"سحب نقدي زبون: {name}", notes=notes)
+        return
+
     if (
         tx_type.startswith(("سحب شراء سيارة", "ايداع بيع سيارة", "مقدمة بيع سيارة", "سحب مصروف", "سحب تسديد"))
         or tx_type.startswith(("ايداع ارباح وكالة", "ايداع ارباح سيارة", "تسديد قسط"))
@@ -240,42 +251,32 @@ def record_partner_ledger(conn: sqlite3.Connection, tx_id: int) -> None:
     ):
         return
 
-    dep = is_deposit(tx_type)
     if kind == "شريك":
         if dep:
-            record_ledger(conn, date=date, time=time, account_type="cash", account_id=payment_type, debit=amount, credit=0.0, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="ايداع شريك", description=f"إيداع شريك: {name}", notes=notes)
+            record_ledger(conn, date=date, time=time, account_type="cash", account_id="قاصه", debit=amount, credit=0.0, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="ايداع شريك", description=f"إيداع شريك: {name}", notes=notes)
             record_ledger(conn, date=date, time=time, account_type="capital", account_id=name, debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="ايداع شريك رأس مال", description=f"إيداع رأس مال الشريك {name}", notes=notes)
         elif tx_type.startswith("سحب"):
             record_ledger(conn, date=date, time=time, account_type="drawings", account_id=name, debit=amount, credit=0.0, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="سحب شريك مصروف", description=f"مسحوبات الشريك {name}", notes=notes)
-            record_ledger(conn, date=date, time=time, account_type="cash", account_id=payment_type, debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="سحب شريك", description=f"سحب نقدي شريك: {name}", notes=notes)
+            record_ledger(conn, date=date, time=time, account_type="cash", account_id="قاصه", debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="سحب شريك", description=f"سحب نقدي شريك: {name}", notes=notes)
     elif kind == "مستثمر":
         if dep:
-            record_ledger(conn, date=date, time=time, account_type="cash", account_id=payment_type, debit=amount, credit=0.0, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="ايداع مستثمر", description=f"إيداع مستثمر: {name}", notes=notes)
+            record_ledger(conn, date=date, time=time, account_type="cash", account_id="قاصه", debit=amount, credit=0.0, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="ايداع مستثمر", description=f"إيداع مستثمر: {name}", notes=notes)
             record_ledger(conn, date=date, time=time, account_type="investor", account_id=name, debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="ايداع مستثمر اموال", description=f"إيداع أموال المستثمر {name}", notes=notes)
         else:
             record_ledger(conn, date=date, time=time, account_type="investor", account_id=name, debit=amount, credit=0.0, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="سحب مستثمر اموال", description=f"سحب أموال المستثمر {name}", notes=notes)
-            record_ledger(conn, date=date, time=time, account_type="cash", account_id=payment_type, debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="سحب مستثمر", description=f"سحب نقدي مستثمر: {name}", notes=notes)
+            record_ledger(conn, date=date, time=time, account_type="cash", account_id="قاصه", debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="سحب مستثمر", description=f"سحب نقدي مستثمر: {name}", notes=notes)
     elif kind == "ممول":
         if dep:
-            record_ledger(conn, date=date, time=time, account_type="cash", account_id=payment_type, debit=amount, credit=0.0, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="ايداع ممول", description=f"إيداع ممول: {name}", notes=notes)
             record_ledger(conn, date=date, time=time, account_type="funder", account_id=name, debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="تمويل ممول اموال", description=f"استلام تمويل من الممول {name}", notes=notes)
         else:
             record_ledger(conn, date=date, time=time, account_type="funder", account_id=name, debit=amount, credit=0.0, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="سداد ممول اموال", description=f"تسديد تمويل للممول {name}", notes=notes)
-            record_ledger(conn, date=date, time=time, account_type="cash", account_id=payment_type, debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="سداد ممول نقدي", description=f"سداد نقدي للممول: {name}", notes=notes)
+            record_ledger(conn, date=date, time=time, account_type="cash", account_id="قاصه", debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="سداد ممول نقدي", description=f"سداد نقدي للممول: {name}", notes=notes)
     elif kind == "شركة":
         if dep:
-            record_ledger(conn, date=date, time=time, account_type="cash", account_id=payment_type, debit=amount, credit=0.0, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="ايداع شركة", description=f"إيداع شركة: {name}", notes=notes)
             record_ledger(conn, date=date, time=time, account_type="payable", account_id=name, debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="ايداع شركة اموال", description=f"إيداع حساب شركة {name}", notes=notes)
         else:
             record_ledger(conn, date=date, time=time, account_type="payable", account_id=name, debit=amount, credit=0.0, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="سحب شركة اموال", description=f"سحب حساب شركة {name}", notes=notes)
-            record_ledger(conn, date=date, time=time, account_type="cash", account_id=payment_type, debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="سحب شركة نقدي", description=f"سداد نقدي لحساب الشركة: {name}", notes=notes)
-    elif kind == "زبون":
-        if dep:
-            record_ledger(conn, date=date, time=time, account_type="cash", account_id=payment_type, debit=amount, credit=0.0, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="تسديد قسط", description=f"تسديد قسط من {name}", notes=notes)
-            record_ledger(conn, date=date, time=time, account_type="receivable", account_id=name, debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="تسديد قسط", description=f"تخفيض ذمة مدين {name}", notes=notes)
-        else:
-            record_ledger(conn, date=date, time=time, account_type="receivable", account_id=name, debit=amount, credit=0.0, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="ذمة مدينة جديدة", description=f"زيادة ذمة مدين {name}", notes=notes)
-            record_ledger(conn, date=date, time=time, account_type="cash", account_id=payment_type, debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="سحب مدين نقدي", description=f"سحب نقدي مدين: {name}", notes=notes)
+            record_ledger(conn, date=date, time=time, account_type="cash", account_id="قاصه", debit=0.0, credit=amount, currency=currency, reference_type="partner_transaction", reference_id=ref_id, type_="سحب شركة نقدي", description=f"سداد نقدي لحساب الشركة: {name}", notes=notes)
 
 
 def add_partner_transaction(
@@ -405,10 +406,11 @@ def record_car_ledger(conn: sqlite3.Connection, car_number: str) -> None:
     record_ledger(conn, date=sale_date, time=sale_time, account_type="revenue", account_id=car_number, debit=0.0, credit=sale_price, currency=sale_currency, reference_type="car", reference_id=car_number, type_="بيع سيارة", description=f"{TEST_MARK} إيراد بيع سيارة {name} ({car_number}) إلى {buyer}")
     if payment_type == "كاش":
         record_ledger(conn, date=sale_date, time=sale_time, account_type="cash", account_id="قاصه", debit=sale_price, credit=0.0, currency=sale_currency, reference_type="car", reference_id=car_number, type_="بيع سيارة كاش", description=f"{TEST_MARK} استلام نقدي بيع سيارة {name} ({car_number})")
-        distribute_to_partners(conn, amount=total_cost, currency=sale_currency, date=sale_date, time=sale_time, payment_type="قاصه", type_="ايداع بيع سيارة", notes=f"{TEST_MARK} ايداع بيع سيارة {name} {car['chassis_number'] or ''}".strip())
-        profit = sale_price - total_cost
-        if profit > 0:
-            distribute_to_partners(conn, amount=profit, currency=sale_currency, date=sale_date, time=sale_time, payment_type="قاصه", type_="ايداع ارباح سيارة", notes=f"{TEST_MARK} ايداع ارباح سيارة {name} {car['chassis_number'] or ''}".strip())
+        distribute_to_partners(conn, amount=total_cost, currency=purchase_currency, date=sale_date, time=sale_time, payment_type="قاصه", type_="ايداع بيع سيارة", notes=f"{TEST_MARK} ايداع بيع سيارة {name} {car['chassis_number'] or ''}".strip())
+        if purchase_currency == sale_currency:
+            profit = sale_price - total_cost
+            if profit > 0:
+                distribute_to_partners(conn, amount=profit, currency=sale_currency, date=sale_date, time=sale_time, payment_type="قاصه", type_="ايداع ارباح سيارة", notes=f"{TEST_MARK} ايداع ارباح سيارة {name} {car['chassis_number'] or ''}".strip())
     else:
         if paid > 0:
             record_ledger(conn, date=sale_date, time=sale_time, account_type="cash", account_id="قاصه", debit=paid, credit=0.0, currency=sale_currency, reference_type="car", reference_id=car_number, type_="مقدمة سيارة", description=f"{TEST_MARK} مقدمة سيارة {name} ({car_number})")
@@ -715,14 +717,13 @@ def seed_accounts(conn: sqlite3.Connection) -> tuple[list[Account], list[Account
             ("IQD", round_amount(idx, base=1_000_000, step=100_000)),
             ("USD", round_amount(idx, base=1_000, step=100)),
         ):
-            safe_type = ["قاصه", "خارج القاصة", "مصرف"][idx % 3]
             if account.kind == "زبون":
-                add_partner_transaction(conn, partner_name=account.name, kind=account.kind, type_="سحب", amount=amount, date=day(idx), time=clock(idx), notes=f"{TEST_MARK} فتح ذمة {currency}", currency=currency, payment_type=safe_type)
-                add_partner_transaction(conn, partner_name=account.name, kind=account.kind, type_="تسديد", amount=half(amount), date=day(idx + 1), time=clock(idx + 1), notes=f"{TEST_MARK} تسديد ذمة {currency}", currency=currency, payment_type=safe_type)
+                add_partner_transaction(conn, partner_name=account.name, kind=account.kind, type_="سحب", amount=amount, date=day(idx), time=clock(idx), notes=f"{TEST_MARK} فتح ذمة {currency}", currency=currency, payment_type="قاصه")
+                add_partner_transaction(conn, partner_name=account.name, kind=account.kind, type_="تسديد", amount=half(amount), date=day(idx + 1), time=clock(idx + 1), notes=f"{TEST_MARK} تسديد ذمة {currency}", currency=currency, payment_type="قاصه")
             else:
-                add_partner_transaction(conn, partner_name=account.name, kind=account.kind, type_="ايداع", amount=amount, date=day(idx), time=clock(idx), notes=f"{TEST_MARK} ايداع حساب {currency}", currency=currency, payment_type=safe_type)
+                add_partner_transaction(conn, partner_name=account.name, kind=account.kind, type_="ايداع", amount=amount, date=day(idx), time=clock(idx), notes=f"{TEST_MARK} ايداع حساب {currency}", currency=currency, payment_type="قاصه")
                 withdraw_type = "سحب شريك" if account.kind == "شريك" else "سحب"
-                add_partner_transaction(conn, partner_name=account.name, kind=account.kind, type_=withdraw_type, amount=half(amount), date=day(idx + 1), time=clock(idx + 1), notes=f"{TEST_MARK} سحب حساب {currency}", currency=currency, payment_type=safe_type)
+                add_partner_transaction(conn, partner_name=account.name, kind=account.kind, type_=withdraw_type, amount=half(amount), date=day(idx + 1), time=clock(idx + 1), notes=f"{TEST_MARK} سحب حساب {currency}", currency=currency, payment_type="قاصه")
     return partners, accounts
 
 
@@ -771,7 +772,7 @@ def seed_cars(conn: sqlite3.Connection, partners: list[Account]) -> list[str]:
                 "buyer": buyer,
                 "currency": currency,
                 "sale_currency": "USD" if idx in {5, 11} else "IQD",
-                "purchase_payment_type": "خارج القاصة" if idx % 4 == 0 else "قاصه",
+                "purchase_payment_type": "قاصه",
                 "financer": funder if purchase_type == "تمويل" else company if purchase_type == "شركة" else None,
                 "commission_type": ["لا يوجد", "نسبة", "مقطوع"][idx % 3],
                 "commission_value": 5.0 if idx % 3 == 1 else 100_000 if idx % 3 == 2 else 0,

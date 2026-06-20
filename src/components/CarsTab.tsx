@@ -102,8 +102,8 @@ function carToForm(car: Car): CarFormState {
     firstPaymentDate: car.first_payment_date ?? "",
     currency: (car.currency as "IQD" | "USD") ?? "IQD",
     saleCurrency: (car.sale_currency as "IQD" | "USD") ?? "IQD",
-    purchasePaymentType: (car.purchase_payment_type === "خارج القاصة" ? "خارج القاصة" : "قاصه") as any,
-    salePaymentType: (car.sale_payment_type === "خارج القاصة" ? "خارج القاصة" : "قاصه") as any,
+    purchasePaymentType: "قاصه" as any,
+    salePaymentType: "قاصه" as any,
     purchaseType: car.purchase_type === "تمويل" || car.purchase_type === "شركة" || car.purchase_type === "دين"
       ? (car.purchase_type === "دين" ? "تمويل" : car.purchase_type)
       : "كاش",
@@ -713,7 +713,7 @@ export function CarsTab({
                   ? `باقي قسط شهر ${i + 1} من ${months} على ${saleLabel}`
                   : `باقي مجموع قسط على ${saleLabel}`,
                 currency: formData.saleCurrency,
-                paymentType: "خارج القاصة",
+                paymentType: "قاصه",
               });
             }
           } else if (formData.paymentType === "موعد") {
@@ -726,7 +726,7 @@ export function CarsTab({
               date: dueDate,
               notes: `باقي مجموع قسط على ${saleLabel}`,
               currency: formData.saleCurrency,
-              paymentType: "خارج القاصة",
+              paymentType: "قاصه",
             });
           }
         }

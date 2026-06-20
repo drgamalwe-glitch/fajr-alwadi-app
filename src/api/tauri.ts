@@ -625,7 +625,7 @@ async function mockInvoke<T>(
       }
     }
 
-    const includeOthers = filterType === null || filterType === "قاصه" || filterType === "قاصة" || isMumuol || filterType === "خارج القاصة" || filterType === "خارج القاصة";
+    const includeOthers = filterType === null || filterType === "قاصه" || filterType === "قاصة" || isMumuol;
 
     if (includeOthers) {
       // معاملات الشركاء والمستثمرين (بدون ديون العملاء غير المدفوعة)

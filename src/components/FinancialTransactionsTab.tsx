@@ -7,11 +7,11 @@ import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
 
 /**
- * سجل المعاملات – يعرض جميع سجل المعاملات من كافة الحسابات (قاصه + مصرف + خارج القاصة)
+ * سجل المعاملات – يعرض جميع سجل المعاملات من كافة الحسابات (قاصه + مصرف)
  * مجمّعة في جدول واحد.
  */
 export function FinancialTransactionsTab() {
-  const [entries, setEntries] = useState<(CashRegisterEntry & { _source?: "قاصه" | "خارج القاصة" | "مصرف" })[]>([]);
+  const [entries, setEntries] = useState<(CashRegisterEntry & { _source?: "قاصه" | "مصرف" })[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
@@ -31,7 +31,7 @@ export function FinancialTransactionsTab() {
       }
 
       const all = (entriesData ?? []).map(entry => {
-        let source: "قاصه" | "خارج القاصة" | "مصرف" = "قاصه";
+        let source: "قاصه" | "مصرف" = "قاصه";
 
         // التحقق مما إذا كانت الحركة متعلقة بسيارة
         const isCarEntry = [
@@ -49,7 +49,7 @@ export function FinancialTransactionsTab() {
             const car = carsMap.get(carNum);
             if (car && car.purchase_payment_type) {
               const pType = car.purchase_payment_type.trim();
-              if (pType === "مصرف" || pType === "قاصه" || pType === "خارج القاصة") {
+              if (pType === "مصرف" || pType === "قاصه") {
                 source = pType as any;
               }
             }

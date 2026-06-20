@@ -391,7 +391,7 @@ export function PartnersTab({
     date: todayIsoDate(),
     notes: "",
     installments: 1,
-    paymentType: "قاصه" as "قاصه" | "خارج القاصة" | "مصرف" | "ممول",
+    paymentType: "قاصه" as "قاصه" | "قاصه" | "مصرف" | "ممول",
     transferBy: "",
     commission: 0,
     commissionPercent: 0,
@@ -772,7 +772,7 @@ export function PartnersTab({
   const beginEditTransaction = (tx: PartnerTransaction) => {
     setEditingTransactionId(tx.id);
     const rawPaymentType = tx.payment_type || tx.paymentType || "قاصه";
-    const paymentType = (rawPaymentType === "مصرف" || rawPaymentType === "خارج القاصة") ? rawPaymentType : (rawPaymentType === "ممول" ? "ممول" : "قاصه");
+    const paymentType = (rawPaymentType === "مصرف" || rawPaymentType === "قاصه") ? rawPaymentType : (rawPaymentType === "ممول" ? "ممول" : "قاصه");
     const currentKind = formRef.current.kind;
 
     const isFinancierRepayment = currentKind === "ممول" && tx.type_.startsWith("سحب");
@@ -928,7 +928,7 @@ export function PartnersTab({
             date: nextMonthDate,
             notes: `متبقي قسط مؤجل - ${target.notes ?? ""}`,
             currency,
-            paymentType: "خارج القاصة",
+            paymentType: "قاصه",
           });
         }
         return;
@@ -975,7 +975,7 @@ export function PartnersTab({
           date: target.date,
           notes: target.notes,
           currency: target.currency,
-          paymentType: target.paymentType || target.payment_type || "خارج القاصة",
+          paymentType: target.paymentType || target.payment_type || "قاصه",
         });
       }
       return;
@@ -1040,7 +1040,7 @@ export function PartnersTab({
           date: addMonthsToDate(targetInstallment.date, 1),
           notes: `متبقي قسط مؤجل - ${targetInstallment.notes ?? ""}`,
           currency,
-          paymentType: targetInstallment.payment_type || targetInstallment.paymentType || "خارج القاصة",
+          paymentType: targetInstallment.payment_type || targetInstallment.paymentType || "قاصه",
         });
       }
       return;
@@ -1069,7 +1069,7 @@ export function PartnersTab({
           date: tx.date,
           notes: tx.notes,
           currency,
-          paymentType: tx.payment_type || tx.paymentType || "خارج القاصة",
+          paymentType: tx.payment_type || tx.paymentType || "قاصه",
         });
       }),
     );
@@ -1589,7 +1589,7 @@ export function PartnersTab({
             date: dateStr,
             notes: txForm.notes || originalEditingTransaction.notes,
             currency: txCurrency,
-            paymentType: originalEditingTransaction.payment_type || originalEditingTransaction.paymentType || "خارج القاصة",
+            paymentType: originalEditingTransaction.payment_type || originalEditingTransaction.paymentType || "قاصه",
           });
         } else if (!wasAlreadyPaid && isWantsPaid) {
           // Case B: Unpaid -> Paid. Create payment transactions and keep original installment.
@@ -1612,7 +1612,7 @@ export function PartnersTab({
             date: dateStr,
             notes: withInstallmentLink(originalEditingTransaction.notes ?? "تحويل قسط الى القاصة", originalEditingTransaction.id),
             currency: txCurrency,
-            paymentType: "خارج القاصة",
+            paymentType: "قاصه",
           });
 
           await rebalanceCustomerFutureInstallments(
@@ -1631,7 +1631,7 @@ export function PartnersTab({
             date: dateStr,
             notes: txForm.notes || originalEditingTransaction.notes,
             currency: txCurrency,
-            paymentType: originalEditingTransaction.payment_type || originalEditingTransaction.paymentType || "خارج القاصة",
+            paymentType: originalEditingTransaction.payment_type || originalEditingTransaction.paymentType || "قاصه",
           });
         } else if (wasAlreadyPaid && !isWantsPaid) {
           // Case C: Paid -> Unpaid. Delete matching payment transactions and keep original installment.
@@ -1685,7 +1685,7 @@ export function PartnersTab({
             date: dateStr,
             notes: txForm.notes || originalEditingTransaction.notes,
             currency: txCurrency,
-            paymentType: originalEditingTransaction.payment_type || originalEditingTransaction.paymentType || "خارج القاصة",
+            paymentType: originalEditingTransaction.payment_type || originalEditingTransaction.paymentType || "قاصه",
           });
         } else if (wasAlreadyPaid && isWantsPaid) {
           // Case D: Remains paid, but edited. Update both original installment and matching payment transactions.
@@ -1737,7 +1737,7 @@ export function PartnersTab({
                 date: dateStr,
                 notes: withInstallmentLink(txForm.notes || originalEditingTransaction.notes || "تحويل قسط الى القاصة", originalEditingTransaction.id),
                 currency: txCurrency,
-                paymentType: "خارج القاصة",
+                paymentType: "قاصه",
               });
             }
           }
@@ -1758,7 +1758,7 @@ export function PartnersTab({
             date: dateStr,
             notes: txForm.notes || originalEditingTransaction.notes,
             currency: txCurrency,
-            paymentType: originalEditingTransaction.payment_type || originalEditingTransaction.paymentType || "خارج القاصة",
+            paymentType: originalEditingTransaction.payment_type || originalEditingTransaction.paymentType || "قاصه",
           });
         }
       } else if (convertsInstallmentToPayment) {
@@ -1773,7 +1773,7 @@ export function PartnersTab({
           paymentType: "قاصه",
         });
 
-        // إدخال قيد التحويل في خارج القاصة
+        // إدخال قيد التحويل في قاصه
         await callTauri("add_partner_transaction", {
           partnerName: editingKey,
           kind: form.kind,
@@ -1782,7 +1782,7 @@ export function PartnersTab({
           date: dateStr,
           notes: withInstallmentLink(originalEditingTransaction.notes ?? "تحويل قسط الى القاصة", originalEditingTransaction.id),
           currency: txCurrency,
-          paymentType: "خارج القاصة",
+          paymentType: "قاصه",
         });
 
         if (form.kind !== "زبون") {
@@ -2882,8 +2882,8 @@ export function PartnersTab({
                                 <tbody>
                                   {pageTransactions.map((tx) => {
                                     const rawPaymentType = tx.payment_type || tx.paymentType || "قاصه";
-                                    const paymentTypeLabel = (rawPaymentType === "مصرف" || rawPaymentType === "خارج القاصة") ? rawPaymentType : "قاصه";
-                                    const badgeClass = paymentTypeLabel === "مصرف" ? "account-badge--bank" : paymentTypeLabel === "خارج القاصة" ? "account-badge--external" : "account-badge--qasa";
+                                    const paymentTypeLabel = (rawPaymentType === "مصرف" || rawPaymentType === "قاصه") ? rawPaymentType : "قاصه";
+                                    const badgeClass = paymentTypeLabel === "مصرف" ? "account-badge--bank" : "account-badge--qasa";
                                     const isPaidBorrowerInst = form.kind === "زبون" && isInstallmentWithdrawal(tx) && paidTransactionIds.has(tx.id);
                                     const isWithdraw = (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) && !isPaidBorrowerInst;
                                     const isDeposit = tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة") || isPaidBorrowerInst;

@@ -180,7 +180,7 @@ export function CompanyStatusTab({
                   onClick={() => onNavigateToTab?.("partners-financial", "liabilities")}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onNavigateToTab?.("partners-financial", "liabilities"); }}
                 >
-                  خصوم: {formatCompact(liabilitiesIqd)} IQ
+                  مطلوبين: {formatCompact(liabilitiesIqd)} IQ
                 </span>
               </div>
             </div>
@@ -272,7 +272,7 @@ export function CompanyStatusTab({
             }}
           >
             <div className="card-labels">
-              <div className="label">خصوم</div>
+              <div className="label">مطلوبين</div>
             </div>
             <div className="card-values">
               <div className="number">{formatCompact(liabilitiesIqd)} <span className="card-currency-iq">IQ</span></div>
