@@ -3613,11 +3613,11 @@ select option {
 }
 
 .currency-card.currency-card--balance-positive span {
-  color: var(--red-600) !important;
+  color: var(--green) !important;
 }
 
 .currency-card.currency-card--balance-negative span {
-  color: var(--green) !important;
+  color: var(--red-600) !important;
 }
 
 .currency-card.currency-card--balance-zero span {
@@ -5505,6 +5505,41 @@ textarea::placeholder {
 
 .qasa-amount-iqd-neg {
   color: var(--qasa-iqd-neg-color) !important;
+}
+
+.qasa-amount-pos {
+  color: var(--green) !important;
+}
+
+.qasa-amount-neg {
+  color: var(--red) !important;
+}
+
+.data-table td.qasa-amount-pos,
+.data-table td.tx-amount-pos {
+  color: var(--green) !important;
+}
+
+.data-table td.qasa-amount-neg,
+.data-table td.tx-amount-neg {
+  color: var(--red) !important;
+}
+
+.cell-notes-text {
+  color: #000 !important;
+  font-size: var(--fs-sm);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tx-amount-pos {
+  color: var(--green) !important;
+}
+
+.tx-amount-neg {
+  color: var(--red) !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════

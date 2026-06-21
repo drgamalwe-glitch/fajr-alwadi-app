@@ -216,6 +216,8 @@ export interface ProfitDistributionSummary {
   undistributed_iqd: number;
   undistributed_usd: number;
   partners: PartnerDistributionInfo[];
+  expenses_iqd: number;
+  expenses_usd: number;
 }
 
 export interface PartnerProfitShareInput {

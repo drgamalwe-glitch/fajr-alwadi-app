@@ -7,6 +7,7 @@ import { ActionButton, TextInput, PriceInput, PriceDisplay } from "@/components/
 import type { Currency } from "@/components/ui";
 import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
+import { formatNotesText } from "../utils/notesDisplay";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { GoldFxButton } from "./ui/GoldFxButton";
 
@@ -481,7 +482,7 @@ export function ExpensesTab({ onAddExpenseChange, onDirtyChange, requestCloseRef
                     <td style={{ whiteSpace: "nowrap", fontSize: "var(--fs-sm)", textAlign: "center" }}>{entry.time}</td>
                     <td>{entry.description}</td>
                     <td className="col-money"><PriceDisplay amount={entry.amount} currency={entry.currency} /></td>
-                    <td style={{ fontSize: "var(--fs-sm)" }}>{entry.notes || ""}</td>
+                    <td className="cell-notes-text" title={formatNotesText(entry.notes) || undefined}>{formatNotesText(entry.notes) || "—"}</td>
                     <td>
                       <button
                         type="button"

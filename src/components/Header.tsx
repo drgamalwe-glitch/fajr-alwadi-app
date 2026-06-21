@@ -2,6 +2,7 @@ import { useRef } from "react";
 import type { TabId } from "../types";
 import { BrandLogo } from "./BrandLogo";
 import { GoldFxButton } from "./ui/GoldFxButton";
+import { UnifiedDateField } from "./UnifiedDateField";
 
 interface HeaderProps {
   activeTab: TabId;
@@ -21,6 +22,10 @@ interface HeaderProps {
   onAddDistribute?: () => void;
   onSaveCar?: () => void;
   onCancelCar?: () => void;
+  fromDate: string;
+  toDate: string;
+  onFromDateChange: (val: string) => void;
+  onToDateChange: (val: string) => void;
 }
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
@@ -29,10 +34,10 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: "partners-financial", label: "حسابات العمــلاء", icon: "❖" },
   { id: "agencies", label: "الوكـــــــــــــــــــــــــــالات", icon: "✉" },
   { id: "expenses", label: "المصروفــــــــــــــــــات", icon: "◉" },
-  { id: "profit-distribution", label: "توزيـــــــع الاربـــــــاح", icon: "⚖" },
+  { id: "profit-distribution", label: "الأربــــــــــــــــــــــــــــــــــاح", icon: "⚖" },
   { id: "financial-accounts", label: "القاصــــــــــــــــــــــــــــــــة", icon: "♢" },
   { id: "financial-transactions", label: "سجــل المعاملات", icon: "⇄" },
-  { id: "users", label: "المستخدميـــــــــــن", icon: "⚙" },
+  { id: "users", label: "المستخدميـــــــــــــن", icon: "⚙" },
 ];
 
 export function Header({
@@ -53,6 +58,10 @@ export function Header({
   onAddDistribute,
   onSaveCar,
   onCancelCar,
+  fromDate,
+  toDate,
+  onFromDateChange,
+  onToDateChange,
 }: HeaderProps) {
   // track double-click on cars tab
   const lastCarsClickAt = useRef(0);
@@ -121,41 +130,58 @@ export function Header({
         ))}
       </nav>
 
+      {/* ── خط فاصل + فلتر التاريخ من / إلى ── */}
+      {activeTab === "profit-distribution" && (
+        <>
+          <div className="sidebar-divider" style={{ backgroundColor: "rgba(255,255,255,0.15)", margin: "8px 0" }} />
+          <div className="sidebar-date-filter" style={{ padding: "0 16px 12px", display: "flex", flexDirection: "column", gap: "8px", direction: "rtl" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ color: "rgba(255,255,255,0.7)", fontWeight: "bold", minWidth: "24px", fontSize: "var(--fs-sm)", textAlign: "right" }}>من</span>
+              <UnifiedDateField value={fromDate} onChange={onFromDateChange} />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ color: "rgba(255,255,255,0.7)", fontWeight: "bold", minWidth: "24px", fontSize: "var(--fs-sm)", textAlign: "right" }}>إلى</span>
+              <UnifiedDateField value={toDate} onChange={onToDateChange} />
+            </div>
+          </div>
+        </>
+      )}
+
       {/* ── خط فاصل + أزرار العمليات ── */}
       {(onAddAccount || onAddCar || onAddAgency || onAddExpense || onAddDistribute || (onDeposit && onWithdraw) || (onSaveCar && onCancelCar)) && (
         <div className="sidebar-actions-area">
           <div className="sidebar-divider" />
           {onAddAccount && !onDeposit && (
+            <GoldFxButton
+              type="button"
+              variant="gold"
+              onClick={onAddAccount}
+            >
+              <span className="gold-fx-btn__icon">+</span>
+              <span className="gold-fx-btn__label">إضافة حساب</span>
+            </GoldFxButton>
+          )}
+          {onAddCar && !onSaveCar && (
+            <div className="flex flex-col gap-2 w-full">
               <GoldFxButton
                 type="button"
                 variant="gold"
-                onClick={onAddAccount}
+                onClick={onAddCar}
               >
                 <span className="gold-fx-btn__icon">+</span>
-                <span className="gold-fx-btn__label">إضافة حساب</span>
+                <span className="gold-fx-btn__label">إضافة سيارة</span>
               </GoldFxButton>
-          )}
-          {onAddCar && !onSaveCar && (
-             <div className="flex flex-col gap-2 w-full">
-               <GoldFxButton
+              {onAddBatchCar && (
+                <GoldFxButton
                   type="button"
                   variant="gold"
-                  onClick={onAddCar}
+                  onClick={onAddBatchCar}
                 >
                   <span className="gold-fx-btn__icon">+</span>
-                  <span className="gold-fx-btn__label">إضافة سيارة</span>
+                  <span className="gold-fx-btn__label">إضافة مجموعة</span>
                 </GoldFxButton>
-                {onAddBatchCar && (
-                  <GoldFxButton
-                    type="button"
-                    variant="gold"
-                    onClick={onAddBatchCar}
-                  >
-                    <span className="gold-fx-btn__icon">+</span>
-                    <span className="gold-fx-btn__label">إضافة مجموعة</span>
-                  </GoldFxButton>
-                )}
-             </div>
+              )}
+            </div>
           )}
           {onSaveCar && onCancelCar && (
             <div className="sidebar-action-btns">

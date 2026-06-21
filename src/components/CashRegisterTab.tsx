@@ -5,6 +5,7 @@ import { PriceDisplay } from "@/components/ui";
 
 import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
+import { formatLedgerDetails } from "../utils/notesDisplay";
 
 const parseCommissionText = (notes: string | null | undefined, currency?: string | null, amount?: number): string => {
   const curr = currency || "IQD";
@@ -55,6 +56,9 @@ const parseCommissionNumeric = (notes: string | null | undefined, amount?: numbe
   }
   return 0;
 };
+
+const isOutgoingEntry = (entry: CashRegisterEntry) =>
+  entry.amount < 0 || entry.type_.includes("سحب") || entry.type_.includes("شراء") || entry.type_.includes("مصروف");
 
 interface CashRegisterTabProps {
   paymentType?: string;
@@ -128,7 +132,7 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
   );
 
   const formatEntry = (entry: CashRegisterEntry, value: number) => {
-    return <PriceDisplay amount={value} currency={entry.currency} />;
+    return <PriceDisplay amount={value} currency={entry.currency} noColor />;
   };
 
   return (
@@ -182,7 +186,7 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
                     <td style={{ whiteSpace: "nowrap", color: "#fff" }}>
                       {entry.type_}
                     </td>
-                    <td className={`col-money ${entry.currency === "USD" ? "qasa-amount-usd" : (entry.amount >= 0 ? "qasa-amount-iqd-pos" : "qasa-amount-iqd-neg")}`}>
+                    <td className={`col-money ${isOutgoingEntry(entry) ? "qasa-amount-neg" : "qasa-amount-pos"}`}>
                       {formatEntry(entry, entry.amount)}
                     </td>
                     {paymentType === "ممول" && (
@@ -190,21 +194,10 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
                         {parseCommissionText(entry.notes, entry.currency, entry.amount)}
                       </td>
                     )}
-                    <td style={{ fontSize: "var(--fs-sm)", maxWidth: "280px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {entry.notes && entry.notes.startsWith("تم تسديد الممول") ? (
-                        entry.notes.includes(" - عمولة:") ? entry.notes.split(" - عمولة:")[0] : entry.notes
-                      ) : (
-                        <>
-                          {entry.description}
-                          {entry.notes ? (
-                            <span className="text-muted" style={{ marginRight: "0.5rem" }}>
-                              ({entry.notes.includes(" - عمولة:") ? entry.notes.split(" - عمولة:")[0] : entry.notes})
-                            </span>
-                          ) : null}
-                        </>
-                      )}
+                    <td className="cell-notes-text" title={formatLedgerDetails(entry.description, entry.notes)}>
+                      {formatLedgerDetails(entry.description, entry.notes)}
                     </td>
-                    <td className={`col-money ${entry.currency === "USD" ? "qasa-amount-usd" : (entry.balance >= 0 ? "qasa-amount-iqd-pos" : "qasa-amount-iqd-neg")}`}>
+                    <td className={`col-money ${isOutgoingEntry(entry) ? "qasa-amount-neg" : "qasa-amount-pos"}`}>
                       {formatEntry(entry, entry.balance)}
                     </td>
                   </tr>

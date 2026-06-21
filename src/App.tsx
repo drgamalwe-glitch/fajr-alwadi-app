@@ -13,6 +13,7 @@ import { ProfitDistributionTab } from "./components/ProfitDistributionTab";
 import { LoginScreen } from "./components/LoginScreen";
 import { UsersTab } from "./components/UsersTab";
 import type { Car, Partner, TabId, UserInfo } from "./types";
+import { APP_VERSION } from "./version";
 
 type PartnerOpenTarget = {
   name: string;
@@ -21,7 +22,7 @@ type PartnerOpenTarget = {
   transactionId?: number | null;
 };
 
-type PartnersFinancialSubTab = "receivables" | "liabilities" | "personal";
+type PartnersFinancialSubTab = "customers" | "personal" | "receivables" | "liabilities";
 
 // Static array of background paths to optimize build size and prevent file duplication
 const INITIAL_BG_PATHS = ["/backgrounds/bg.jpg"];
@@ -45,6 +46,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
 
   const [partnersFinancialSubTab, setPartnersFinancialSubTab] = useState<PartnersFinancialSubTab | null>(null);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [carsSubTab, setCarsSubTab] = useState<"available" | "sold" | null>(null);
 
   // List of available backgrounds state
@@ -402,6 +405,10 @@ export default function App() {
           onAddDistribute={addDistributeAction?.action}
           onSaveCar={carFormActions?.onSave}
           onCancelCar={carFormActions?.onCancel}
+          fromDate={fromDate}
+          toDate={toDate}
+          onFromDateChange={setFromDate}
+          onToDateChange={setToDate}
         />
 
         <div className="app-content">
@@ -504,7 +511,7 @@ export default function App() {
                 )}
                 {activeTab === "financial-transactions" && <FinancialTransactionsTab />}
                 {activeTab === "profit-distribution" && (
-                  <ProfitDistributionTab onRefreshAllData={refreshData} onDistributeChange={setAddDistributeAction} />
+                  <ProfitDistributionTab onRefreshAllData={refreshData} onDistributeChange={setAddDistributeAction} fromDate={fromDate} toDate={toDate} />
                 )}
                 {activeTab === "users" && (
                   <UsersTab onLogout={handleLogout} />
@@ -553,7 +560,7 @@ export default function App() {
         */}
 
           <div className="footer-brand" dir="ltr">
-            <span className="footer-brand__text">VERSION: 1.4 | DEVELOPED BY DHRUGHAM ALALAWI: 07806539291</span>
+            <span className="footer-brand__text">VERSION: {APP_VERSION} | DEVELOPED BY DHRUGHAM ALALAWI: 07806539291</span>
           </div>
         </footer>
       </div>

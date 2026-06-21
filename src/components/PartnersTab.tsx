@@ -14,6 +14,7 @@ import { PAGE_SIZE } from "../constants";
 import { cn } from "../lib/utils";
 import { GoldFxButton } from "./ui/GoldFxButton";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
+import { formatNotesText } from "../utils/notesDisplay";
 import { PartnerStatementPrint } from "./PartnerStatementPrint";
 
 interface PartnersTabProps {
@@ -50,6 +51,10 @@ type SortDirection = "asc" | "desc";
 const isInstallmentWithdrawal = (tx: PartnerTransaction) =>
   (tx.type_ === "سحب" || tx.type_.startsWith("باقي")) && (!!tx.notes?.includes("قسط") || tx.type_.startsWith("باقي اقساط"));
 
+const isCustomerInstallmentRecord = (tx: PartnerTransaction) =>
+  isInstallmentWithdrawal(tx) ||
+  (tx.type_.startsWith("واصل") && (!!tx.notes?.includes("قسط") || tx.type_.includes("قسط")));
+
 const isBorrowerInstallmentPayment = (tx: PartnerTransaction) =>
   tx.type_.startsWith("تسديد") ||
   tx.type_.startsWith("استلام قسط") ||
@@ -84,7 +89,12 @@ const isFinancialClientKind = (kind: string) =>
 
 const isBorrowerKind = (kind: string) => kind === "زبون";
 
-type AccountsTabId = "receivables" | "liabilities" | "personal";
+const isCustomerRemainingBalanceTx = (tx: PartnerTransaction) =>
+  !tx.type_.startsWith("تحويل") &&
+  !tx.type_.startsWith("واصل") &&
+  (tx.type_.startsWith("باقي") || tx.type_.startsWith("سحب"));
+
+type AccountsTabId = "customers" | "personal" | "receivables" | "liabilities";
 
 const ACCOUNT_LIST_KINDS = new Set(["مستثمر", "ممول", "زبون", "شركة"]);
 
@@ -198,9 +208,10 @@ function addMonthsToDate(dateStr: string, monthsToAdd: number): string {
 
 
 const ACCOUNTS_TABS: { id: AccountsTabId; label: string }[] = [
+  { id: "customers", label: "العملاء" },
+  { id: "personal", label: "الشركاء" },
   { id: "receivables", label: "نطلب" },
   { id: "liabilities", label: "مطلوبين" },
-  { id: "personal", label: "الشركاء" },
 ];
 
 export function PartnersTab({
@@ -220,7 +231,10 @@ export function PartnersTab({
 }: PartnersTabProps) {
   const [unifiedAccounts, setUnifiedAccounts] = useState<UnifiedAccount[]>([]);
   const [page, setPage] = useState(0);
-  const [accountsTab, setAccountsTab] = useState<AccountsTabId>("receivables");
+  const [accountsTab, setAccountsTab] = useState<AccountsTabId>("customers");
+  const accountsTabRef = useRef(accountsTab);
+  accountsTabRef.current = accountsTab;
+  const [originAccountsTab, setOriginAccountsTab] = useState<AccountsTabId>("customers");
   const [sharikListView, setSharikListView] = useState(true); // true = قائمة الشركاء، false = حساب شريك محدد
   const [sharikPage, setSharikPage] = useState(0);
   const [partnersSearch, setPartnersSearch] = useState("");
@@ -263,6 +277,7 @@ export function PartnersTab({
   useEffect(() => {
     if (initialSubTab) {
       setAccountsTab(initialSubTab);
+      setOriginAccountsTab(initialSubTab);
       setSharikListView(true);
       setPartnerToView(null);
       setEditingKey(null);
@@ -427,6 +442,7 @@ export function PartnersTab({
 
     let result = unifiedAccounts.filter((acc) => {
       if (!isAccountListKind(acc.kind)) return false;
+      if (accountsTab === "customers") return acc.iqd_balance === 0 && acc.usd_balance === 0;
       if (accountsTab === "receivables") return acc.iqd_balance > 0 || acc.usd_balance > 0;
       if (accountsTab === "liabilities") return acc.iqd_balance < 0 || acc.usd_balance < 0;
       return false;
@@ -565,7 +581,7 @@ export function PartnersTab({
     return loadedTransactions;
   };
 
-  const resetForm = (nextAccountsTab: AccountsTabId = "receivables") => {
+  const resetForm = (nextAccountsTab?: AccountsTabId) => {
     setEditingKey(null);
     setOriginalPartnerData(null);
     replaceForm(createEmptyForm(kind));
@@ -575,7 +591,11 @@ export function PartnersTab({
     setEditingTransactionId(null);
     setPartnerToView(null);
     setShowNewAccount(false);
-    setAccountsTab(nextAccountsTab);
+    const targetTab = nextAccountsTab !== undefined ? nextAccountsTab : originAccountsTab;
+    setAccountsTab(targetTab);
+    if (nextAccountsTab !== undefined) {
+      setOriginAccountsTab(nextAccountsTab);
+    }
     setSharikListView(true);
     onPartnerActionsChange?.(null);
   };
@@ -628,6 +648,7 @@ export function PartnersTab({
         setSharikListView(false);
         setPartnerToView({ partner_name: "", phone: "", kind: "شريك", total_amount: 0, iqd_balance: 0, usd_balance: 0, total_withdrawals: 0 });
       } else {
+        setOriginAccountsTab(accountsTab);
         setAccountsTab("personal");
         setPartnerToView({ partner_name: "", phone: "", kind: formRef.current.kind, total_amount: 0, iqd_balance: 0, usd_balance: 0, total_withdrawals: 0 });
       }
@@ -778,7 +799,7 @@ export function PartnersTab({
     const isFinancierRepayment = currentKind === "ممول" && tx.type_.startsWith("سحب");
     const parsedNotes = isFinancierRepayment ? parseFinancierNotes(tx.notes, tx.amount) : null;
 
-    const isPaidBorrowerInst = currentKind === "زبون" && isInstallmentWithdrawal(tx) && paidTransactionIds.has(tx.id);
+    const isPaidBorrowerInst = currentKind === "زبون" && isCustomerInstallmentRecord(tx) && paidTransactionIds.has(tx.id);
     const isWithdraw = (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) && !isPaidBorrowerInst;
 
     setTxForm({
@@ -882,6 +903,13 @@ export function PartnersTab({
         break;
       }
     }
+
+    for (const tx of transactions) {
+      if (tx.type_.startsWith("واصل") && (tx.type_.includes("قسط") || tx.notes?.includes("قسط"))) {
+        paidIds.add(tx.id);
+      }
+    }
+
     return paidIds;
   }, [transactions, form.kind]);
 
@@ -1141,6 +1169,10 @@ export function PartnersTab({
     action?: "deposit" | "withdraw" | "settle_installment",
     transactionId?: number,
   ) => {
+    const currentTab = accountsTabRef.current;
+    if (currentTab !== "personal") {
+      setOriginAccountsTab(currentTab);
+    }
     setPartnerToView(partner);
     setAccountsTab("personal");
     setSharikListView(false);
@@ -1320,17 +1352,20 @@ export function PartnersTab({
           phone: phoneClean,
           kind: form.kind,
         });
-        const savedAccountsTab = accountsTab;
-        const savedSharikListView = sharikListView;
-        resetForm();
-        if (kind === "partners-financial") {
-          setAccountsTab(savedAccountsTab);
-          setSharikListView(savedSharikListView);
-        }
+        const newPartner: Partner = {
+          partner_name: nextName,
+          phone: phoneClean,
+          kind: form.kind,
+          total_amount: 0,
+          iqd_balance: 0,
+          usd_balance: 0,
+          total_withdrawals: 0
+        };
         await onRefresh();
         if (usesUnifiedAccounts) {
           void fetchUnifiedAccounts();
         }
+        await openPersonalAccount(newPartner);
       }
     } catch (err) {
       console.error(err);
@@ -1559,7 +1594,7 @@ export function PartnersTab({
         form.kind === "زبون" &&
         !!editingTransactionId &&
         !!originalEditingTransaction &&
-        isInstallmentWithdrawal(originalEditingTransaction);
+        isCustomerInstallmentRecord(originalEditingTransaction);
 
       const convertsInstallmentToPayment =
         form.kind === "زبون" &&
@@ -1866,7 +1901,7 @@ export function PartnersTab({
       ? transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       - transactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       : form.kind === "زبون"
-        ? transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+        ? transactions.filter((t) => isCustomerRemainingBalanceTx(t) && (t.currency || "IQD") === "IQD").reduce((s, t) => s + t.amount, 0)
         : transactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       - transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
     : currencyTotals[0];
@@ -1876,29 +1911,13 @@ export function PartnersTab({
       ? transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       - transactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       : form.kind === "زبون"
-        ? transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+        ? transactions.filter((t) => isCustomerRemainingBalanceTx(t) && t.currency === "USD").reduce((s, t) => s + t.amount, 0)
         : transactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       - transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
     : currencyTotals[1];
 
-  const getBalanceStatus = (amount: number) => {
-    if (amount > 0) return { label: "يطلبنا", className: "text-red" };
-    if (amount < 0) return { label: "نطلبه", className: "text-green" };
-    return { label: "متوازن", className: "text-muted" };
-  };
-  const getPartnerBalanceStatus = (accountKind: string, amount: number) => {
-    if (accountKind === "زبون") {
-      if (amount > 0) return { label: "نطلبه", className: "text-green" };
-      if (amount < 0) return { label: "يطلبنا", className: "text-red" };
-      return { label: "متوازن", className: "text-muted" };
-    }
-    if (isFinancialClientKind(accountKind)) {
-      if (amount > 0) return { label: "نطلبه", className: "text-green" };
-      if (amount < 0) return { label: "يطلبنا", className: "text-red" };
-      return { label: "متوازن", className: "text-muted" };
-    }
-    return getBalanceStatus(amount);
-  };
+
+
   const getMultiCurrencyBalanceStatus = (iqd: number, usd: number) => {
     const hasPositive = iqd > 0 || usd > 0;
     const hasNegative = iqd < 0 || usd < 0;
@@ -1908,18 +1927,16 @@ export function PartnersTab({
     return { label: "متوازن", className: "text-muted" };
   };
   const getDetailBalanceCardClass = (amount: number) => {
-    if (amount > 0) return "currency-card--balance-negative";
-    if (amount < 0) return "currency-card--balance-positive";
+    if (amount > 0) return "currency-card--balance-positive";
+    if (amount < 0) return "currency-card--balance-negative";
     return "currency-card--balance-zero";
   };
-  const isCustomerRemainingDebit = (tx: PartnerTransaction) =>
-    tx.type_.startsWith("باقي") || tx.type_.startsWith("سحب");
   const getPartnerCurrencyBalance = (currency: "IQD" | "USD") => {
     if (!partnerToView) return currency === "IQD" ? currencyTotals[0] : currencyTotals[1];
     if (form.kind === "زبون") {
       return transactions
-        .filter((t) => isCustomerRemainingDebit(t) && (t.currency || "IQD") === currency && !t.type_.startsWith("تحويل"))
-        .reduce((s, t) => s + t.amount, 0);
+        .filter((t) => (t.currency || "IQD") === currency)
+        .reduce((sum, t) => (isCustomerRemainingBalanceTx(t) ? sum + t.amount : sum), 0);
     }
     if (isFinancialClientKind(form.kind)) {
       return transactions
@@ -1938,14 +1955,18 @@ export function PartnersTab({
       ? stats.iqdTheyOwe
       : kind === "partners-financial" && accountsTab === "liabilities"
         ? stats.iqdWeOwe
-        : currencyTotals[0];
+        : kind === "partners-financial" && accountsTab === "customers"
+          ? 0
+          : currencyTotals[0];
   const displayPartnerUsdBalance = accountsTab === "personal" && partnerToView
     ? getPartnerCurrencyBalance("USD")
     : kind === "partners-financial" && accountsTab === "receivables"
       ? stats.usdTheyOwe
       : kind === "partners-financial" && accountsTab === "liabilities"
         ? stats.usdWeOwe
-        : currencyTotals[1];
+        : kind === "partners-financial" && accountsTab === "customers"
+          ? 0
+          : currencyTotals[1];
   const accountsListCardClass = accountsTab === "receivables"
     ? "currency-card--balance-positive"
     : accountsTab === "liabilities"
@@ -2007,53 +2028,18 @@ export function PartnersTab({
                     </GoldFxButton>
                   )}
 
-                  <div className="print-menu-wrap">
-                    <GoldFxButton
-                      type="button"
-                      variant="gold"
-                      style={{ margin: 0, whiteSpace: "nowrap", height: "42px" }}
-                      onClick={() => setPrintMenuOpen((open) => !open)}
-                    >
-                      <span className="gold-fx-btn__label">طباعة</span>
-                    </GoldFxButton>
-                    {printMenuOpen && (
-                      <div className="print-menu-panel">
-                        <button
-                          type="button"
-                          className="print-menu-action"
-                          onClick={() => runPrint("all")}
-                        >
-                          طباعة كامل الحساب
-                        </button>
-                        <div className="print-menu-range">
-                          <div className="print-menu-title">طباعة لفترة محددة</div>
-                          <label>
-                            <span>من تاريخ</span>
-                            <input
-                              type="date"
-                              value={printFromDate}
-                              onChange={(e) => setPrintFromDate(e.target.value)}
-                            />
-                          </label>
-                          <label>
-                            <span>إلى تاريخ</span>
-                            <input
-                              type="date"
-                              value={printToDate}
-                              onChange={(e) => setPrintToDate(e.target.value)}
-                            />
-                          </label>
-                          <button
-                            type="button"
-                            className="print-menu-action print-menu-action--primary"
-                            onClick={() => runPrint("range")}
-                          >
-                            طباعة الفترة
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  <GoldFxButton
+                    type="button"
+                    variant="gold"
+                    style={{ margin: 0, whiteSpace: "nowrap", height: "42px" }}
+                    onClick={() => {
+                      setPrintFromDate("");
+                      setPrintToDate("");
+                      setPrintMenuOpen(true);
+                    }}
+                  >
+                    <span className="gold-fx-btn__label">طباعة</span>
+                  </GoldFxButton>
 
                   <div className="toolbar-field-group">
                     <input
@@ -2106,7 +2092,7 @@ export function PartnersTab({
                 ACCOUNTS_TABS.map((tab) => {
                   const isActive = accountsTab === tab.id;
                   const isPersonalActive = tab.id === "personal" && accountsTab === "personal";
-                  const primaryTab = tab.id === "receivables";
+                  const primaryTab = tab.id === "customers";
 
                   return (
                     <button
@@ -2344,7 +2330,7 @@ export function PartnersTab({
                         <td className="col-name cell-bold">{partner.partner_name}</td>
                         <td className="col-phone">{partner.phone || "—"}</td>
                         <td className="col-money cell-bold">
-                          <span className={getPartnerBalanceStatus("شريك", partner.total_amount || 0).className}>
+                          <span className={partner.total_amount > 0 ? "text-green" : partner.total_amount < 0 ? "text-red" : "text-muted"}>
                             <PriceDisplay amount={Math.abs(partner.total_amount)} noColor />
                           </span>
                         </td>
@@ -2419,7 +2405,7 @@ export function PartnersTab({
                   </thead>
                   <tbody>
                     {pageTransactions.map((tx) => {
-                      const isPaidBorrowerInst = form.kind === "زبون" && isInstallmentWithdrawal(tx) && paidTransactionIds.has(tx.id);
+                      const isPaidBorrowerInst = form.kind === "زبون" && isCustomerInstallmentRecord(tx) && paidTransactionIds.has(tx.id);
                       const isWithdraw = (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) && !isPaidBorrowerInst;
                       const isDeposit = tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة") || tx.type_.startsWith("إعادة استثمار") || tx.type_.startsWith("تسوية") || isPaidBorrowerInst;
                       const direction = transactionDirection(form.kind, isWithdraw);
@@ -2451,17 +2437,8 @@ export function PartnersTab({
                               noColor
                             />
                           </td>
-                          <td className="text-muted col-notes">
-                            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                              <span>
-                                {tx.notes
-                                  ? tx.notes.includes(" - عمولة:")
-                                    ? tx.notes.split(" - عمولة:")[0]
-                                    : tx.notes
-                                  : "—"}
-                              </span>
-
-                            </div>
+                          <td className="col-notes cell-notes-text" title={formatNotesText(tx.notes) || undefined}>
+                            {formatNotesText(tx.notes) || "—"}
                           </td>
                           <td className="col-actions">
                             <button
@@ -2617,7 +2594,7 @@ export function PartnersTab({
                 <GoldFxButton type="submit" variant="green" style={{ flex: 1, margin: 0 }} disabled={saving}>
                   <span className="gold-fx-btn__label">{saving ? "جاري الحفظ..." : `حفظ ${kind}`}</span>
                 </GoldFxButton>
-                <GoldFxButton type="button" variant="gray" style={{ flex: 1, margin: 0 }} onClick={resetForm}>
+                <GoldFxButton type="button" variant="gray" style={{ flex: 1, margin: 0 }} onClick={() => resetForm()}>
                   <span className="gold-fx-btn__label">إلغاء</span>
                 </GoldFxButton>
               </div>
@@ -2827,7 +2804,7 @@ export function PartnersTab({
                       <ActionButton type="submit" variant="success" disabled={saving}>
                         {saving ? "جاري الحفظ..." : kind === "partners-financial" ? "حفظ الحساب" : `حفظ ${kind}`}
                       </ActionButton>
-                      <ActionButton type="button" variant="ghost" onClick={resetForm}>
+                      <ActionButton type="button" variant="ghost" onClick={() => resetForm()}>
                         إلغاء
                       </ActionButton>
                     </div>
@@ -2884,7 +2861,7 @@ export function PartnersTab({
                                     const rawPaymentType = tx.payment_type || tx.paymentType || "قاصه";
                                     const paymentTypeLabel = (rawPaymentType === "مصرف" || rawPaymentType === "قاصه") ? rawPaymentType : "قاصه";
                                     const badgeClass = paymentTypeLabel === "مصرف" ? "account-badge--bank" : "account-badge--qasa";
-                                    const isPaidBorrowerInst = form.kind === "زبون" && isInstallmentWithdrawal(tx) && paidTransactionIds.has(tx.id);
+                                    const isPaidBorrowerInst = form.kind === "زبون" && isCustomerInstallmentRecord(tx) && paidTransactionIds.has(tx.id);
                                     const isWithdraw = (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) && !isPaidBorrowerInst;
                                     const isDeposit = tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة") || isPaidBorrowerInst;
                                     const direction = transactionDirection(form.kind, isWithdraw);
@@ -2926,14 +2903,10 @@ export function PartnersTab({
                                             noColor
                                           />
                                         </td>
-                                        <td className="text-muted col-notes">
+                                        <td className="col-notes cell-notes-text">
                                           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                                            <span>
-                                              {tx.notes
-                                                ? tx.notes.includes(" - عمولة:")
-                                                  ? tx.notes.split(" - عمولة:")[0]
-                                                  : tx.notes
-                                                : "—"}
+                                            <span title={formatNotesText(tx.notes) || undefined}>
+                                              {formatNotesText(tx.notes) || "—"}
                                             </span>
                                             {(form.kind === "زبون" && isUnpaidInstallment(tx) && !paidTransactionIds.has(tx.id)) && (
                                               <button
@@ -3598,6 +3571,51 @@ export function PartnersTab({
               >
                 إلغاء
               </ActionButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {printMenuOpen && (
+        <div className="fx-confirm-overlay" role="presentation" onClick={() => setPrintMenuOpen(false)}>
+          <div
+            className="fx-confirm-dialog modal-dialog--kind-زبون"
+            role="alertdialog"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: "420px", display: "flex", flexDirection: "column", gap: "16px" }}
+          >
+            <h3 className="fx-confirm-title" style={{ fontSize: "var(--font-size)", fontWeight: 800, margin: 0, color: "var(--white)", textAlign: "center" }}>
+              خيارات طباعة كشف الحساب
+            </h3>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px", margin: "8px 0" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <span style={{ color: "var(--white)", fontWeight: "bold", minWidth: "40px", fontSize: "var(--fs-sm)", textAlign: "right" }}>من</span>
+                <UnifiedDateField value={printFromDate} onChange={setPrintFromDate} />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <span style={{ color: "var(--white)", fontWeight: "bold", minWidth: "40px", fontSize: "var(--fs-sm)", textAlign: "right" }}>إلى</span>
+                <UnifiedDateField value={printToDate} onChange={setPrintToDate} />
+              </div>
+            </div>
+
+            <div className="fx-confirm-actions" style={{ display: "flex", gap: "12px", justifyContent: "center" }}>
+              <GoldFxButton
+                type="button"
+                variant="green"
+                onClick={() => {
+                  runPrint(printFromDate || printToDate ? "range" : "all");
+                }}
+              >
+                <span className="gold-fx-btn__label">طباعة</span>
+              </GoldFxButton>
+              <GoldFxButton
+                type="button"
+                variant="red"
+                onClick={() => setPrintMenuOpen(false)}
+              >
+                <span className="gold-fx-btn__label">إلغاء</span>
+              </GoldFxButton>
             </div>
           </div>
         </div>

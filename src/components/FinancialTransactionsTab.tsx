@@ -5,6 +5,10 @@ import { PriceDisplay } from "@/components/ui";
 
 import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
+import { formatLedgerDetails } from "../utils/notesDisplay";
+
+const isOutgoingEntry = (entry: CashRegisterEntry) =>
+  entry.amount < 0 || entry.type_.includes("سحب") || entry.type_.includes("شراء") || entry.type_.includes("مصروف");
 
 /**
  * سجل المعاملات – يعرض جميع سجل المعاملات من كافة الحسابات (قاصه + مصرف)
@@ -195,38 +199,20 @@ export function FinancialTransactionsTab() {
                         {entry.type_}
                       </td>
                       <td
-                        className={`col-money ${entry.type_ === "شراء بالتمويل"
-                            ? "tx-amount-iqd-neg"
-                            : entry.currency === "USD"
-                              ? "tx-amount-usd"
-                              : entry.amount >= 0
-                                ? "tx-amount-iqd-pos"
-                                : "tx-amount-iqd-neg"
-                          }`}
+                        className={`col-money ${isOutgoingEntry(entry) ? "tx-amount-neg" : "tx-amount-pos"}`}
                       >
-                        <PriceDisplay amount={entry.amount} currency={entry.currency} />
-                      </td>
-                      <td style={{
-                        fontSize: "var(--fs-sm)",
-                        maxWidth: "280px",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}>
-                        {entry.description}
-                        {entry.notes ? (
-                          <span className="text-muted" style={{ marginRight: "0.5rem" }}>({entry.notes})</span>
-                        ) : null}
+                        <PriceDisplay amount={entry.amount} currency={entry.currency} noColor />
                       </td>
                       <td
-                        className={`col-money ${entry.currency === "USD"
-                            ? "tx-amount-usd"
-                            : entry.balance >= 0
-                              ? "tx-amount-iqd-pos"
-                              : "tx-amount-iqd-neg"
-                          }`}
+                        className="cell-notes-text"
+                        title={formatLedgerDetails(entry.description, entry.notes)}
                       >
-                        <PriceDisplay amount={entry.balance} currency={entry.currency} />
+                        {formatLedgerDetails(entry.description, entry.notes)}
+                      </td>
+                      <td
+                        className={`col-money ${isOutgoingEntry(entry) ? "tx-amount-neg" : "tx-amount-pos"}`}
+                      >
+                        <PriceDisplay amount={entry.balance} currency={entry.currency} noColor />
                       </td>
                     </tr>
                   ))}

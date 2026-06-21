@@ -277,3 +277,73 @@
 .profit-card--loss:hover .profit-usd {
   filter: drop-shadow(0 0 20px rgba(239, 68, 68, 0.25));
 }
+
+.profit-distribution-table .profit-currency-head {
+  position: relative;
+  overflow: hidden;
+  font-weight: 900;
+  letter-spacing: 0.3px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.profit-distribution-table .profit-currency-head::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+  opacity: 0.55;
+}
+
+.profit-distribution-table .profit-currency-head--iqd {
+  color: #111827 !important;
+  background:
+    linear-gradient(135deg, rgba(216, 168, 90, 0.18), rgba(216, 168, 90, 0.06)),
+    rgba(216, 168, 90, 0.04) !important;
+  border-bottom: 2px solid rgba(216, 168, 90, 0.68) !important;
+  text-shadow: 0 0 18px rgba(216, 168, 90, 0.32);
+}
+
+.profit-distribution-table .profit-currency-head--usd {
+  color: #111827 !important;
+  background:
+    linear-gradient(135deg, rgba(34, 197, 94, 0.18), rgba(34, 197, 94, 0.055)),
+    rgba(34, 197, 94, 0.035) !important;
+  border-bottom: 2px solid rgba(34, 197, 94, 0.66) !important;
+  text-shadow: 0 0 18px rgba(34, 197, 94, 0.3);
+}
+
+.profit-distribution-table .profit-subhead {
+  font-weight: 800;
+}
+
+.profit-distribution-table .profit-subhead--iqd {
+  background: rgba(216, 168, 90, 0.045) !important;
+}
+
+.profit-distribution-table .profit-subhead--usd {
+  background: rgba(34, 197, 94, 0.045) !important;
+}
+
+.profit-distribution-table .profit-subhead--net.profit-subhead--iqd {
+  color: #111827 !important;
+  background: rgba(216, 168, 90, 0.075) !important;
+}
+
+.profit-distribution-table .profit-subhead--net.profit-subhead--usd {
+  color: #111827 !important;
+  background: rgba(34, 197, 94, 0.075) !important;
+}
+
+.profit-distribution-table .profit-money {
+  font-weight: 900;
+}
+
+.profit-distribution-table .profit-money--drawings {
+  color: #ef4444 !important;
+}
+
+.profit-distribution-table .profit-money--net {
+  color: #16a34a !important;
+}

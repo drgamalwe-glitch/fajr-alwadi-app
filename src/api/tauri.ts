@@ -92,7 +92,9 @@ function parseCommissionAmount(amount: number, notes: string | null | undefined)
 }
 
 function isCustomerDebit(tx: PartnerTransaction): boolean {
-  return tx.type_.startsWith("باقي") || tx.type_.startsWith("سحب");
+  return !tx.type_.startsWith("تحويل") &&
+    !tx.type_.startsWith("واصل") &&
+    (tx.type_.startsWith("باقي") || tx.type_.startsWith("سحب"));
 }
 
 function calculateCustomerRemaining(txns: PartnerTransaction[], currency?: "IQD" | "USD"): number {
@@ -156,7 +158,7 @@ function recalculateMockPartnerTotal(partnerName: string, kind: string) {
   const pIdx = partners.findIndex((p) => p.partner_name === partnerName && p.kind === kind);
   if (pIdx < 0) return;
 
-  partners[pIdx].total_amount = kind === "زبون" ? txns.filter(tx => (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) && !tx.type_.startsWith("تحويل")).reduce((sum, tx) => sum + tx.amount, 0) : txns.reduce((total, tx) => {
+  partners[pIdx].total_amount = kind === "زبون" ? txns.filter(tx => isCustomerDebit(tx)).reduce((sum, tx) => sum + tx.amount, 0) : txns.reduce((total, tx) => {
       if (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة")) return total + tx.amount;
       if (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) return total - tx.amount;
     return total;

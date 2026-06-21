@@ -1,0 +1,377 @@
+version: "2"
+type: frontend
+tech_stack:
+  - TypeScript 5.8
+  - React 19.1
+  - Tailwind CSS 3.4 (glass-morphism theme)
+  - Vite 7.0 (build tool)
+  - Tauri 2 (desktop framework)
+  - Framer Motion 12.40 (animations)
+  - Radix UI Select, cmdk, lucide-react
+routes:
+  - path: /
+    file: src/App.tsx
+    auth_required: false
+    description: Login screen (when no user) or main dashboard (when authenticated)
+  - path: /dashboard
+    file: src/components/Dashboard.tsx
+    auth_required: true
+    description: Main dashboard with financial summary cards and alerts
+  - path: /cars
+    file: src/components/CarsTab.tsx
+    auth_required: true
+    description: Car showroom management (available and sold cars)
+  - path: /partners-financial
+    file: src/components/PartnersTab.tsx
+    auth_required: true
+    description: Customer/partner account management
+  - path: /agencies
+    file: src/components/AgenciesTab.tsx
+    auth_required: true
+    description: Agency commission management
+  - path: /expenses
+    file: src/components/ExpensesTab.tsx
+    auth_required: true
+    description: Expense management
+  - path: /profit-distribution
+    file: src/components/ProfitDistributionTab.tsx
+    auth_required: true
+    description: Profit distribution and partner drawings
+  - path: /financial-accounts
+    file: src/components/FinancialAccountsTab.tsx
+    auth_required: true
+    description: Cash register (Qasa and Cash)
+  - path: /financial-transactions
+    file: src/components/FinancialTransactionsTab.tsx
+    auth_required: true
+    description: Unified transaction log
+  - path: /users
+    file: src/components/UsersTab.tsx
+    auth_required: true
+    description: User management (admin)
+  - path: /company-status
+    file: src/components/CompanyStatusTab.tsx
+    auth_required: true
+    description: Company financial position summary
+features:
+  - name: Login
+    description: User authentication with username and password
+    files:
+      - src/App.tsx
+      - src/components/LoginScreen.tsx
+      - src/api/tauri.ts
+    entry_route: /
+    user_interactions:
+      - Enter username in text field
+      - Enter password in password field
+      - Click login button or press Enter to submit
+      - See error message on invalid credentials
+      - Redirect to main dashboard on successful login
+    api_calls:
+      - command: login
+        args: ["username", "password"]
+        method: Tauri invoke
+    auth_required: false
+  - name: Dashboard Overview
+    description: View financial summary cards, alerts, and quick actions
+    files:
+      - src/components/Dashboard.tsx
+      - src/components/dashboard/
+    entry_route: /dashboard
+    user_interactions:
+      - View 4 financial summary cards (Qasa cash, Inventory, Capital, Monthly Profit)
+      - View installment alerts (overdue, due today, upcoming)
+      - View creditor alerts (negative balances)
+      - Click WhatsApp button to message debtor
+      - Open quick expense modal to add an expense
+      - Open quick sale modal to sell an available car
+      - Open pay installment modal to record a payment
+      - Open pay creditor modal to settle creditor balance
+    api_calls:
+      - command: get_cars
+        method: Tauri invoke
+      - command: get_partners
+        method: Tauri invoke
+      - command: get_financial_summary
+        args: [paymentType]
+        method: Tauri invoke
+      - command: get_unified_accounts
+        method: Tauri invoke
+      - command: get_partner_transactions
+        args: [partnerName, kind]
+        method: Tauri invoke
+      - command: add_expense
+        args: [description, amount, date, notes, currency, carNumber]
+        method: Tauri invoke
+      - command: add_partner_transaction
+        args: [partnerName, kind, type, amount, date, notes, currency, paymentType]
+        method: Tauri invoke
+      - command: pay_financier_from_partners
+        args: [financierName, financierKind, amount, date, notes, currency, commissionAmount, commissionCurrency]
+        method: Tauri invoke
+      - command: update_partner_transaction
+        args: [id, partnerName, kind, type_, amount, date, notes, currency, paymentType]
+        method: Tauri invoke
+      - command: delete_partner_transaction
+        args: [id, partnerName, kind]
+        method: Tauri invoke
+      - command: open_whatsapp
+        args: [phone, text]
+        method: Tauri invoke
+    auth_required: true
+  - name: Car Management
+    description: Add, edit, sell, and delete cars in inventory
+    files:
+      - src/components/CarsTab.tsx
+      - src/components/CarFormPanel.tsx
+    entry_route: /cars
+    user_interactions:
+      - Switch between available and sold car views
+      - Search cars by model, plate number, chassis, or color
+      - Add new car (single or batch)
+      - Edit existing car details
+      - Sell a car (cash, full payment, or installment)
+      - View and manage car purchase details
+      - View and manage car expenses
+      - Delete a car
+      - Sort cars by various columns
+      - Paginate through car list
+    api_calls:
+      - command: get_cars
+        method: Tauri invoke
+      - command: add_car
+        args: [num, chassis, model, year, name, color, details, purchase, currency, sale_currency, selling, status, payment_type, cash_price, amount_paid, amount_remaining, installment_months, monthly_payment, buyer_name, buyer_phone, purchase_date, sale_date, delivery_date, first_payment_date, purchase_payment_type, old_num, purchase_type, financer_name, commission_type, commission_value, car_partners, adminName]
+        method: Tauri invoke
+      - command: delete_car
+        args: [num]
+        method: Tauri invoke
+      - command: get_car_expense_records
+        args: [carNumber]
+        method: Tauri invoke
+      - command: add_car_expense_record
+        args: [carNumber, description, amount, date, currency]
+        method: Tauri invoke
+      - command: delete_car_expense_record
+        args: [id]
+        method: Tauri invoke
+    auth_required: true
+  - name: Partner Account Management
+    description: Manage customer, partner, investor, funder, and company accounts
+    files:
+      - src/components/PartnersTab.tsx
+    entry_route: /partners-financial
+    user_interactions:
+      - Switch between customers, personal partners, receivables, and liabilities tabs
+      - Search accounts by name or phone
+      - Add new account (investor, funder, customer, company)
+      - Edit account details
+      - Delete account
+      - Record deposit or withdrawal transaction
+      - View transaction history per account
+      - Edit or delete individual transactions
+      - Print partner statement
+      - Settle installment payments
+      - Pay financier with commission tracking
+    api_calls:
+      - command: get_partners
+        method: Tauri invoke
+      - command: add_partner
+        args: [name, phone, kind]
+        method: Tauri invoke
+      - command: update_partner
+        args: [oldName, oldKind, name, phone, kind]
+        method: Tauri invoke
+      - command: delete_partner
+        args: [name, kind]
+        method: Tauri invoke
+      - command: get_partner_transactions
+        args: [partnerName, kind]
+        method: Tauri invoke
+      - command: add_partner_transaction
+        args: [partnerName, kind, type, amount, date, notes, currency, paymentType]
+        method: Tauri invoke
+      - command: update_partner_transaction
+        args: [id, partnerName, kind, type_, amount, date, notes, currency, paymentType]
+        method: Tauri invoke
+      - command: delete_partner_transaction
+        args: [id, partnerName, kind]
+        method: Tauri invoke
+      - command: pay_financier_from_partners
+        args: [financierName, financierKind, amount, date, notes, currency, commissionAmount, commissionCurrency]
+        method: Tauri invoke
+    auth_required: true
+  - name: Agency Commission Management
+    description: Manage agency transfers and commission transactions
+    files:
+      - src/components/AgenciesTab.tsx
+    entry_route: /agencies
+    user_interactions:
+      - View agency list and details
+      - Add new agency
+      - Edit agency details
+      - Delete agency
+      - Record agency transactions (deposit/withdraw)
+      - Search agencies
+    api_calls:
+      - command: get_agencies
+        method: Tauri invoke
+      - command: add_agency
+        args: [old_agent_name, car_type, car_number, car_model, color, new_agent_name, phone, amount_usd, amount_iqd, notes]
+        method: Tauri invoke
+      - command: update_agency
+        args: [id, old_agent_name, car_type, car_number, car_model, color, new_agent_name, phone, amount_usd, amount_iqd, notes]
+        method: Tauri invoke
+      - command: delete_agency
+        args: [id]
+        method: Tauri invoke
+      - command: get_agency_transactions
+        args: [agency_id]
+        method: Tauri invoke
+      - command: add_agency_transaction
+        args: [agency_id, date, time, type_, amount, currency, notes]
+        method: Tauri invoke
+      - command: delete_agency_transaction
+        args: [id]
+        method: Tauri invoke
+    auth_required: true
+  - name: Expense Management
+    description: Record and manage business expenses
+    files:
+      - src/components/ExpensesTab.tsx
+    entry_route: /expenses
+    user_interactions:
+      - View all expenses in paginated table
+      - Add new expense with description, amount, currency, date, notes
+      - Edit existing expense
+      - Delete expense
+    api_calls:
+      - command: get_expenses
+        method: Tauri invoke
+      - command: add_expense
+        args: [description, amount, date, notes, currency, carNumber]
+        method: Tauri invoke
+      - command: update_expense
+        args: [id, description, amount, date, notes, currency]
+        method: Tauri invoke
+      - command: delete_expense
+        args: [id]
+        method: Tauri invoke
+    auth_required: true
+  - name: Profit Distribution
+    description: View and manage profit distribution among partners
+    files:
+      - src/components/ProfitDistributionTab.tsx
+    entry_route: /profit-distribution
+    user_interactions:
+      - View profit summary per partner (IQD/USD, drawings, expenses share)
+      - Filter by date range
+      - Distribute or reset profits
+    api_calls:
+      - command: get_profit_distribution_summary
+        args: [startDate, endDate]
+        method: Tauri invoke
+    auth_required: true
+  - name: Cash Register
+    description: View cash register entries (Qasa and Cash) with running balance
+    files:
+      - src/components/CashRegisterTab.tsx
+    entry_route: /financial-accounts
+    user_interactions:
+      - View filtered cash register entries (Qasa or Cash)
+      - Paginated table with running balance
+      - Sort by date, type, amount, description
+    api_calls:
+      - command: get_cash_register_entries
+        args: [paymentType]
+        method: Tauri invoke
+    auth_required: true
+  - name: Transaction Log
+    description: Unified view of all financial transactions
+    files:
+      - src/components/FinancialTransactionsTab.tsx
+    entry_route: /financial-transactions
+    user_interactions:
+      - View all transactions across accounts in unified table
+      - See running balance per currency
+      - Sort columns
+    api_calls:
+      - command: get_cars
+        method: Tauri invoke
+      - command: get_cash_register_entries
+        args: [paymentType: null]
+        method: Tauri invoke
+    auth_required: true
+  - name: User Management
+    description: Add, edit, delete system users and change passwords
+    files:
+      - src/components/UsersTab.tsx
+    entry_route: /users
+    user_interactions:
+      - View list of users
+      - Add new user
+      - Edit existing user
+      - Change user password
+      - Delete user
+      - Logout
+    api_calls:
+      - command: get_users
+        method: Tauri invoke
+      - command: add_user
+        args: [username, password, displayName, profileImage]
+        method: Tauri invoke
+      - command: update_user
+        args: [id, username, displayName, profileImage]
+        method: Tauri invoke
+      - command: change_password
+        args: [id, newPassword]
+        method: Tauri invoke
+      - command: delete_user
+        args: [id]
+        method: Tauri invoke
+    auth_required: true
+  - name: Excel Export
+    description: Export all database tables to Excel file
+    files:
+      - src/App.tsx
+      - src/api/tauri.ts
+    entry_route: /
+    user_interactions:
+      - Click export button in footer to download Excel
+    api_calls:
+      - command: export_database_to_excel
+        method: Tauri invoke
+    auth_required: true
+known_limitations:
+  - issue: Browser mode uses localStorage mock instead of real backend - all data is volatile and limited
+    location: src/api/tauri.ts
+    impact: In non-Tauri environment (browser), data is stored in localStorage with base64 encoding and some commands are no-ops
+  - issue: Background deletion and cycling keyboard shortcuts are commented out
+    location: src/App.tsx (lines 241-325)
+    impact: Users cannot delete or cycle backgrounds via keyboard
+  - issue: style-editor/ directory exists but is empty
+    location: src/style-editor/
+    impact: Style editor feature planned but not implemented
+  - issue: Only two partners allowed (أمير and منتصر) - hardcoded business logic
+    location: src/components/PartnersTab.tsx, src/api/tauri.ts
+    impact: Cannot create/delete partner accounts or change their names/kinds
+  - issue: Payment method is always fixed to قاصه (no bank/other accounts)
+    location: src/api/tauri.ts
+    impact: Cash register only supports قاصه payment type
+  - issue: No formal routing library - navigation is state-based tab switching
+    location: src/App.tsx
+    impact: No URL-based routing, browser back/forward navigation not supported
+  - issue: No state management library - uses useState + prop drilling throughout
+    location: src/App.tsx
+    impact: Deep component tree prop drilling, complex state management
+  - issue: No testing infrastructure visible
+    location: project root
+    impact: No unit or integration tests found
+  - issue: Zoom auto-fit uses deprecated zoom CSS property
+    location: src/main.tsx
+    impact: May not work in all browsers, non-standard CSS
+  - issue: Arabic numeral conversion intercepts all document-level input events
+    location: src/main.tsx
+    impact: May interfere with non-input elements or cause double-event issues
+  - issue: settle_company_through_funder, add_user, update_user, change_password, delete_user are no-ops in mock mode
+    location: src/api/tauri.ts
+    impact: These features only work in Tauri desktop mode, not browser

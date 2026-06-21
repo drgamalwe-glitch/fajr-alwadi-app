@@ -650,6 +650,7 @@ export function CarsTab({
     const buyerName = formData.buyerName.trim();
     const phone = formData.phone.trim();
     const carLabel = (formData.name || formData.model || "سيارة").trim();
+    const chassisLabel = formData.chassis.trim();
 
     if (!buyerName) return;
 
@@ -670,8 +671,8 @@ export function CarsTab({
           amount: amountPaidNum,
           date: formData.saleDate || todayIsoDate(),
           notes: isInstallmentsOrDue
-            ? `استلام مقدمة بيع سيارة ل ${buyerName} ${carLabel} ${formData.chassis.trim()}`
-            : `دفعة أولى مستلمة - بيع ${carLabel}`,
+            ? `استلام مقدمة سيارة من ${buyerName} رقم الشاصي ${chassisLabel}`
+            : `دفعة أولى مستلمة - بيع ${carLabel} #بيع_سيارة_${formData.num}`,
           currency: formData.saleCurrency,
           paymentType: "قاصه",
         });
@@ -684,11 +685,11 @@ export function CarsTab({
           { partnerName: buyerName, kind: partnerKind },
         );
 
-        const saleLabel = `${buyerName} ${carLabel} ${formData.chassis.trim()}`;
+        const saleLabel = `${buyerName} ${carLabel} ${chassisLabel}`;
         const alreadyLinked = existingTxns?.some(
           (tx) =>
             (tx.type_ === "باقي قسط" || tx.type_ === "باقي" || tx.type_?.includes("باقي")) &&
-            tx.notes?.includes(saleLabel)
+            (tx.notes?.includes(saleLabel) || (!!chassisLabel && tx.notes?.includes(chassisLabel)))
         );
 
         if (!alreadyLinked) {
@@ -710,8 +711,8 @@ export function CarsTab({
                 amount: installmentAmount,
                 date: instDate,
                 notes: months > 1
-                  ? `باقي قسط شهر ${i + 1} من ${months} على ${saleLabel}`
-                  : `باقي مجموع قسط على ${saleLabel}`,
+                  ? `باقي قسط شهر ${i + 1} من ${months} على ${buyerName} رقم الشاصي ${chassisLabel}`
+                  : `باقي مجموع قسط على ${buyerName} رقم الشاصي ${chassisLabel}`,
                 currency: formData.saleCurrency,
                 paymentType: "قاصه",
               });
@@ -724,7 +725,7 @@ export function CarsTab({
               type: "باقي قسط",
               amount: remaining,
               date: dueDate,
-              notes: `باقي مجموع قسط على ${saleLabel}`,
+              notes: `باقي مجموع قسط على ${buyerName} رقم الشاصي ${chassisLabel}`,
               currency: formData.saleCurrency,
               paymentType: "قاصه",
             });

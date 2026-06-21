@@ -19,7 +19,7 @@ export function ProfitCard({ profitIqd, profitUsd, monthName }: ProfitCardProps)
       <div className="profit-content">
         <div className="profit-header">
           <div className="profit-title">
-            أرباح {monthName}
+            صافي الأرباح {monthName}
           </div>
         </div>
 

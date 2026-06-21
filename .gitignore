@@ -24,3 +24,5 @@ dist-ssr
 *.sw?
 __pycache__/
 *.pyc
+
+testsprite_tests/tmp/config.json
