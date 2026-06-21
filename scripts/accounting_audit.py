@@ -19,7 +19,6 @@ def find_db():
     for c in candidates:
         if os.path.exists(c):
             return c
-    # Try to find it
     for root, dirs, files in os.walk(os.path.expanduser("~")):
         for f in files:
             if f == "fajr_alwadi.db":
@@ -38,7 +37,7 @@ def audit(db_path):
 
     # 1. Qasa = sum of affects_qasa movements
     print("\n[1] Qasa consistency check...")
-    qasa_partner_sum = conn.execute("""
+    qasa_sum = conn.execute("""
         SELECT COALESCE(SUM(
             CASE
                 WHEN (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
@@ -46,15 +45,14 @@ def audit(db_path):
                       OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
                      AND type NOT LIKE 'تحويل%' THEN amount
                 WHEN (type LIKE 'سحب%' OR type LIKE 'باقي%')
-                     AND type NOT LIKE 'interopRequire%' THEN -amount
+                     AND type NOT LIKE 'تحويل%' THEN -amount
                 ELSE 0
             END
         ), 0.0)
         FROM partner_transactions
         WHERE affects_qasa = 1 AND kind IN ('شريك', 'مستثمر')
     """).fetchone()[0]
-    print(f"  Qasa (partner+investor) sum: {qasa_partner_sum:,.0f}")
-    # This is informational — Qasa card should match this value
+    print(f"  Qasa (partner+investor) sum: {qasa_sum:,.0f}")
 
     # 2. Cash = sum of affects_partner_cash partner movements
     print("\n[2] Cash consistency check...")
@@ -66,7 +64,7 @@ def audit(db_path):
                       OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
                      AND type NOT LIKE 'تحويل%' THEN amount
                 WHEN (type LIKE 'سحب%' OR type LIKE 'باقي%')
-                     AND type NOT LIKE 'interopRequire%' THEN -amount
+                     AND type NOT LIKE 'تحويل%' THEN -amount
                 ELSE 0
             END
         ), 0.0)
@@ -92,43 +90,142 @@ def audit(db_path):
     print(f"  General expenses: {general_expenses:,.0f}")
     print(f"  Net profit: {net_profit:,.0f}")
 
-    # 4. Funders and companies must NOT appear in Qasa
+    # 4. No funder/company rows with affects_qasa = 1
     print("\n[4] Funders/companies in Qasa check...")
     bad_qasa = conn.execute("""
         SELECT COUNT(*) FROM partner_transactions
         WHERE affects_qasa = 1 AND kind IN ('ممول', 'شركة')
     """).fetchone()[0]
     if bad_qasa > 0:
-        errors.append(f"  FAIL: {bad_qasa} funder/company rows have affects_qasa=1")
+        errors.append(f"FAIL: {bad_qasa} funder/company rows have affects_qasa=1")
     else:
         print("  PASS: No funders/companies in Qasa")
 
-    # 5. Investors appear in Qasa but NOT in Cash
-    print("\n[5] Investor Qasa/Cash check...")
+    # 5. No funder/company rows with affects_partner_cash = 1
+    print("\n[5] Funders/companies in Cash check...")
+    bad_cash = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE affects_partner_cash = 1 AND kind IN ('ممول', 'شركة')
+    """).fetchone()[0]
+    if bad_cash > 0:
+        errors.append(f"FAIL: {bad_cash} funder/company rows have affects_partner_cash=1")
+    else:
+        print("  PASS: No funders/companies in partner Cash")
+
+    # 6. No investor rows with affects_partner_cash = 1
+    print("\n[6] Investor Cash check...")
     investor_in_cash = conn.execute("""
         SELECT COUNT(*) FROM partner_transactions
         WHERE affects_partner_cash = 1 AND kind = 'مستثمر'
     """).fetchone()[0]
     if investor_in_cash > 0:
-        errors.append(f"  FAIL: {investor_in_cash} investor rows have affects_partner_cash=1")
+        errors.append(f"FAIL: {investor_in_cash} investor rows have affects_partner_cash=1")
     else:
         print("  PASS: Investors not in partner Cash")
 
-    # 6. Payment profit must not create second cash inflow
-    print("\n[6] Payment profit double-counting check...")
-    profit_with_qasa = conn.execute("""
+    # 7. No profit recognition rows with affects_qasa = 1
+    print("\n[7] Profit rows in Qasa check...")
+    profit_qasa = conn.execute("""
         SELECT COUNT(*) FROM partner_transactions
         WHERE affects_profit = 1 AND affects_qasa = 1
-          AND type = 'ايداع ارباح سيارة'
-          AND notes LIKE '%رقم حركة دفعة%'
     """).fetchone()[0]
-    if profit_with_qasa > 0:
-        errors.append(f"  FAIL: {profit_with_qasa} payment profit rows affect Qasa")
+    if profit_qasa > 0:
+        errors.append(f"FAIL: {profit_qasa} profit rows have affects_qasa=1")
     else:
-        print("  PASS: Payment profit does not affect Qasa")
+        print("  PASS: Profit rows do not affect Qasa")
 
-    # 7. Total recognized profit per car never exceeds full car profit
-    print("\n[7] Profit cap check...")
+    # 8. No profit recognition rows with affects_partner_cash = 1
+    print("\n[8] Profit rows in Cash check...")
+    profit_cash = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE affects_profit = 1 AND affects_partner_cash = 1
+    """).fetchone()[0]
+    if profit_cash > 0:
+        errors.append(f"FAIL: {profit_cash} profit rows have affects_partner_cash=1")
+    else:
+        print("  PASS: Profit rows do not affect Cash")
+
+    # 9. No duplicate cash ledger rows for same car sale
+    print("\n[9] Duplicate car sale cash ledger check...")
+    dup_cash = conn.execute("""
+        SELECT reference_id, COUNT(*) as cnt
+        FROM financial_ledger
+        WHERE reference_type = 'car' AND account_type = 'cash'
+          AND type_ = 'بيع سيارة كاش'
+        GROUP BY reference_id
+        HAVING cnt > 1
+    """).fetchall()
+    if dup_cash:
+        for r in dup_cash:
+            errors.append(f"FAIL: Car {r['reference_id']} has {r['cnt']} duplicate cash sale ledger rows")
+    else:
+        print("  PASS: No duplicate cash sale ledger rows")
+
+    # 10. No duplicate COGS rows for same car
+    print("\n[10] Duplicate COGS check...")
+    dup_cogs = conn.execute("""
+        SELECT reference_id, COUNT(*) as cnt
+        FROM financial_ledger
+        WHERE reference_type = 'car' AND type_ = 'تكلفة المبيعات'
+        GROUP BY reference_id
+        HAVING cnt > 1
+    """).fetchall()
+    if dup_cogs:
+        for r in dup_cogs:
+            errors.append(f"FAIL: Car {r['reference_id']} has {r['cnt']} duplicate COGS rows")
+    else:
+        print("  PASS: No duplicate COGS rows")
+
+    # 11. Inventory credit uses total_cost not selling_price
+    print("\n[11] Inventory credit check...")
+    bad_inv = conn.execute("""
+        SELECT fl.reference_id, fl.credit, c.selling_price, c.purchase_price,
+               COALESCE((SELECT SUM(amount) FROM car_expenses WHERE car_number = fl.reference_id), 0) as exp_sum
+        FROM financial_ledger fl
+        JOIN cars c ON c.car_number = fl.reference_id
+        WHERE fl.reference_type = 'car' AND fl.account_type = 'inventory'
+          AND fl.credit > 0
+          AND fl.credit > c.purchase_price + COALESCE((SELECT SUM(amount) FROM car_expenses WHERE car_number = fl.reference_id), 0) + 0.01
+    """).fetchall()
+    if bad_inv:
+        for r in bad_inv:
+            expected = r['purchase_price'] + r['exp_sum']
+            errors.append(f"FAIL: Car {r['reference_id']} inventory credit {r['credit']:,.0f} > total_cost {expected:,.0f}")
+    else:
+        print("  PASS: Inventory credits use correct total_cost")
+
+    # 12. No car_expense rows stored as reference_type = 'expense'
+    print("\n[12] Car expense reference_type check...")
+    bad_car_exp = conn.execute("""
+        SELECT COUNT(*) FROM financial_ledger
+        WHERE reference_type = 'expense'
+          AND reference_id IN (SELECT CAST(id AS TEXT) FROM car_expenses)
+    """).fetchone()[0]
+    if bad_car_exp > 0:
+        errors.append(f"FAIL: {bad_car_exp} car_expense rows stored as reference_type='expense'")
+    else:
+        print("  PASS: Car expenses use reference_type='car_expense'")
+
+    # 13. Orphan ledger entries
+    print("\n[13] Orphan ledger entries check...")
+    for ref_type, table, id_col in [
+        ('partner_transaction', 'partner_transactions', 'id'),
+        ('car_expense', 'car_expenses', 'id'),
+        ('agency', 'agencies', 'id'),
+        ('agency_transaction', 'agency_transactions', 'id'),
+    ]:
+        orphan = conn.execute(f"""
+            SELECT COUNT(*) FROM financial_ledger
+            WHERE reference_type = ?
+              AND reference_id NOT IN (SELECT CAST({id_col} AS TEXT) FROM {table})
+        """, [ref_type]).fetchone()[0]
+        if orphan > 0:
+            warnings.append(f"WARN: {orphan} orphan {ref_type} ledger entries")
+        else:
+            print(f"  PASS: No orphan {ref_type} ledger entries")
+
+    # 14. Profit cap per car
+    print("\n[14] Profit cap check...")
     cars = conn.execute("""
         SELECT car_number, purchase_price, selling_price, COALESCE(currency, 'IQD') as currency,
                COALESCE(sale_currency, 'IQD') as sale_currency
@@ -150,50 +247,33 @@ def audit(db_path):
               AND notes LIKE ?
         """, [f"%#بيع_سيارة_{car['car_number']}%"]).fetchone()[0]
         if recognized > full_profit + 0.01:
-            errors.append(f"  FAIL: Car {car['car_number']} recognized profit {recognized:,.0f} > full profit {full_profit:,.0f}")
+            errors.append(f"FAIL: Car {car['car_number']} recognized {recognized:,.0f} > full profit {full_profit:,.0f}")
         else:
-            print(f"  PASS: Car {car['car_number']} — recognized {recognized:,.0f} / full {full_profit:,.0f}")
+            print(f"  PASS: Car {car['car_number']} — {recognized:,.0f} / {full_profit:,.0f}")
 
-    # 8. Car expenses not treated as general expenses
-    print("\n[8] Car expense classification check...")
-    car_exp_in_expenses = conn.execute("""
-        SELECT COUNT(*) FROM expenses
-        WHERE car_number IS NOT NULL AND car_number != ''
-    """).fetchone()[0]
-    print(f"  Car-linked expenses in expenses table: {car_exp_in_expenses} (informational)")
-
-    # 9. No orphan ledger entries
-    print("\n[9] Orphan ledger entries check...")
-    orphan_partner = conn.execute("""
-        SELECT COUNT(*) FROM financial_ledger
-        WHERE reference_type = 'partner_transaction'
-          AND reference_id NOT IN (SELECT CAST(id AS TEXT) FROM partner_transactions)
-    """).fetchone()[0]
-    if orphan_partner > 0:
-        warnings.append(f"  WARN: {orphan_partner} orphan partner_transaction ledger entries")
-    else:
-        print("  PASS: No orphan partner ledger entries")
-
-    orphan_car_expense = conn.execute("""
-        SELECT COUNT(*) FROM financial_ledger
-        WHERE reference_type = 'car_expense'
-          AND reference_id NOT IN (SELECT CAST(id AS TEXT) FROM car_expenses)
-    """).fetchone()[0]
-    if orphan_car_expense > 0:
-        warnings.append(f"  WARN: {orphan_car_expense} orphan car_expense ledger entries")
-    else:
-        print("  PASS: No orphan car_expense ledger entries")
-
-    # 10. Source classification completeness
-    print("\n[10] Source classification check...")
+    # 15. Source classification completeness
+    print("\n[15] Source classification check...")
     unclassified = conn.execute("""
         SELECT COUNT(*) FROM partner_transactions
         WHERE source_type IS NULL AND kind = 'شريك'
     """).fetchone()[0]
     if unclassified > 0:
-        warnings.append(f"  WARN: {unclassified} partner transactions without source_type")
+        warnings.append(f"WARN: {unclassified} partner transactions without source_type")
     else:
         print("  PASS: All partner transactions have source_type")
+
+    # 16. No old capital entries for customer payments
+    print("\n[16] Capital entries check...")
+    bad_capital = conn.execute("""
+        SELECT COUNT(*) FROM financial_ledger
+        WHERE reference_type = 'partner_transaction'
+          AND account_type = 'capital'
+          AND reference_id IN (SELECT CAST(id AS TEXT) FROM partner_transactions WHERE type = 'ايداع دفعات زبائن')
+    """).fetchone()[0]
+    if bad_capital > 0:
+        errors.append(f"FAIL: {bad_capital} customer payment rows have capital ledger entries")
+    else:
+        print("  PASS: No customer payments in capital")
 
     # Summary
     print("\n" + "=" * 60)
