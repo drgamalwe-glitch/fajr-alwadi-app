@@ -428,6 +428,68 @@ def audit_db(db_path):
     else:
         print("  PASS")
 
+    # 24. Car purchase source_type check
+    print("\n[24] Car purchase source_type check...")
+    bad_purchase = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE type = 'سحب شراء سيارة'
+          AND source_type = 'car_sale'
+          AND source_role = 'cash_payment'
+    """).fetchone()[0]
+    if bad_purchase > 0:
+        errors.append(f"FAIL: {bad_purchase} car purchase rows have source_type='car_sale' (v11 migration needed)")
+    else:
+        print("  PASS")
+
+    # 25. Car sale ledger balance check
+    print("\n[25] Car sale ledger balance check...")
+    sold_cars = conn.execute("""
+        SELECT car_number FROM cars WHERE status = 'مبيوعة'
+    """).fetchall()
+    for car in sold_cars:
+        cn = car['car_number']
+        balance = conn.execute("""
+            SELECT
+                COALESCE(SUM(debit), 0.0) as total_debit,
+                COALESCE(SUM(credit), 0.0) as total_credit
+            FROM financial_ledger
+            WHERE reference_type = 'car' AND reference_id = ?
+        """, [cn]).fetchone()
+        if balance and abs(balance['total_debit'] - balance['total_credit']) > 0.01:
+            errors.append(f"FAIL: Car {cn} ledger unbalanced: debit={balance['total_debit']:,.0f} credit={balance['total_credit']:,.0f}")
+
+    # 26. Installment receivable check
+    print("\n[26] Installment receivable check...")
+    installment_cars = conn.execute("""
+        SELECT car_number, selling_price, buyer_name FROM cars
+        WHERE status = 'مبيوعة' AND payment_type IN ('اقساط', 'موعد')
+    """).fetchall()
+    for car in installment_cars:
+        cn = car['car_number']
+        buyer = car['buyer_name']
+        selling = car['selling_price']
+        if not buyer:
+            continue
+        # Receivable from car ledger
+        car_recv = conn.execute("""
+            SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
+            WHERE reference_type = 'car' AND reference_id = ?
+              AND account_type = 'receivable'
+        """, [cn]).fetchone()[0]
+        # Receivable from customer payment rows
+        payment_recv = conn.execute("""
+            SELECT COALESCE(SUM(credit - debit), 0.0) FROM financial_ledger
+            WHERE reference_type = 'partner_transaction'
+              AND account_type = 'receivable'
+              AND account_id = ?
+        """, [buyer]).fetchone()[0]
+        expected_remaining = selling - payment_recv
+        if abs(car_recv - expected_remaining) > 0.01:
+            errors.append(f"FAIL: Car {cn} receivable mismatch: car_ledger={car_recv:,.0f} expected={expected_remaining:,.0f}")
+
+    # 27. No notes-based DELETE/UPDATE in runtime car flows (static check)
+    # This is checked in audit_source below
+
     # Summary
     print("\n" + "=" * 60)
     if errors:
@@ -588,6 +650,74 @@ def audit_source(lib_path):
             warnings.append(f"WARN: cash_movement creation at line {cash_creation_line} appears inside car number guard")
         else:
             print("  PASS")
+    else:
+        print("  PASS")
+
+    # 10. v11 migration exists
+    print("\n[S10] v11 migration exists...")
+    if 'version < 11' in content and 'VALUES (11)' in content:
+        print("  PASS")
+    else:
+        errors.append("FAIL: v11 migration not found in lib.rs")
+
+    # 11. get_recognized_profit_for_car uses source fields
+    print("\n[S11] get_recognized_profit_for_car uses source fields...")
+    in_func = False
+    uses_source = False
+    for i, line in enumerate(lines, 1):
+        if 'fn get_recognized_profit_for_car' in line:
+            in_func = True
+        if in_func:
+            if 'source_role' in line and 'profit_recognition' in line:
+                uses_source = True
+                break
+            if line.strip().startswith('}') and i > 7300:
+                in_func = False
+    if uses_source:
+        print("  PASS")
+    else:
+        errors.append("FAIL: get_recognized_profit_for_car still depends only on notes LIKE")
+
+    # 12. No notes-based DELETE in add_car runtime flow
+    print("\n[S12] No notes-based DELETE in add_car runtime flow...")
+    in_add_car = False
+    bad_delete_line = None
+    for i, line in enumerate(lines, 1):
+        if 'fn add_car' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_add_car = True
+        if in_add_car:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'DELETE' in stripped and 'partner_transactions' in stripped and 'notes' in stripped.lower():
+                # Exception: source_type based deletes are OK
+                if 'source_type' not in stripped:
+                    bad_delete_line = i
+                    break
+            if 'fn delete_car' in line or 'fn update_car' in line:
+                in_add_car = False
+    if bad_delete_line:
+        errors.append(f"FAIL: Line {bad_delete_line} — notes-based DELETE in add_car")
+    else:
+        print("  PASS")
+
+    # 13. Installment sale does not debit cash in record_car_ledger_entries
+    print("\n[S13] Installment sale no cash debit check...")
+    in_record_car = False
+    bad_cash_line = None
+    for i, line in enumerate(lines, 1):
+        if 'fn record_car_ledger_entries' in line:
+            in_record_car = True
+        if in_record_car:
+            stripped = line.split('//')[0] if '//' in line else line
+            # Check for cash debit in installment context
+            if '"cash"' in stripped and 'debit' in stripped.lower():
+                context = '\n'.join(lines[max(0,i-10):i+5])
+                if 'payment_type' in context or 'Installment' in context or 'تقسيط' in context:
+                    bad_cash_line = i
+                    break
+            if 'fn record_agency' in line:
+                in_record_car = False
+    if bad_cash_line:
+        errors.append(f"FAIL: Line {bad_cash_line} — installment sale may debit cash in car ledger")
     else:
         print("  PASS")
 

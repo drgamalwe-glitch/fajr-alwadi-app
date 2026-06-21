@@ -555,6 +555,26 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         let _ = rebuild_customer_payment_profit_splits(conn);
     }
 
+    // Ensure financial_ledger table exists before any migration that touches it
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS financial_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            time TEXT NOT NULL,
+            account_type TEXT NOT NULL,
+            account_id TEXT,
+            debit REAL NOT NULL,
+            credit REAL NOT NULL,
+            currency TEXT NOT NULL,
+            reference_type TEXT NOT NULL,
+            reference_id TEXT NOT NULL,
+            type_ TEXT NOT NULL,
+            description TEXT NOT NULL,
+            notes TEXT
+        )",
+        [],
+    )?;
+
     if version < 6 {
         // Phase 1: Add accounting classification columns
         let _ = conn.execute("ALTER TABLE partner_transactions ADD COLUMN source_type TEXT", []);
@@ -772,6 +792,32 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         let _ = conn.execute("INSERT INTO db_version (version) VALUES (10)", []);
     }
 
+    // Version 11: Fix car_purchase rows incorrectly stored as car_sale
+    if version < 11 {
+        let _ = conn.execute(
+            "UPDATE partner_transactions
+             SET source_type = 'car_purchase'
+             WHERE type = 'سحب شراء سيارة'
+               AND source_type = 'car_sale'
+               AND source_role = 'cash_payment'",
+            [],
+        );
+        // Also add related_source_type and related_source_id columns for explicit car linkage
+        let _ = conn.execute("ALTER TABLE partner_transactions ADD COLUMN related_source_type TEXT", []);
+        let _ = conn.execute("ALTER TABLE partner_transactions ADD COLUMN related_source_id TEXT", []);
+        // Populate related_source_id for existing car-linked customer payments
+        let _ = conn.execute(
+            "UPDATE partner_transactions
+             SET related_source_type = 'car',
+                 related_source_id = SUBSTR(notes, INSTR(notes, '#بيع_سيارة_') + 11)
+             WHERE kind = 'زبون'
+               AND notes LIKE '%#بيع_سيارة_%'
+               AND related_source_type IS NULL",
+            [],
+        );
+        let _ = conn.execute("INSERT INTO db_version (version) VALUES (11)", []);
+    }
+
     // Performance indexes
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cars_status ON cars(status)",
@@ -814,7 +860,7 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
     // تنظيف: لا نحذف سجلات أرباح الوكالات تلقائياً — تُحذف فقط عند حذف الوكالة المعنية
     // (الحذف القديم WHERE type = 'ايداع ارباح وكالة' كان خاطئاً因为它 يحذف أرباح وكالات صالحة)
 
-    // إنشاء جدول دفتر الأستاذ المالي (financial_ledger)
+    // إنشاء جدول دفتر الأستاذ المالي (financial_ledger) — safety net, already created before migrations
     conn.execute(
         "CREATE TABLE IF NOT EXISTS financial_ledger (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2129,7 +2175,7 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
             let sale_time = get_valid_time(sale_time_opt);
             let buyer_name = buyer_name_opt.unwrap_or_else(|| "مشتري مجهول".to_string());
             let amount_paid = amount_paid_opt.unwrap_or(selling_price);
-            let amount_remaining = amount_remaining_opt.unwrap_or(0.0);
+            let _amount_remaining = amount_remaining_opt.unwrap_or(0.0);
 
             // Issue 7: For installment/term sales, only record amount_paid as realized revenue
             if payment_type == "كاش" {
@@ -2181,22 +2227,20 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
                 )?;
             } else {
                 // Installment/term sale: cash is recorded through customer_payment rows
-                // to avoid double-counting. Only record receivable for remaining amount.
-                if amount_remaining > 0.0 {
-                    conn.execute(
-                        "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-                         VALUES (?1, ?2, 'receivable', ?3, ?4, 0.0, ?5, 'car', ?6, 'مدينون بيع سيارة', ?7, NULL)",
-                        params![
-                            sale_date,
-                            sale_time,
-                            buyer_name,
-                            amount_remaining,
-                            sale_currency,
-                            car_number,
-                            format!("ذمة مدينة متبقية بيع سيارة {} ({}) على {}", car_name, car_number, buyer_name)
-                        ],
-                    )?;
-                }
+                // to avoid double-counting. Record receivable for full selling price.
+                conn.execute(
+                    "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
+                     VALUES (?1, ?2, 'receivable', ?3, ?4, 0.0, ?5, 'car', ?6, 'مدينون بيع سيارة', ?7, NULL)",
+                    params![
+                        sale_date,
+                        sale_time,
+                        buyer_name,
+                        selling_price,
+                        sale_currency,
+                        car_number,
+                        format!("ذمة مدينة كاملة بيع سيارة {} ({}) على {}", car_name, car_number, buyer_name)
+                    ],
+                )?;
             }
 
             let mut exp_amount_sum = 0.0;
@@ -2815,7 +2859,7 @@ fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), St
         let buyer_name = buyer_name_opt.unwrap_or_else(|| "مشتري مجهول".to_string());
         let payment_type = payment_type_opt.unwrap_or_else(|| "كاش".to_string());
         let _amount_paid = amount_paid_opt.unwrap_or(selling_price);
-        let amount_remaining = amount_remaining_opt.unwrap_or(0.0);
+        let _amount_remaining = amount_remaining_opt.unwrap_or(0.0);
 
         let expenses_sum: f64 = db
             .query_row(
@@ -2825,7 +2869,7 @@ fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), St
             )
             .unwrap_or(0.0);
         let total_cogs = purchase_price + expenses_sum;
-        let total_profit = selling_price - total_cogs;
+        let _total_profit = selling_price - total_cogs;
 
         if payment_type == "كاش" {
             // Phase 17: Cash sale — recognize revenue and profit immediately
@@ -2868,45 +2912,26 @@ fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), St
             // Cash is recorded through customer_payment rows to avoid double-counting.
             // The frontend creates a customer payment row for amount_paid which generates
             // cash_movement partner rows. The car ledger must NOT also debit cash.
-            // Record receivable for amount_remaining only.
-            if amount_remaining > 0.0 {
-                record_ledger_entry(
-                    db,
-                    &s_date,
-                    &s_time,
-                    "receivable",
-                    Some(&buyer_name),
-                    amount_remaining,
-                    0.0,
-                    &sale_currency,
-                    "car",
-                    car_number,
-                    "مدينون بيع سيارة",
-                    &format!(
-                        "ذمة مدينة متبقية بيع سيارة {} ({}) على {}",
-                        car_name, car_number, buyer_name
-                    ),
-                    None,
-                )?;
-            }
-            // Defer the expected profit
-            if total_profit > 0.0 && sale_currency == currency {
-                record_ledger_entry(
-                    db,
-                    &s_date,
-                    &s_time,
-                    "deferred_profit",
-                    Some(car_number),
-                    0.0,
-                    total_profit,
-                    &sale_currency,
-                    "car",
-                    car_number,
-                    "ربح مؤجل",
-                    &format!("ربح مؤجل بيع سيارة {} ({})", car_name, car_number),
-                    None,
-                )?;
-            }
+            // Record receivable for the FULL selling price (customer owes this amount).
+            // Customer payment rows will credit receivable as they pay.
+            record_ledger_entry(
+                db,
+                &s_date,
+                &s_time,
+                "receivable",
+                Some(&buyer_name),
+                selling_price,
+                0.0,
+                &sale_currency,
+                "car",
+                car_number,
+                "مدينون بيع سيارة",
+                &format!(
+                    "ذمة مدينة كاملة بيع سيارة {} ({}) على {}",
+                    car_name, car_number, buyer_name
+                ),
+                None,
+            )?;
         }
 
         // COGS and inventory reduction (same for both cash and installment)
@@ -2996,7 +3021,7 @@ fn add_car(
     } else {
         car_number.as_str()
     };
-    let (existing_purchase_time, existing_sale_time, old_name, old_chassis, old_model, old_year, old_status): (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = db
+    let (existing_purchase_time, existing_sale_time, old_name, _old_chassis, _old_model, _old_year, old_status): (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = db
         .query_row(
             "SELECT purchase_time, sale_time, car_name, chassis_number, car_model, car_year, status FROM cars WHERE car_number = ?1",
             [query_num],
@@ -3093,130 +3118,45 @@ fn add_car(
     let new_purchase_note = format!("سحب شراء سيارة {} (شاصي: {})", clean_name, clean_chassis)
         .trim()
         .replace("  ", " ");
-    let new_debt_note = format!("تمويل شراء سيارة {} (شاصي: {})", clean_name, clean_chassis)
-        .trim()
-        .replace("  ", " ");
-    let new_sale_note = format!("ايداع بيع سيارة {} (شاصي: {})", clean_name, clean_chassis)
-        .trim()
-        .replace("  ", " ");
-    let new_expense_prefix = format!("سحب مصروف سيارة {} (شاصي: {})", clean_name, clean_chassis)
-        .trim()
-        .replace("  ", " ");
-    let new_profit_note = format!("ايداع ارباح سيارة {} (شاصي: {})", clean_name, clean_chassis)
-        .trim()
-        .replace("  ", " ");
-    let new_down_payment_note = format!("مقدمة بيع سيارة {} (شاصي: {})", clean_name, clean_chassis)
-        .trim()
-        .replace("  ", " ");
 
-    if let Some(ref o_name) = old_name {
-        let o_chassis = old_chassis.unwrap_or_default();
-        let old_purchase_note = format!("سحب شراء سيارة {} {}", o_name.trim(), o_chassis.trim())
+    if old_name.is_some() {
+        // Update notes for car-generated rows using source fields (not notes matching)
+        let new_purchase_note = format!("سحب شراء سيارة {} (شاصي: {})", clean_name, clean_chassis)
             .trim()
             .replace("  ", " ");
-        let old_debt_note = format!("تمويل شراء سيارة {} {}", o_name.trim(), o_chassis.trim())
+        let new_sale_note = format!("ايداع بيع سيارة {} {}", clean_name, clean_chassis)
             .trim()
             .replace("  ", " ");
-        let old_sale_note = format!("ايداع بيع سيارة {} {}", o_name.trim(), o_chassis.trim())
+        let new_profit_note = format!("ايداع ارباح سيارة {} {}", clean_name, clean_chassis)
             .trim()
             .replace("  ", " ");
-        let old_expense_prefix = format!("سحب مصروف سيارة {} {}", o_name.trim(), o_chassis.trim())
-            .trim()
-            .replace("  ", " ");
-        let old_profit_note = format!("ايداع ارباح سيارة {} {}", o_name.trim(), o_chassis.trim())
-            .trim()
-            .replace("  ", " ");
-        let old_down_payment_note =
-            format!("مقدمة بيع سيارة {} {}", o_name.trim(), o_chassis.trim())
-                .trim()
-                .replace("  ", " ");
 
-        // Front-end generated notes for old specs
-        let old_model_str = old_model.unwrap_or_default();
-        let old_year_str = old_year.unwrap_or_default();
-        let old_front_note = format!(
-            "استلام تمويل لشراء سيارة {} {} {}",
-            old_model_str.trim(),
-            old_year_str.trim(),
-            o_chassis.trim()
-        )
-        .trim()
-        .replace("  ", " ");
+        // Update purchase rows by source_type/source_id
+        db.execute(
+            "UPDATE partner_transactions SET notes = ?1
+             WHERE source_type = 'car_purchase' AND source_id = ?2",
+            params![new_purchase_note, car_number],
+        ).map_err(|e| e.to_string())?;
 
-        let new_front_note = format!(
-            "استلام تمويل لشراء سيارة {} {} {}",
-            model.trim(),
-            year.trim(),
-            clean_chassis
-        )
-        .trim()
-        .replace("  ", " ");
+        // Update sale rows by source_type/source_id
+        db.execute(
+            "UPDATE partner_transactions SET notes = ?1
+             WHERE source_type = 'car_sale' AND source_id = ?2 AND source_role = 'cash_movement'",
+            params![new_sale_note, car_number],
+        ).map_err(|e| e.to_string())?;
 
-        if old_purchase_note != new_purchase_note {
-            db.execute(
-                "UPDATE partner_transactions SET notes = ?1 WHERE notes = ?2",
-                [&new_purchase_note, &old_purchase_note],
-            )
-            .map_err(|e| e.to_string())?;
-        }
+        // Update profit rows by source_type/source_id
+        db.execute(
+            "UPDATE partner_transactions SET notes = ?1
+             WHERE source_type = 'car_sale' AND source_id = ?2 AND source_role = 'profit_recognition'",
+            params![new_profit_note, car_number],
+        ).map_err(|e| e.to_string())?;
 
-        if old_debt_note != new_debt_note {
-            db.execute(
-                "UPDATE partner_transactions SET notes = ?1 WHERE notes = ?2",
-                [&new_debt_note, &old_debt_note],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-
-        if old_front_note != new_front_note {
-            db.execute(
-                "UPDATE partner_transactions SET notes = ?1 WHERE notes = ?2",
-                [&new_front_note, &old_front_note],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-
-        if old_sale_note != new_sale_note {
-            db.execute(
-                "UPDATE partner_transactions SET notes = ?1 WHERE notes = ?2",
-                [&new_sale_note, &old_sale_note],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-
-        if old_profit_note != new_profit_note {
-            db.execute(
-                "UPDATE partner_transactions SET notes = ?1 WHERE notes = ?2",
-                [&new_profit_note, &old_profit_note],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-
-        if old_down_payment_note != new_down_payment_note {
-            db.execute(
-                "UPDATE partner_transactions SET notes = ?1 WHERE notes = ?2",
-                [&new_down_payment_note, &old_down_payment_note],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-
-        if old_expense_prefix != new_expense_prefix {
-            db.execute(
-                "UPDATE partner_transactions 
-                 SET notes = ?1 || SUBSTR(notes, LENGTH(?2) + 1)
-                 WHERE notes LIKE ?3",
-                params![
-                    &new_expense_prefix,
-                    &old_expense_prefix,
-                    format!("{}%", old_expense_prefix)
-                ],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-
+        // Update car number reference in customer payment notes if car_number changed
         if old_num != car_number {
             db.execute(
-                "UPDATE partner_transactions SET notes = REPLACE(notes, ?1, ?2) WHERE notes LIKE ?3",
+                "UPDATE partner_transactions SET notes = REPLACE(notes, ?1, ?2)
+                 WHERE source_type = 'customer_payment' AND notes LIKE ?3",
                 params![
                     format!("#بيع_سيارة_{}", old_num),
                     format!("#بيع_سيارة_{}", car_number),
@@ -3224,29 +3164,19 @@ fn add_car(
                 ],
             )
             .map_err(|e| e.to_string())?;
-        }
-
-        if !o_chassis.trim().is_empty() && o_chassis.trim() != clean_chassis {
+            // Also update source_id for car-linked customer payment splits
             db.execute(
-                "UPDATE partner_transactions SET notes = REPLACE(notes, ?1, ?2) WHERE notes LIKE ?3",
-                params![o_chassis.trim(), clean_chassis, format!("%{}%", o_chassis.trim())],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-
-        if o_name.trim() != clean_name {
-            db.execute(
-                "UPDATE partner_transactions SET notes = REPLACE(notes, ?1, ?2) WHERE notes LIKE ?3",
-                params![o_name.trim(), clean_name, format!("%{}%", o_name.trim())],
-            )
-            .map_err(|e| e.to_string())?;
+                "UPDATE partner_transactions SET source_id = ?1
+                 WHERE source_type = 'customer_payment' AND source_id = ?2",
+                params![car_number, old_num],
+            ).map_err(|e| e.to_string())?;
         }
     }
 
     // حذف حركات الشراء القديمة ثم إعادة إنشائها حسب نوع الشراء الحالي (باستخدام حقول المصدر)
     if should_create_purchase_transactions {
-        // Delete car purchase/sale generated rows by source fields (not notes)
-        delete_generated_car_partner_transactions(&db, &car_number)?;
+        // Delete only car purchase generated rows (not sale rows)
+        delete_generated_car_purchase_partner_transactions(&db, &car_number)?;
     }
 
     if should_create_purchase_transactions && purchase_type.as_deref() == Some("كاش") {
@@ -3260,7 +3190,7 @@ fn add_car(
             purchase_payment_type.as_deref().unwrap_or("قاصه"),
             "سحب شراء سيارة",
             &new_purchase_note,
-            "car_sale",
+            "car_purchase",
             &car_number,
             "cash_payment",
             true,  // affects_qasa
@@ -3318,14 +3248,15 @@ fn add_car(
         .replace("  ", " ");
 
     if should_create_sale_transactions {
-        // Delete car sale generated rows by source fields (not notes)
-        delete_generated_car_partner_transactions(&db, &car_number)?;
+        // Delete only car sale generated rows (not purchase rows)
+        delete_generated_car_sale_partner_transactions(&db, &car_number)?;
 
         // Also delete customer payment splits for payments linked to this car
+        // Use related_source_id first, fallback to notes LIKE for legacy rows
         let car_payment_ids: Vec<i64> = db
-            .prepare("SELECT id FROM partner_transactions WHERE kind = 'زبون' AND notes LIKE ?1")
+            .prepare("SELECT id FROM partner_transactions WHERE kind = 'زبون' AND ((related_source_type = 'car' AND related_source_id = ?1) OR (related_source_type IS NULL AND notes LIKE ?2))")
             .map_err(|e| e.to_string())?
-            .query_map([format!("%#بيع_سيارة_{}%", car_number)], |row| row.get(0))
+            .query_map(params![car_number, format!("%#بيع_سيارة_{}%", car_number)], |row| row.get(0))
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
@@ -4344,14 +4275,38 @@ fn extract_car_number_from_notes(notes: &str) -> Option<String> {
     None
 }
 
-/// Delete generated car-related partner transactions by source fields (not notes).
-/// This deletes rows where source_type IN ('car_purchase','car_sale') AND source_id = car_number.
-/// Also deletes their financial_ledger entries first.
-fn delete_generated_car_partner_transactions(db: &Connection, car_number: &str) -> Result<(), String> {
+/// Delete generated car PURCHASE partner transactions by source fields.
+/// Only deletes source_type = 'car_purchase' AND source_id = car_number.
+fn delete_generated_car_purchase_partner_transactions(db: &Connection, car_number: &str) -> Result<(), String> {
     let mut stmt = db
         .prepare(
             "SELECT id FROM partner_transactions
-             WHERE source_type IN ('car_purchase', 'car_sale')
+             WHERE source_type = 'car_purchase'
+               AND source_id = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let ids: Vec<i64> = stmt
+        .query_map([car_number], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    for tx_id in ids {
+        delete_ledger_entries(db, "partner_transaction", &tx_id.to_string())?;
+        db.execute("DELETE FROM partner_transactions WHERE id = ?1", [tx_id])
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Delete generated car SALE partner transactions by source fields.
+/// Only deletes source_type = 'car_sale' AND source_id = car_number.
+fn delete_generated_car_sale_partner_transactions(db: &Connection, car_number: &str) -> Result<(), String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT id FROM partner_transactions
+             WHERE source_type = 'car_sale'
                AND source_id = ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -4597,6 +4552,15 @@ fn apply_partner_transaction_splits(
     if is_customer_payment {
         let notes_str = notes.unwrap_or("");
         let car_num = extract_car_number_from_notes(notes_str);
+
+        // Set related_source fields on the original customer payment row if car-linked
+        if let Some(ref cn) = car_num {
+            let _ = db.execute(
+                "UPDATE partner_transactions SET related_source_type = 'car', related_source_id = ?1
+                 WHERE id = ?2 AND (related_source_type IS NULL OR related_source_id IS NULL)",
+                params![cn, tx_id],
+            );
+        }
 
         // Always create cash_movement for real customer payments
         let cash_exists: bool = db.query_row(
@@ -7396,15 +7360,28 @@ fn calculate_car_total_profit(db: &Connection, car_number: &str) -> Result<f64, 
 }
 
 fn get_recognized_profit_for_car(db: &Connection, car_number: &str) -> Result<f64, String> {
-    let pattern = format!("%#بيع_سيارة_{}%", car_number);
-    let recognized: f64 = db.query_row(
+    // Use source fields for new rows, fallback to notes LIKE for legacy rows
+    let recognized_new: f64 = db.query_row(
         "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-         WHERE kind = 'شريك' AND affects_profit = 1 AND type = 'ايداع ارباح سيارة'
+         WHERE kind = 'شريك' AND affects_profit = 1
+           AND source_role = 'profit_recognition'
+           AND source_type = 'customer_payment'
+           AND source_id = ?1",
+        [car_number],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
+
+    let pattern = format!("%#بيع_سيارة_{}%", car_number);
+    let recognized_legacy: f64 = db.query_row(
+        "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+         WHERE kind = 'شريك' AND affects_profit = 1
+           AND (source_role IS NULL OR source_role != 'profit_recognition' OR source_type != 'customer_payment')
            AND notes LIKE ?1",
         [&pattern],
         |row| row.get(0),
     ).unwrap_or(0.0);
-    Ok(recognized)
+
+    Ok(recognized_new + recognized_legacy)
 }
 
 fn calculate_customer_payment_profit_capped(

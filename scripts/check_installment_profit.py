@@ -388,6 +388,69 @@ def check(db_path):
                      buyer_bal[0] >= -0.01,
                      f"balance={buyer_bal[0]:,.0f}")
 
+    # ===== Scenario 15: Car purchase source_type check =====
+    print("\n[15] CAR PURCHASE SOURCE TYPE")
+    bad_purchase_source = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE type = 'سحب شراء سيارة'
+          AND source_type = 'car_sale'
+          AND source_role = 'cash_payment'
+    """).fetchone()[0]
+    test("Car purchase rows use source_type='car_purchase'",
+         bad_purchase_source == 0, f"bad count={bad_purchase_source}")
+
+    # ===== Scenario 16: Car sale ledger balance =====
+    print("\n[16] CAR SALE LEDGER BALANCE")
+    sold_cars_bal = conn.execute("""
+        SELECT car_number FROM cars WHERE status = 'مبيوعة'
+    """).fetchall()
+    for car in sold_cars_bal:
+        cn = car['car_number']
+        bal = conn.execute("""
+            SELECT COALESCE(SUM(debit), 0.0), COALESCE(SUM(credit), 0.0)
+            FROM financial_ledger
+            WHERE reference_type = 'car' AND reference_id = ?
+        """, [cn]).fetchone()
+        if bal:
+            test(f"Car {cn}: ledger balanced",
+                 abs(bal[0] - bal[1]) < 0.01,
+                 f"debit={bal[0]:,.0f} credit={bal[1]:,.0f}")
+
+    # ===== Scenario 17: Installment receivable net =====
+    print("\n[17] INSTALLMENT RECEIVABLE NET")
+    inst_recv_cars = conn.execute("""
+        SELECT car_number, selling_price, buyer_name FROM cars
+        WHERE status = 'مبيوعة' AND payment_type IN ('اقساط', 'موعد')
+    """).fetchall()
+    for car in inst_recv_cars:
+        cn = car['car_number']
+        buyer = car['buyer_name']
+        selling = car['selling_price']
+        if not buyer:
+            continue
+        car_recv = conn.execute("""
+            SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
+            WHERE reference_type = 'car' AND reference_id = ?
+              AND account_type = 'receivable'
+        """, [cn]).fetchone()[0]
+        payment_recv = conn.execute("""
+            SELECT COALESCE(SUM(credit - debit), 0.0) FROM financial_ledger
+            WHERE reference_type = 'partner_transaction'
+              AND account_type = 'receivable'
+              AND account_id = ?
+        """, [buyer]).fetchone()[0]
+        expected_remaining = selling - payment_recv
+        test(f"Car {cn}: receivable net correct",
+             abs(car_recv - expected_remaining) < 0.01,
+             f"car_ledger={car_recv:,.0f} expected={expected_remaining:,.0f}")
+
+    # ===== Scenario 18: v11 migration exists =====
+    print("\n[18] V11 MIGRATION")
+    # This is a static check — just verify the DB version
+    db_ver = conn.execute("SELECT MAX(version) FROM db_version").fetchone()[0]
+    test("DB version >= 11 (v11 migration applied)",
+         db_ver >= 11, f"version={db_ver}")
+
     # ===== Summary =====
     print("\n" + "=" * 60)
     passed_count = sum(1 for _, p, _ in results if p)
