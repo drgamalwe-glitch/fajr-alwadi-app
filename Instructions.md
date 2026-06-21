@@ -1,499 +1,1129 @@
-# التعليمات المحاسبية المختصرة للنظام
+# Fajr Alwadi Accounting Instructions
 
-## 1. القاعدة العامة
+This file is the main accounting source of truth for the project.
 
-* يوجد شريكان فقط في النظام.
-* نسبة كل شريك ثابتة دائماً: 50% لكل شريك.
-* أي عملية تؤثر على حسابات الشريكين يتم تقسيمها تلقائياً بينهما بنسبة 50% لكل شريك.
-* ظهور العملية في أكثر من سجل لا يعني تكرارها محاسبياً، بل يعني عرض نفس أثر العملية في أكثر من مكان.
-* يمنع احتساب أي عملية مرتين.
-* يجب الفصل دائماً بين:
-  1. حركة دخول أو خروج المال.
-  2. حركة إثبات الربح.
-* الربح ليس مبلغاً نقدياً جديداً إذا كان أصل الدفعة قد دخل القاصة مسبقاً.
-* يمنع أن تؤدي حركة إثبات الربح إلى زيادة القاصة أو الكاش مرة ثانية.
+Any code, report, dashboard card, database migration, or AI-generated change must follow this file exactly.
+
+If the current code conflicts with this file, the code must be changed to follow this file.
 
 ---
 
-## 2. معادلة الأرباح العامة
+# 1. Core Rules
 
-يجب أن تعتمد بطاقة الأرباح وقسم الأرباح وعمود الأرباح وصافي الأرباح على هذه المعادلة فقط:
+## 1.1 Partners
+
+- The system has exactly two partners.
+- Each partner owns 50%.
+- Every partner-related profit, cost, cash deposit, or cash withdrawal must be split automatically:
+  - Partner 1: 50%
+  - Partner 2: 50%
+
+## 1.2 No Double Counting
+
+The same accounting event may appear in more than one screen for display purposes, but it must not be counted more than once.
+
+Showing a transaction in several places does not mean it is a new accounting transaction.
+
+## 1.3 Read-Only Means Read-Only
+
+Any function, screen, report, summary card, or dashboard that only reads data must not create, update, delete, reverse, rebuild, or migrate accounting records.
+
+Only create, update, and delete operations are allowed to change the database.
+
+Examples of read-only functions that must never write data:
+
+- `get_financial_summary`
+- `get_cash_register_entries`
+- `get_profit_distribution_summary`
+- `get_partners_totals`
+- `get_unified_accounts`
+- `get_partner_transactions`
+- `get_cars`
+
+---
+
+# 2. Main Accounting Concepts
+
+## 2.1 Qasa
+
+Qasa means the operational cash/safe register.
+
+Qasa includes only:
+
+1. Partner cash movements.
+2. Investor cash movements.
+
+Qasa must not include:
+
+- Funder movements.
+- Company movements.
+- Customer movements that do not affect partner or investor cash.
+- Profit recognition rows that are not real cash movements.
+
+## 2.2 Cash Tab Inside Qasa
+
+The Cash tab inside Qasa means partner cash only.
+
+It includes only partner cash movements.
+
+It does not include investor movements.
+
+## 2.3 Investors
+
+Investor movements appear in:
+
+- General operations log.
+- Qasa tab.
+
+Investor movements do not appear in:
+
+- Partner Cash tab.
+
+## 2.4 Funders and Companies
+
+Funder and company movements appear in:
+
+- General operations log.
+- Customer/accounts section.
+- Receivables or liabilities depending on the balance.
+
+Funder and company movements do not appear in:
+
+- Qasa.
+- Partner Cash tab.
+
+Exception:
+
+If a funder or company settlement causes a real partner cash payment, then only the separate partner cash movement appears in Qasa/Cash.
+
+The funder/company transaction itself must still not appear in Qasa/Cash.
+
+---
+
+# 3. Cash Movement vs Profit Recognition
+
+This is the most important rule in the system.
+
+A cash movement is not the same as profit recognition.
+
+## 3.1 Cash Movement
+
+A cash movement means real money entered or left Qasa/Cash.
+
+Examples:
+
+- Customer payment received.
+- Cash car sale received.
+- Partner paid car purchase.
+- Partner paid general expense.
+- Partner paid car expense.
+- Partner paid funder or company settlement.
+- Investor deposit or withdrawal.
+
+## 3.2 Profit Recognition
+
+Profit recognition means the system records how much of the received money is profit.
+
+Profit recognition does not create new cash by itself.
+
+## 3.3 Critical Example
+
+A customer pays:
 
 ```text
-إجمالي الأرباح =
-أرباح السيارات المباعة كاش
-+ أرباح الوكالات
-+ أرباح سيارات التقسيط أو البيع بالمدة المحصلة تدريجياً من الدفعات
-- مصروفات قسم المصروفات فقط
+Customer payment = 5,000,000
+Payment profit = 2,500,000
 ````
 
-## ملاحظات مهمة
-
-* أرباح السيارات المباعة كاش تدخل مباشرة في الأرباح عند البيع.
-* أرباح الوكالات تدخل مباشرة في الأرباح عند تسجيلها.
-* أرباح التقسيط أو البيع بالمدة لا تدخل كاملة عند البيع.
-* أرباح التقسيط أو البيع بالمدة لا تنتظر القسط الأخير.
-* أرباح التقسيط أو البيع بالمدة تدخل تدريجياً مع كل دفعة يدفعها الزبون.
-* مصروفات قسم المصروفات فقط تخصم من الأرباح العامة.
-* مصروف السيارة لا يدخل ضمن مصروفات قسم المصروفات.
-* مصروف السيارة لا يخصم مرة ثانية من الأرباح العامة.
-* مصروف السيارة يبقى مرتبطاً بالسيارة نفسها ويدخل ضمن تكلفة السيارة عند حساب ربحها.
-
----
-
-## 3. معادلة ربح سيارة التقسيط أو البيع بالمدة
-
-عند بيع سيارة بالتقسيط أو بالمدة يجب حساب ربح الدفعات تدريجياً.
-
-## المعادلات المعتمدة
+Correct result:
 
 ```text
-تكلفة السيارة = سعر الشراء + مصروفات السيارة
-ربح السيارة الكامل = سعر البيع - تكلفة السيارة
-نسبة الربح = ربح السيارة الكامل / سعر البيع
-ربح الدفعة = مبلغ الدفعة × نسبة الربح
-حصة كل شريك من ربح الدفعة = ربح الدفعة / 2
+Qasa increases by 5,000,000 only.
+Cash increases by 5,000,000 only.
+Profit increases by 2,500,000.
+Each partner profit share = 1,250,000.
 ```
 
-## مثال
+Wrong result:
 
 ```text
-سعر شراء السيارة = 10,000,000
-سعر البيع = 20,000,000
-مصروفات السيارة = 0
-
-ربح السيارة الكامل = 20,000,000 - 10,000,000 = 10,000,000
-نسبة الربح = 10,000,000 / 20,000,000 = 50%
-
-إذا دفع الزبون دفعة = 5,000,000
-
-ربح الدفعة = 5,000,000 × 50% = 2,500,000
-حصة الشريك الأول = 1,250,000
-حصة الشريك الثاني = 1,250,000
+Qasa increases by 5,000,000
+Then Qasa increases again by 2,500,000 as profit
+Total Qasa increase = 7,500,000
 ```
 
-## قواعد مهمة
+This is forbidden.
 
-* لا يجوز احتساب كامل ربح السيارة عند البيع بالتقسيط.
-* لا يجوز احتساب كامل ربح السيارة عند القسط الأخير.
-* لا يجوز إضافة ربح السيارة مرة ثانية بعد اكتمال الأقساط.
-* الربح المعتمد هو مجموع أرباح الدفعات فقط.
-* مجموع أرباح جميع الدفعات يجب أن يساوي ربح السيارة الكامل، بدون زيادة أو نقصان.
-* إذا كانت السيارة خاسرة أو ربحها صفر، لا يتم إنشاء أرباح دفعات.
-* إذا اختلفت عملة الشراء عن عملة البيع، لا يتم حساب ربح الدفعة إلا بوجود آلية تحويل عملة واضحة ومعتمدة.
+Payment profit is part of the payment amount that already entered Qasa/Cash.
+
+It must be recognized as profit, but it must not be added as a second cash movement.
 
 ---
 
-## 4. بيع السيارات
+# 4. Recommended Transaction Classification
 
-## بيع سيارة كاش
+Every generated accounting row should clearly define what it affects.
 
-عند بيع سيارة كاش:
-
-* يتم احتساب ربح السيارة مباشرة.
-* ربح السيارة = سعر البيع - سعر الشراء - مصروفات السيارة.
-* يتم ترحيل ربح السيارة إلى حسابات الشريكين بنسبة 50% لكل شريك.
-* يظهر أثر العملية في:
-
-  * سجل القاصة.
-  * تبويب الكاش داخل القاصة.
-  * سجل العمليات.
-  * قسم توزيع الأرباح.
-  * بطاقة الأرباح.
-  * صافي الأرباح.
-
-## بيع سيارة بالتقسيط أو بالمدة
-
-عند بيع سيارة بالتقسيط أو بالمدة:
-
-* لا يتم احتساب ربح السيارة كاملاً عند البيع.
-* لا يتم احتساب ربح السيارة كاملاً عند آخر دفعة.
-* يتم حساب ربح كل دفعة عند استلامها فقط.
-* كل دفعة من الزبون تؤدي إلى عمليتين واضحتين:
-
-### العملية الأولى: تحصيل الدفعة
-
-* يتم تسجيل مبلغ الدفعة كتحصيل نقدي.
-* يتم تخفيض رصيد الزبون أو القسط المتبقي.
-* تظهر الدفعة في سجل العمليات وكشف حساب الزبون.
-* إذا كانت الدفعة تدخل ضمن أموال الشريكين، تظهر في تبويب الكاش داخل القاصة حسب قواعد النظام.
-* هذه العملية لا تعتبر كلها ربحاً.
-
-### العملية الثانية: إثبات ربح الدفعة
-
-* يتم حساب ربح الدفعة حسب المعادلة:
+Recommended fields:
 
 ```text
-ربح الدفعة = مبلغ الدفعة × نسبة الربح
+source_type
+source_id
+source_role
+affects_qasa
+affects_partner_cash
+affects_profit
 ```
 
-* يتم تقسيم ربح الدفعة على الشريكين:
+## 4.1 Field Meaning
+
+### source_type
+
+The original source of the transaction.
+
+Examples:
 
 ```text
-حصة كل شريك = ربح الدفعة / 2
+customer_payment
+car_sale
+agency
+agency_transaction
+expense
+car_expense
+funder_payment
+company_payment
+investor_transaction
 ```
 
-* يظهر ربح الدفعة في:
+### source_id
 
-  * قسم توزيع الأرباح.
-  * بطاقة الأرباح.
-  * صافي الأرباح.
-  * سجل العمليات.
-* لا يجوز أن تؤدي حركة ربح الدفعة إلى زيادة القاصة مرة ثانية إذا كانت الدفعة الأصلية قد دخلت القاصة بالفعل.
+The id or unique reference of the original source.
 
----
-
-## 5. دفعات الزبائن والأقساط
-
-أي مبلغ يدفعه الزبون، سواء كان:
-
-* مقدمة.
-* قسط.
-* تسديد جزئي.
-* دفعة بيع بالمدة.
-* دفعة مبكرة.
-* دفعة متأخرة.
-* أي عملية بحالة "واصل".
-
-يجب التعامل معه بهذه الطريقة:
+Examples:
 
 ```text
-1. تسجيل الدفعة كتحصيل من الزبون.
-2. تخفيض المبلغ المتبقي على الزبون.
-3. حساب ربح الدفعة فقط.
-4. توزيع ربح الدفعة على الشريكين 50% / 50%.
-5. منع أي ربح إضافي عند آخر قسط.
+customer payment id
+car number
+expense id
+car expense id
+agency id
+agency transaction id
+funder transaction id
+company transaction id
 ```
 
-## الدفع الأقل من المستحق
+### source_role
 
-إذا دفع الزبون مبلغاً أقل من القسط المستحق:
+The accounting role of the generated transaction.
 
-* يسجل المدفوع كـ "واصل".
-* يبقى الفرق كـ "باقي".
-* يتم حساب ربح الجزء المدفوع فقط.
-* لا يتم حساب ربح الجزء غير المدفوع.
-* يتم إعادة توزيع المتبقي على الأشهر القادمة تلقائياً إذا كانت هذه آلية النظام المعتمدة.
-
-## الدفع الأكثر من المستحق
-
-إذا دفع الزبون مبلغاً أكبر من القسط المستحق:
-
-* يسجل كامل المبلغ المدفوع كـ "واصل".
-* يتم تقليل الرصيد المتبقي.
-* يتم حساب ربح كامل المبلغ المدفوع.
-* يتم إعادة حساب الأقساط القادمة حسب المبلغ المتبقي وعدد الأشهر المتبقية.
-
-## القسط الأخير
-
-عند دفع القسط الأخير:
-
-* يتم تسجيل القسط كتحصيل.
-* يتم حساب ربح القسط الأخير فقط.
-* يمنع إنشاء ربح السيارة الكامل مرة أخرى.
-* بعد القسط الأخير يجب أن يكون مجموع أرباح الدفعات مساوياً لربح السيارة الكامل.
-
----
-
-## 6. الوكالات
-
-عند تسجيل ربح وكالة:
-
-* يتم ترحيل الربح فورياً إلى حسابات الشريكين.
-* يتم تقسيم الربح بنسبة 50% لكل شريك.
-* تدخل أرباح الوكالات ضمن معادلة الأرباح العامة.
-* تظهر العملية في:
-
-  * سجل القاصة.
-  * تبويب الكاش داخل القاصة.
-  * سجل العمليات.
-  * قسم توزيع الأرباح.
-  * بطاقة الأرباح.
-  * صافي الأرباح.
-
-## قاعدة مهمة للوكالات
-
-* كل ربح وكالة يجب أن يكون مربوطاً برقم حركة أو رقم وكالة واضح.
-* عند حذف أو تعديل حركة وكالة، يجب حذف أو تعديل ربحها فقط.
-* يمنع حذف أرباح وكالات أخرى بسبب تشابه الاسم أو التاريخ أو الملاحظة.
-
----
-
-## 7. المصروفات
-
-أي مصروف يؤثر على حسابات الشريكين يتم سحبه فورياً بنسبة 50% لكل شريك.
-
-يشمل ذلك:
-
-* مصروفات قسم المصروفات.
-* مصروف السيارة.
-* عمولة الممول.
-* شراء سيارة كاش.
-
-## قواعد المصروفات
-
-* مصروفات قسم المصروفات فقط تخصم من معادلة الأرباح العامة.
-* مصروف السيارة لا يدخل ضمن مصروفات قسم المصروفات.
-* مصروف السيارة يدخل ضمن تكلفة السيارة عند حساب ربحها.
-* شراء سيارة كاش يسحب من حسابات الشريكين بنسبة 50% لكل شريك، ثم تضاف السيارة إلى المعرض.
-* أي مصروف يؤثر على الشريكين يظهر في:
-
-  * سجل القاصة.
-  * تبويب الكاش داخل القاصة.
-  * سجل العمليات.
-
-## منع التكرار
-
-* لا يجوز خصم مصروف السيارة مرتين.
-* لا يجوز خصم مصروف السيارة من ربح السيارة ثم خصمه مرة ثانية من الأرباح العامة.
-* لا يجوز اعتبار شراء السيارة مصروفاً عاماً.
-* شراء السيارة يحول المال إلى مخزون، ولا يعتبر خسارة أو مصروفاً عاماً.
-
----
-
-## 8. القاصة
-
-القاصة تمثل فقط:
-
-1. تحركات حسابات الشريكين.
-2. تحركات حسابات المستثمرين.
-
-## تبويب القاصة
-
-تبويب القاصة داخل قسم القاصة يعرض:
-
-* حركات الشريكين.
-* حركات المستثمرين.
-
-ولا يعرض:
-
-* حركات الممولين.
-* حركات الشركات.
-* حركات الزبائن التي لا تؤثر على الشريكين أو المستثمرين.
-
-## تبويب الكاش داخل القاصة
-
-تبويب الكاش داخل القاصة يمثل تحركات حسابات الشريكين فقط، مثل:
-
-* أرباح السيارات الكاش.
-* أرباح دفعات التقسيط المحصلة تدريجياً.
-* أرباح الوكالات.
-* دفعات الزبائن التي تدخل ضمن أموال الشريكين.
-* المصروفات.
-* شراء السيارات كاش.
-* مصروفات السيارات.
-* عمولات الممولين إذا دفعها الشريكان.
-* أي إيداع أو سحب يخص الشريكين.
-
-## حركات المستثمرين
-
-حركات المستثمرين تظهر في:
-
-* سجل العمليات.
-* تبويب القاصة.
-
-ولا تظهر في:
-
-* تبويب الكاش الخاص بالشريكين.
-
-## حركات الممولين والشركات
-
-حركات الممولين والشركات تظهر في:
-
-* سجل العمليات.
-* حسابات العملاء.
-* مطلوبين أو نطلب حسب الحالة.
-
-ولا تظهر في:
-
-* تبويب القاصة.
-* تبويب الكاش داخل القاصة.
-
-إلا إذا ترتب عليها سحب أو دفع فعلي من حسابات الشريكين، ففي هذه الحالة تظهر حركة الشريكين فقط وليس حركة الممول أو الشركة نفسها.
-
----
-
-## 9. ظهور العمليات في السجلات
-
-## عمليات الشريكين
-
-أي عملية تؤثر على حسابات الشريكين يجب أن تظهر في:
-
-1. سجل القاصة.
-2. تبويب الكاش داخل القاصة.
-3. سجل العمليات.
-
-## عمليات المستثمرين
-
-أي عملية تؤثر على حسابات المستثمرين يجب أن تظهر في:
-
-1. سجل العمليات.
-2. تبويب القاصة داخل قسم القاصة.
-
-## عمليات الممولين والشركات
-
-أي عملية تخص الممولين أو الشركات يجب أن تظهر في:
-
-1. سجل العمليات.
-2. حسابات العملاء.
-3. نطلب أو مطلوبين حسب طبيعة الرصيد.
-
-ولا تظهر في القاصة إلا إذا تم إنشاء حركة منفصلة تخص الشريكين فعلاً.
-
-## عمليات الزبائن
-
-أي عملية تخص الزبائن يجب أن تظهر في:
-
-1. سجل العمليات.
-2. كشف حساب الزبون.
-3. نطلب إذا بقي مبلغ على الزبون.
-4. القاصة أو الكاش فقط إذا كانت الدفعة أثرت فعلاً على حسابات الشريكين.
-
----
-
-## 10. لوحة التحكم الرئيسية
-
-يجب أن تأخذ بطاقات لوحة التحكم قيمها من مصادر واضحة وثابتة.
-
-| البطاقة      | المصدر الصحيح                                                                                            |
-| ------------ | -------------------------------------------------------------------------------------------------------- |
-| رصيد القاصة  | قسم القاصة → تبويب القاصة: الشركاء + المستثمرين                                                          |
-| الكاش        | قسم القاصة → تبويب الكاش: الشركاء فقط                                                                    |
-| رصيد المعرض  | قسم المعرض → تبويب المعروض                                                                               |
-| الأرباح      | أرباح السيارات الكاش + أرباح الوكالات + أرباح دفعات التقسيط المحصلة تدريجياً - مصروفات قسم المصروفات فقط |
-| صافي الأرباح | نفس معادلة الأرباح بعد خصم مصروفات قسم المصروفات فقط                                                     |
-| نطلب         | حسابات العملاء → الزبائن أو الجهات التي نطلبها                                                           |
-| مطلوبين      | حسابات العملاء → المستثمرين أو الممولين أو الشركات أو الجهات التي تطلبنا                                 |
-
-## قاعدة مهمة
-
-* لا يجوز أن تختلف أرقام لوحة التحكم عن أرقام الأقسام الأصلية.
-* بطاقة القاصة يجب أن تطابق تبويب القاصة.
-* بطاقة الكاش يجب أن تطابق تبويب الكاش.
-* بطاقة الأرباح يجب أن تطابق قسم توزيع الأرباح.
-* صافي الأرباح يجب أن يخصم مصروفات قسم المصروفات فقط.
-
----
-
-## 11. تبويب وضع الشركة
-
-يجب أن يعتمد تبويب وضع الشركة على مصادر واضحة:
-
-| البطاقة       | المصدر الصحيح                       |
-| ------------- | ----------------------------------- |
-| الكاش         | قسم القاصة → تبويب الكاش            |
-| قيمة السيارات | قسم المعرض → تبويب المعروض          |
-| نطلب          | قسم حسابات العملاء → تبويب نطلب     |
-| مطلوبين       | قسم حسابات العملاء → تبويب مطلوبين  |
-| الأرباح       | قسم توزيع الأرباح                   |
-| صافي الأرباح  | الأرباح - مصروفات قسم المصروفات فقط |
-
-## قاعدة مهمة
-
-وضع الشركة ليس مجرد رصيد الشريكين.
-
-وضع الشركة يجب أن يوضح:
+Examples:
 
 ```text
-الكاش + قيمة السيارات + نطلب - مطلوبين
+cash_movement
+profit_recognition
+cash_payment
+partner_cash_payment
+legacy_customer_payment_cash
 ```
 
-مع فصل الأرباح وصافي الأرباح كمؤشرات مستقلة.
+### affects_qasa
+
+Use `true` only if this row must appear in Qasa.
+
+### affects_partner_cash
+
+Use `true` only if this row must appear in the partner Cash tab.
+
+### affects_profit
+
+Use `true` only if this row must be included in profit and profit distribution.
 
 ---
 
-## 12. قواعد منع الأخطاء
+# 5. Profit Formula
 
-* لا يجوز احتساب نفس العملية مرتين.
-* لا يجوز أن تختلف أرقام لوحة التحكم عن أرقام الأقسام الأصلية.
-* لا يجوز خلط مصروفات السيارة مع مصروفات قسم المصروفات.
-* لا يجوز احتساب كامل ربح التقسيط عند البيع.
-* لا يجوز انتظار آخر قسط لإضافة كامل الربح.
-* لا يجوز إضافة ربح كامل السيارة عند آخر قسط.
-* يجب احتساب ربح التقسيط تدريجياً مع كل دفعة فقط.
-* يجب أن يكون مجموع أرباح الدفعات مساوياً لربح السيارة الكامل.
-* أي مبلغ يخص الشريكين يقسم تلقائياً بنسبة 50% لكل شريك.
-* أي ربح يخص الشريكين يقسم تلقائياً بنسبة 50% لكل شريك.
-* أي عملية تخص الشريكين تظهر في سجل القاصة + تبويب الكاش + سجل العمليات.
-* أي عملية تخص المستثمرين تظهر في سجل العمليات + تبويب القاصة.
-* حركات الممولين والشركات لا تظهر في القاصة.
-* يجب أن يكون لكل عملية مصدر واحد واضح.
-* يجب أن تعرض العملية في أكثر من مكان كعرض فقط، وليس كتسجيل محاسبي جديد.
-* يمنع أن تقوم شاشة تقرير أو بطاقة ملخص بإنشاء حركات مالية جديدة.
-* القراءة والاستعلام يجب أن لا يغيرا قاعدة البيانات.
-* الإنشاء والتعديل والحذف فقط هي التي يسمح لها بتغيير البيانات.
+All profit cards, profit sections, profit distribution, and net profit must follow this formula:
+
+```text
+Total Profit =
+Cash Car Sale Profits
++ Agency Profits
++ Installment/Term Sale Profits Recognized Gradually From Payments
+- General Expenses Only
+```
+
+## Important Notes
+
+* Cash car sale profit is recognized immediately at sale time.
+* Agency profit is recognized when recorded.
+* Installment or term-sale profit is not recognized fully at sale time.
+* Installment or term-sale profit is not delayed until the last payment.
+* Installment or term-sale profit is recognized gradually with each customer payment.
+* Only general expenses from the Expenses section reduce net profit.
+* Car expenses do not reduce general net profit directly.
+* Car expenses are part of the car cost and reduce the car profit.
 
 ---
 
-## 13. قاعدة ربط العمليات
+# 6. Car Profit Formula
 
-كل عملية مالية يجب أن تحتوي على مرجع واضح يمنع الخلط، مثل:
+## 6.1 Car Cost
 
-* رقم السيارة.
-* رقم الشاصي.
-* رقم حركة الدفعة.
-* رقم حركة الوكالة.
-* رقم المصروف.
-* رقم حساب الزبون أو المستثمر أو الممول أو الشركة.
+```text
+Car Cost = Purchase Price + Car Expenses
+```
 
-## ممنوع
+## 6.2 Full Car Profit
 
-* الاعتماد على تشابه الملاحظات فقط.
-* حذف عمليات بناءً على الاسم والتاريخ فقط.
-* حذف أرباح عملية بسبب تشابهها مع عملية أخرى.
-* إنشاء ربح بدون ربطه بالحركة الأصلية.
+```text
+Full Car Profit = Selling Price - Car Cost
+```
+
+## 6.3 Profit Ratio
+
+```text
+Profit Ratio = Full Car Profit / Selling Price
+```
+
+## 6.4 Payment Profit
+
+```text
+Payment Profit = Payment Amount × Profit Ratio
+```
+
+## 6.5 Partner Share
+
+```text
+Each Partner Profit Share = Payment Profit / 2
+```
 
 ---
 
-## 14. قواعد اختبار إلزامية
+# 7. Installment and Term Sales
 
-يجب اختبار النظام على السيناريو التالي:
+Installment and term-sale profits must be recognized gradually with each customer payment.
 
-```text
-سعر شراء السيارة = 10,000,000
-سعر البيع = 20,000,000
-مصروفات السيارة = 0
-نوع البيع = تقسيط
-المقدمة = 5,000,000
-الباقي = 15,000,000
-```
+## 7.1 At Sale Time
 
-المتوقع:
+When a car is sold by installments or term sale:
 
-```text
-ربح السيارة الكامل = 10,000,000
-نسبة الربح = 50%
-```
+* Do not recognize the full car profit immediately.
+* Do not distribute the full car profit to partners.
+* Create the customer receivable or remaining balance.
+* Record any actual payment received as cash movement.
+* Recognize profit only for the amount actually paid.
 
-عند دفع المقدمة:
+## 7.2 At Each Customer Payment
 
-```text
-ربح المقدمة = 5,000,000 × 50% = 2,500,000
-حصة كل شريك = 1,250,000
-```
+Each customer payment must create two accounting effects:
 
-عند دفع قسط 1,000,000:
+### Effect 1: Cash Movement
+
+The full payment amount enters Qasa/Cash if it belongs to partner cash.
+
+Example:
 
 ```text
-ربح القسط = 1,000,000 × 50% = 500,000
-حصة كل شريك = 250,000
+Customer payment = 5,000,000
 ```
 
-بعد دفع كل الأقساط:
+Then:
 
 ```text
-مجموع أرباح الدفعات = 10,000,000
-حصة الشريك الأول = 5,000,000
-حصة الشريك الثاني = 5,000,000
+Qasa/Cash increases by 5,000,000
 ```
 
-## يجب التأكد من الآتي
+This movement affects:
 
-* لا يظهر ربح كامل إضافي عند آخر قسط.
-* لا تتكرر أرباح السيارة.
-* لا تدخل مصروفات السيارة ضمن مصروفات قسم المصروفات.
-* لا تدخل حركات الممولين والشركات في القاصة.
-* بطاقة القاصة تطابق تبويب القاصة.
-* بطاقة الكاش تطابق تبويب الكاش.
-* بطاقة الأرباح تطابق قسم توزيع الأرباح.
-* صافي الأرباح يخصم مصروفات قسم المصروفات فقط.
+```text
+affects_qasa = true
+affects_partner_cash = true
+affects_profit = false
+```
+
+### Effect 2: Profit Recognition
+
+Only the profit part of the payment is recognized as profit.
+
+Example:
+
+```text
+Payment profit = 2,500,000
+```
+
+Then:
+
+```text
+Profit increases by 2,500,000
+Each partner profit share = 1,250,000
+```
+
+This movement affects:
+
+```text
+affects_qasa = false
+affects_partner_cash = false
+affects_profit = true
+```
+
+This row must not increase Qasa or Cash again.
+
+## 7.3 Last Installment
+
+When the last installment is paid:
+
+* Record the payment as cash movement.
+* Recognize only the profit of that payment.
+* Do not add the full car profit again.
+* Do not create any final extra profit row.
+
+## 7.4 Profit Cap
+
+The total recognized profit from all payments must never exceed the full car profit.
+
+Use this rule:
+
+```text
+Remaining Recognizable Profit =
+Full Car Profit - Already Recognized Profit
+```
+
+Then:
+
+```text
+Recognized Payment Profit =
+min(Calculated Payment Profit, Remaining Recognizable Profit)
+```
+
+If the remaining recognizable profit is zero or negative, do not recognize more profit.
+
+---
+
+# 8. Installment Example
+
+Car data:
+
+```text
+Purchase Price = 10,000,000
+Selling Price = 20,000,000
+Car Expenses = 0
+Sale Type = Installments
+Down Payment = 5,000,000
+Remaining = 15,000,000
+```
+
+Calculation:
+
+```text
+Car Cost = 10,000,000
+Full Car Profit = 20,000,000 - 10,000,000 = 10,000,000
+Profit Ratio = 10,000,000 / 20,000,000 = 50%
+```
+
+When the customer pays the down payment:
+
+```text
+Payment Amount = 5,000,000
+Payment Profit = 5,000,000 × 50% = 2,500,000
+Each Partner Share = 1,250,000
+```
+
+Correct result:
+
+```text
+Qasa increases by 5,000,000 only.
+Cash increases by 5,000,000 only.
+Profit increases by 2,500,000.
+Partner 1 profit = 1,250,000.
+Partner 2 profit = 1,250,000.
+```
+
+When the customer pays an installment of 1,000,000:
+
+```text
+Payment Amount = 1,000,000
+Payment Profit = 1,000,000 × 50% = 500,000
+Each Partner Share = 250,000
+```
+
+After all payments:
+
+```text
+Total Recognized Profit = 10,000,000
+Partner 1 Total Profit = 5,000,000
+Partner 2 Total Profit = 5,000,000
+```
+
+No extra profit is allowed after the last installment.
+
+---
+
+# 9. Cash Car Sales
+
+When a car is sold for cash:
+
+## 9.1 Cash Movement
+
+The full selling price enters Qasa/Cash once.
+
+Example:
+
+```text
+Selling Price = 20,000,000
+```
+
+Then:
+
+```text
+Qasa/Cash increases by 20,000,000
+```
+
+## 9.2 Profit Recognition
+
+Profit is recognized separately:
+
+```text
+Profit = Selling Price - Purchase Price - Car Expenses
+```
+
+Example:
+
+```text
+Purchase Price = 10,000,000
+Selling Price = 20,000,000
+Car Expenses = 0
+Profit = 10,000,000
+Each Partner Share = 5,000,000
+```
+
+Correct result:
+
+```text
+Qasa/Cash increases by 20,000,000 only.
+Profit increases by 10,000,000.
+```
+
+Wrong result:
+
+```text
+Qasa/Cash increases by 20,000,000
+Then increases again by 10,000,000 as profit
+Total increase = 30,000,000
+```
+
+This is forbidden.
+
+---
+
+# 10. Customer Accounts
+
+A customer account tracks what the customer still owes.
+
+## 10.1 Remaining Balance
+
+The customer is considered owing money only through remaining/debt transactions.
+
+Examples:
+
+```text
+باقي
+سحب
+```
+
+## 10.2 Paid Transactions
+
+Paid transactions reduce the customer balance.
+
+Examples:
+
+```text
+واصل
+ايداع
+إيداع
+مقدمة
+استلام
+تسديد
+```
+
+## 10.3 Fully Paid Customer
+
+When all remaining installments become paid, the customer balance must become zero.
+
+The customer must not still appear as owing money after all installments are paid.
+
+## 10.4 Printing Reports
+
+Customer statement printing may show:
+
+* Total amount.
+* Paid amount.
+* Remaining amount.
+* Total installments.
+* Paid installments.
+* Remaining installments.
+
+But printing calculations must not change the customer account or database records.
+
+---
+
+# 11. General Expenses
+
+General expenses are expenses from the Expenses section that are not linked to a car.
+
+They reduce net profit.
+
+A general expense must:
+
+* Reduce partner cash if paid by partners.
+* Appear in Qasa and Cash if it affects partner cash.
+* Reduce net profit.
+
+General expense effect:
+
+```text
+affects_qasa = true
+affects_partner_cash = true
+affects_profit = false
+```
+
+Net profit must subtract general expenses separately from the `expenses` table.
+
+General expenses should be identified as:
+
+```text
+car_number IS NULL OR car_number = ''
+```
+
+---
+
+# 12. Car Expenses
+
+Car expenses are expenses linked to a specific car.
+
+Examples:
+
+* Repair cost.
+* Registration cost.
+* Transport cost.
+* Car-specific commission.
+* Any cost that belongs to one car.
+
+Car expenses:
+
+* Are part of the car cost.
+* Reduce the car profit.
+* Do not reduce general net profit directly.
+* Should not be counted twice.
+
+Car expense formula:
+
+```text
+Car Cost = Purchase Price + Car Expenses
+```
+
+Car expense partner cash movement:
+
+```text
+affects_qasa = true
+affects_partner_cash = true
+affects_profit = false
+```
+
+Car expense must not be treated as a general expense.
+
+---
+
+# 13. Agencies
+
+Agency profit is recognized when recorded.
+
+Agency profit must be split 50/50 between the two partners.
+
+Agency profit appears in:
+
+* Profit Distribution.
+* Profit Card.
+* Net Profit.
+* General operations log.
+
+If agency profit is also a real cash receipt, then the cash receipt may appear in Qasa/Cash.
+
+But it must not be double-counted.
+
+## Agency Linking Rule
+
+Every agency profit must be linked to a clear source:
+
+```text
+agency_id
+or
+agency_transaction_id
+```
+
+Never delete agency profit by only matching:
+
+```text
+name
+date
+notes
+```
+
+This is unsafe.
+
+If two agencies have the same names and date, deleting one must not affect the other.
+
+---
+
+# 14. Investors
+
+Investor deposits and withdrawals affect Qasa but not partner Cash.
+
+Investor deposit:
+
+```text
+affects_qasa = true
+affects_partner_cash = false
+affects_profit = false
+```
+
+Investor withdrawal:
+
+```text
+affects_qasa = true
+affects_partner_cash = false
+affects_profit = false
+```
+
+If partners pay an investor from partner cash, create a separate partner cash movement for the payment.
+
+---
+
+# 15. Funders
+
+Funder transactions do not appear in Qasa or partner Cash by themselves.
+
+Funder financing means the funder provided financing or created a liability.
+
+It must not automatically reduce partner cash.
+
+Funder financing:
+
+```text
+affects_qasa = false
+affects_partner_cash = false
+affects_profit = false
+```
+
+Funder repayment from partners must create a separate partner cash movement:
+
+```text
+source_type = funder_payment
+source_role = partner_cash_payment
+affects_qasa = true
+affects_partner_cash = true
+affects_profit = false
+```
+
+The repayment must reduce partner cash once only.
+
+---
+
+# 16. Companies
+
+Company transactions do not appear in Qasa or partner Cash by themselves.
+
+Company-related balances appear in:
+
+* Customer/accounts section.
+* Receivables or liabilities.
+* General operations log.
+
+If partners pay a company from partner cash, create a separate partner cash movement:
+
+```text
+source_type = company_payment
+source_role = partner_cash_payment
+affects_qasa = true
+affects_partner_cash = true
+affects_profit = false
+```
+
+The company transaction itself must still not appear in Qasa/Cash.
+
+---
+
+# 17. Dashboard Rules
+
+Dashboard cards must match their original sections.
+
+## 17.1 Qasa Card
+
+Qasa Card source:
+
+```text
+Qasa tab = partner movements + investor movements
+```
+
+It must use:
+
+```text
+affects_qasa = true
+kind IN ('شريك', 'مستثمر')
+```
+
+## 17.2 Cash Card
+
+Cash Card source:
+
+```text
+Cash tab inside Qasa = partner movements only
+```
+
+It must use:
+
+```text
+affects_partner_cash = true
+kind = 'شريك'
+```
+
+## 17.3 Profit Card
+
+Profit Card source:
+
+```text
+Profit recognition rows - general expenses only
+```
+
+It must use:
+
+```text
+affects_profit = true
+```
+
+Then subtract general expenses only.
+
+## 17.4 Inventory Card
+
+Inventory value must represent available cars only.
+
+Sold cars must not remain in inventory value.
+
+## 17.5 Receivables
+
+Receivables mean amounts owed to the company.
+
+They come from customer/accounts logic, not from Qasa.
+
+## 17.6 Liabilities
+
+Liabilities mean amounts the company owes to others.
+
+They include investors, funders, companies, or any account that has a liability balance.
+
+---
+
+# 18. Company Status Page
+
+Company Status must show:
+
+```text
+Company Value = Cash + Available Car Value + Receivables - Liabilities
+```
+
+Where:
+
+```text
+Cash = partner cash only
+Available Car Value = available inventory only
+Receivables = what others owe the company
+Liabilities = what the company owes others
+```
+
+Company Status is not just partner balance.
+
+---
+
+# 19. Ledger and Audit Rules
+
+Every generated transaction must have a clear source.
+
+Required references:
+
+* Customer payment profit must reference the customer payment id.
+* Car sale profit must reference the car number.
+* General expense partner movement must reference the expense id.
+* Car expense partner movement must reference the car expense id.
+* Agency profit must reference agency id or agency transaction id.
+* Funder/company partner payment must reference the original settlement transaction.
+
+## Forbidden
+
+Do not rely only on:
+
+```text
+name
+date
+notes
+description
+```
+
+to delete or update accounting transactions.
+
+These are not safe identifiers.
+
+---
+
+# 20. Editing and Deleting Transactions
+
+When a source transaction is edited or deleted, only its related generated transactions may be edited or deleted.
+
+Use:
+
+```text
+source_type
+source_id
+source_role
+```
+
+Do not delete unrelated transactions because they have the same note, same date, same name, or same description.
+
+---
+
+# 21. Required Test Scenario: Installment Sale
+
+The system must pass this test:
+
+```text
+Purchase Price = 10,000,000
+Selling Price = 20,000,000
+Car Expenses = 0
+Sale Type = Installments
+Down Payment = 5,000,000
+Remaining = 15,000,000
+Monthly Installment = 1,000,000
+```
+
+Expected:
+
+```text
+Full Car Profit = 10,000,000
+Profit Ratio = 50%
+```
+
+After down payment:
+
+```text
+Qasa increase = 5,000,000
+Cash increase = 5,000,000
+Recognized Profit = 2,500,000
+Partner 1 Profit = 1,250,000
+Partner 2 Profit = 1,250,000
+```
+
+After one installment:
+
+```text
+Qasa increase = 1,000,000
+Cash increase = 1,000,000
+Recognized Profit = 500,000
+Partner 1 Profit = 250,000
+Partner 2 Profit = 250,000
+```
+
+After all payments:
+
+```text
+Total Recognized Profit = 10,000,000
+Partner 1 Profit = 5,000,000
+Partner 2 Profit = 5,000,000
+Customer Remaining Balance = 0
+```
+
+Forbidden result:
+
+```text
+Adding full car profit again on the last installment.
+```
+
+---
+
+# 22. Required Test Scenario: Cash Sale
+
+```text
+Purchase Price = 10,000,000
+Selling Price = 20,000,000
+Car Expenses = 0
+Sale Type = Cash
+```
+
+Expected:
+
+```text
+Qasa increase = 20,000,000
+Cash increase = 20,000,000
+Recognized Profit = 10,000,000
+Partner 1 Profit = 5,000,000
+Partner 2 Profit = 5,000,000
+```
+
+Forbidden result:
+
+```text
+Qasa/Cash increase = 30,000,000
+```
+
+---
+
+# 23. Required Test Scenario: Car Expense
+
+```text
+Purchase Price = 10,000,000
+Car Expense = 1,000,000
+Selling Price = 20,000,000
+```
+
+Expected:
+
+```text
+Car Cost = 11,000,000
+Full Car Profit = 9,000,000
+```
+
+The car expense:
+
+* Reduces partner Cash/Qasa if paid by partners.
+* Increases car cost.
+* Does not reduce general net profit directly.
+* Must not be counted twice.
+
+---
+
+# 24. Required Test Scenario: General Expense
+
+General expense:
+
+```text
+Rent = 1,000,000
+```
+
+Expected:
+
+```text
+Partner Cash decreases by 1,000,000
+Each partner bears 500,000
+Net Profit decreases by 1,000,000
+```
+
+This expense is not part of any car cost.
+
+---
+
+# 25. Required Test Scenario: Investor
+
+Investor deposit:
+
+```text
+Investor deposits 10,000,000
+```
+
+Expected:
+
+```text
+Qasa increases by 10,000,000
+Partner Cash does not increase
+Profit does not increase
+Liability to investor increases
+```
+
+---
+
+# 26. Required Test Scenario: Funder
+
+Funder financing:
+
+```text
+Funder finances a car for 10,000,000
+```
+
+Expected:
+
+```text
+Partner Cash does not decrease
+Qasa does not change
+Funder liability increases
+Profit does not change
+```
+
+Funder repayment from partners:
+
+```text
+Partners repay funder 10,000,000
+```
+
+Expected:
+
+```text
+Partner Cash decreases by 10,000,000
+Each partner bears 5,000,000
+Funder liability decreases
+```
+
+The repayment must happen once only.
+
+---
+
+# 27. Required Test Scenario: Agency
+
+Create two agency transactions with:
+
+```text
+Same old agent name
+Same new agent name
+Same date
+Different transaction ids
+```
+
+Deleting one agency transaction must delete only its own profit rows.
+
+It must not delete the other agency transaction profit.
+
+---
+
+# 28. Final Acceptance Rules
+
+The system is correct only if all these are true:
+
+1. Qasa tab equals Qasa card.
+2. Cash tab equals Cash card.
+3. Funders and companies do not appear in Qasa/Cash.
+4. Investors appear in Qasa but not in partner Cash.
+5. Customer payments increase Qasa/Cash only by the actual payment amount.
+6. Payment profit increases profit only, not Qasa/Cash again.
+7. Total recognized installment profit never exceeds full car profit.
+8. Last installment does not create full car profit again.
+9. General expenses reduce net profit.
+10. Car expenses reduce car profit through car cost only.
+11. Agency profits are linked by id, not by name/date only.
+12. Deleting one transaction does not delete unrelated transactions.
+13. Read-only functions never write to the database.
+14. Dashboard profit equals Profit Distribution.
+15. All partner profit shares are split 50/50.
+
+---
+
+# 29. AI Implementation Reminder
+
+When modifying the code, always ask:
+
+1. Is this a real cash movement?
+2. Does it affect Qasa?
+3. Does it affect partner Cash?
+4. Is it only profit recognition?
+5. Does it affect profit?
+6. What is the original source id?
+7. Can this be deleted safely without affecting unrelated rows?
+8. Is this consistent with Instructions.md?
+
+If the answer is unclear, do not guess by transaction name only.
+
+Use explicit fields and clear source references.

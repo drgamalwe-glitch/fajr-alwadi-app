@@ -153,6 +153,8 @@ pub struct AgencyTransaction {
 pub struct FinancialSummary {
     pub cash_iqd: f64,
     pub cash_usd: f64,
+    pub qasa_iqd: f64,
+    pub qasa_usd: f64,
     pub inventory_value_iqd: f64,
     pub inventory_value_usd: f64,
     pub total_investments_iqd: f64,
@@ -553,6 +555,94 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         let _ = rebuild_customer_payment_profit_splits(conn);
     }
 
+    if version < 6 {
+        // Phase 1: Add accounting classification columns
+        let _ = conn.execute("ALTER TABLE partner_transactions ADD COLUMN source_type TEXT", []);
+        let _ = conn.execute("ALTER TABLE partner_transactions ADD COLUMN source_id TEXT", []);
+        let _ = conn.execute("ALTER TABLE partner_transactions ADD COLUMN source_role TEXT", []);
+        let _ = conn.execute("ALTER TABLE partner_transactions ADD COLUMN affects_qasa INTEGER DEFAULT 1", []);
+        let _ = conn.execute("ALTER TABLE partner_transactions ADD COLUMN affects_partner_cash INTEGER DEFAULT 1", []);
+        let _ = conn.execute("ALTER TABLE partner_transactions ADD COLUMN affects_profit INTEGER DEFAULT 0", []);
+
+        // Unique index for source deduplication
+        let _ = conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_partner_tx_source_unique
+             ON partner_transactions(source_type, source_id, source_role, partner_name, kind)
+             WHERE source_type IS NOT NULL
+               AND source_id IS NOT NULL
+               AND source_role IS NOT NULL",
+            [],
+        );
+
+        // Classify investor movements
+        let _ = conn.execute(
+            "UPDATE partner_transactions SET affects_qasa = 1, affects_partner_cash = 0, affects_profit = 0
+             WHERE kind = 'משקיע' AND affects_qasa IS NULL",
+            [],
+        );
+
+        // Classify funder/company movements
+        let _ = conn.execute(
+            "UPDATE partner_transactions SET affects_qasa = 0, affects_partner_cash = 0, affects_profit = 0
+             WHERE kind IN ('ممول', 'شركة') AND affects_qasa IS NULL",
+            [],
+        );
+
+        // Classify car profit rows
+        let _ = conn.execute(
+            "UPDATE partner_transactions SET affects_profit = 1, affects_qasa = 0, affects_partner_cash = 0
+             WHERE type = 'ايداع ارباح سيارة' AND affects_profit = 0",
+            [],
+        );
+
+        // Classify agency profit rows
+        let _ = conn.execute(
+            "UPDATE partner_transactions SET affects_profit = 1, affects_qasa = 0, affects_partner_cash = 0
+             WHERE type = 'ايداع ارباح وكالة' AND affects_profit = 0",
+            [],
+        );
+
+        // Classify customer payment profit rows (containing رقم حركة دفعة)
+        let _ = conn.execute(
+            "UPDATE partner_transactions SET affects_qasa = 0, affects_partner_cash = 0, affects_profit = 1
+             WHERE type = 'ايداع ارباح سيارة' AND notes LIKE '%رقم حركة دفعة%' AND affects_profit = 0",
+            [],
+        );
+
+        // Phase 16: Clean wrong capital entries for customer payments
+        let _ = conn.execute(
+            "DELETE FROM financial_ledger
+             WHERE reference_type = 'partner_transaction'
+               AND account_type = 'capital'
+               AND reference_id IN (
+                   SELECT CAST(id AS TEXT) FROM partner_transactions WHERE type = 'ايداع دفعات زبائن'
+               )",
+            [],
+        );
+
+        // Classify old customer payment rows
+        let _ = conn.execute(
+            "UPDATE partner_transactions
+             SET affects_qasa = 1, affects_partner_cash = 1, affects_profit = 0,
+                 source_role = COALESCE(source_role, 'legacy_customer_payment_cash')
+             WHERE type = 'ايداع دفعات زبائن'",
+            [],
+        );
+
+        // Phase 12: Fix car_expense ledger entries (reference_type should be 'car_expense' not 'expense')
+        let _ = conn.execute(
+            "DELETE FROM financial_ledger
+             WHERE reference_type = 'car_expense'
+               AND reference_id NOT IN (SELECT CAST(id AS TEXT) FROM car_expenses)",
+            [],
+        );
+
+        // Phase 7: Disable check_and_distribute_installment_profits (clean up any bad profit rows)
+        // This is handled by making the function a no-op below
+
+        let _ = conn.execute("INSERT INTO db_version (version) VALUES (6)", []);
+    }
+
     // Performance indexes
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cars_status ON cars(status)",
@@ -761,23 +851,8 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         [],
     );
 
-    // إضافة قيود الدفتر المالي المفقودة لحركات الشركاء التي لم تمر عبر record_partner_ledger_entries
-    let _ = conn.execute(
-        "INSERT OR IGNORE INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-         SELECT pt.date, COALESCE(pt.time, '00:00'), 'cash', COALESCE(pt.payment_type, 'قاصه'), pt.amount, 0.0, COALESCE(pt.currency, 'IQD'), 'partner_transaction', CAST(pt.id AS TEXT), 'ايداع شريك', 'إيداع شريك: ' || pt.partner_name, pt.notes
-         FROM partner_transactions pt
-         WHERE pt.kind = 'شريك' AND pt.type = 'ايداع دفعات زبائن'
-           AND NOT EXISTS (SELECT 1 FROM financial_ledger fl WHERE fl.reference_type = 'partner_transaction' AND fl.reference_id = CAST(pt.id AS TEXT) AND fl.account_type = 'cash')",
-        [],
-    );
-    let _ = conn.execute(
-        "INSERT OR IGNORE INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-         SELECT pt.date, COALESCE(pt.time, '00:00'), 'capital', pt.partner_name, 0.0, pt.amount, COALESCE(pt.currency, 'IQD'), 'partner_transaction', CAST(pt.id AS TEXT), 'ايداع شريك رأس مال', 'إيداع رأس مال الشريك ' || pt.partner_name, pt.notes
-         FROM partner_transactions pt
-         WHERE pt.kind = 'شريك' AND pt.type = 'ايداع دفعات زبائن'
-           AND NOT EXISTS (SELECT 1 FROM financial_ledger fl WHERE fl.reference_type = 'partner_transaction' AND fl.reference_id = CAST(pt.id AS TEXT) AND fl.account_type = 'capital')",
-        [],
-    );
+    // Phase 16: Old capital entry logic removed — customer payments are not partner capital.
+    // The cleanup is handled in the version 6 migration above.
 
     let _ = recalculate_all_partners(conn);
 
@@ -2435,11 +2510,151 @@ fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), St
         let amount_paid = amount_paid_opt.unwrap_or(selling_price);
         let amount_remaining = amount_remaining_opt.unwrap_or(0.0);
 
+        let expenses_sum: f64 = db
+            .query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+                [car_number],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+        let total_cogs = purchase_price + expenses_sum;
+        let total_profit = selling_price - total_cogs;
+
+        if payment_type == "كاش" {
+            // Phase 17: Cash sale — recognize revenue and profit immediately
+            record_ledger_entry(
+                db,
+                &s_date,
+                &s_time,
+                "revenue",
+                Some(car_number),
+                0.0,
+                selling_price,
+                &sale_currency,
+                "car",
+                car_number,
+                "بيع سيارة",
+                &format!(
+                    "إيراد بيع سيارة {} ({}) إلى {}",
+                    car_name, car_number, buyer_name
+                ),
+                None,
+            )?;
+
+            record_ledger_entry(
+                db,
+                &s_date,
+                &s_time,
+                "cash",
+                Some("قاصه"),
+                selling_price,
+                0.0,
+                &sale_currency,
+                "car",
+                car_number,
+                "بيع سيارة كاش",
+                &format!("استلام نقدي بيع سيارة {} ({})", car_name, car_number),
+                None,
+            )?;
+        } else {
+            // Phase 17: Installment/term sale — gradual profit recognition
+            // Record only amount_paid as cash revenue
+            if amount_paid > 0.0 {
+                record_ledger_entry(
+                    db,
+                    &s_date,
+                    &s_time,
+                    "revenue",
+                    Some(car_number),
+                    0.0,
+                    amount_paid,
+                    &sale_currency,
+                    "car",
+                    car_number,
+                    "بيع سيارة - جزئي",
+                    &format!("إيراد جزئي بيع سيارة {} ({})", car_name, car_number),
+                    None,
+                )?;
+                record_ledger_entry(
+                    db,
+                    &s_date,
+                    &s_time,
+                    "cash",
+                    Some("قاصه"),
+                    amount_paid,
+                    0.0,
+                    &sale_currency,
+                    "car",
+                    car_number,
+                    "مقدمة سيارة",
+                    &format!("مقدمة سيارة {} ({})", car_name, car_number),
+                    None,
+                )?;
+            }
+            if amount_remaining > 0.0 {
+                record_ledger_entry(
+                    db,
+                    &s_date,
+                    &s_time,
+                    "receivable",
+                    Some(&buyer_name),
+                    amount_remaining,
+                    0.0,
+                    &sale_currency,
+                    "car",
+                    car_number,
+                    "مدينون بيع سيارة",
+                    &format!(
+                        "ذمة مدينة متبقية بيع سيارة {} ({}) على {}",
+                        car_name, car_number, buyer_name
+                    ),
+                    None,
+                )?;
+            }
+            // Defer the expected profit
+            if total_profit > 0.0 && sale_currency == currency {
+                record_ledger_entry(
+                    db,
+                    &s_date,
+                    &s_time,
+                    "deferred_profit",
+                    Some(car_number),
+                    0.0,
+                    total_profit,
+                    &sale_currency,
+                    "car",
+                    car_number,
+                    "ربح مؤجل",
+                    &format!("ربح مؤجل بيع سيارة {} ({})", car_name, car_number),
+                    None,
+                )?;
+            }
+        }
+
+        // COGS and inventory reduction (same for both cash and installment)
+        if total_cogs > 0.0 {
+            record_ledger_entry(
+                db,
+                &s_date,
+                &s_time,
+                "expense",
+                Some(car_number),
+                total_cogs,
+                0.0,
+                &currency,
+                "car",
+                car_number,
+                "تكلفة المبيعات",
+                &format!("تكلفة بيع سيارة {} ({})", car_name, car_number),
+                None,
+            )?;
+        }
+
         record_ledger_entry(
             db,
             &s_date,
             &s_time,
-            "revenue",
+            "inventory",
             Some(car_number),
             0.0,
             selling_price,
@@ -2878,7 +3093,7 @@ fn add_car(
     if should_create_purchase_transactions && purchase_type.as_deref() == Some("كاش") {
         // توزيع 50% من مبلغ الشراء على حسابات الشركاء
         let purchase_curr = currency.as_deref().unwrap_or("IQD");
-        distribute_to_partners_50(
+        distribute_to_partners_50_with_effects(
             &db,
             purchase,
             purchase_curr,
@@ -2886,6 +3101,12 @@ fn add_car(
             purchase_payment_type.as_deref().unwrap_or("قاصه"),
             "سحب شراء سيارة",
             &new_purchase_note,
+            "car_sale",
+            &car_number,
+            "cash_payment",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
+            false, // affects_profit
         )?;
     } else if should_create_purchase_transactions && (purchase_type.as_deref() == Some("تمويل") || purchase_type.as_deref() == Some("شركة") || purchase_type.as_deref() == Some("دين")) {
         let p_kind = if purchase_type.as_deref() == Some("تمويل") || purchase_type.as_deref() == Some("دين") {
@@ -2975,26 +3196,29 @@ fn add_car(
         let sale_date_str = sale_date.as_deref().unwrap_or("");
 
         if payment_type.as_deref() == Some("كاش") {
-            let total_cost = total_cost_for_profit;
+            // Phase 8: Cash sale — one cash movement for full selling price + one profit recognition
+            // Effect 1: Cash movement for full selling price
+            distribute_to_partners_50_with_effects(
+                &db,
+                selling,
+                sale_curr,
+                sale_date_str,
+                sale_payment_type,
+                "ايداع بيع سيارة",
+                &sale_note,
+                "car_sale",
+                &car_number,
+                "cash_movement",
+                true,  // affects_qasa
+                true,  // affects_partner_cash
+                false, // affects_profit
+            )?;
 
-            // 50% من التكلفة الكلية لكل حسابات الشركاء (بعملة الشراء)
-            if total_cost > 0.0 {
-                distribute_to_partners_50(
-                    &db,
-                    total_cost,
-                    purchase_curr,
-                    sale_date_str,
-                    sale_payment_type,
-                    "ايداع بيع سيارة",
-                    &sale_note,
-                )?;
-            }
-
-            // 50% من أرباح السيارة لكل حسابات الشركاء (فقط إذا تطابقت عملتا الشراء والبيع)
+            // Effect 2: Profit recognition (does not increase Qasa/Cash)
             if purchase_curr == sale_curr {
-                let profit = selling - total_cost;
+                let profit = selling - total_cost_for_profit;
                 if profit > 0.0 {
-                    distribute_to_partners_50(
+                    distribute_to_partners_50_with_effects(
                         &db,
                         profit,
                         sale_curr,
@@ -3002,6 +3226,12 @@ fn add_car(
                         sale_payment_type,
                         "ايداع ارباح سيارة",
                         &profit_note,
+                        "car_sale",
+                        &car_number,
+                        "profit_recognition",
+                        false, // affects_qasa
+                        false, // affects_partner_cash
+                        true,  // affects_profit
                     )?;
                 }
             }
@@ -3508,46 +3738,164 @@ fn recalculate_partner_total(
     kind: &str,
 ) -> Result<(), String> {
     let (iqd_balance, usd_balance) = {
-        let deposits_iqd: f64 = db.query_row(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-             WHERE partner_name = ?1 AND kind = ?2 AND COALESCE(currency, 'IQD') = 'IQD'
-             AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%' OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%' OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
-             AND type NOT LIKE 'تحويل%'",
-            params![partner_name.trim(), kind.trim()],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
-        let withdrawals_iqd: f64 = db.query_row(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-             WHERE partner_name = ?1 AND kind = ?2 AND COALESCE(currency, 'IQD') = 'IQD'
-             AND (type LIKE 'سحب%' OR type LIKE 'باقي%')
-             AND type NOT LIKE 'تحويل%'",
-            params![partner_name.trim(), kind.trim()],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
-
-        let deposits_usd: f64 = db.query_row(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-             WHERE partner_name = ?1 AND kind = ?2 AND COALESCE(currency, 'IQD') = 'USD'
-             AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%' OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%' OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
-             AND type NOT LIKE 'تحويل%'",
-            params![partner_name.trim(), kind.trim()],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
-        let withdrawals_usd: f64 = db.query_row(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-             WHERE partner_name = ?1 AND kind = ?2 AND COALESCE(currency, 'IQD') = 'USD'
-             AND (type LIKE 'سحب%' OR type LIKE 'باقي%')
-             AND type NOT LIKE 'تحويل%'",
-            params![partner_name.trim(), kind.trim()],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
-
         if kind == "زبون" {
-            (withdrawals_iqd, withdrawals_usd)
-        } else if kind == "مستثمر" || kind == "ممول" || kind == "شركة" {
+            // Customer: use remaining/debt logic
+            let debt_iqd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = 'زبون' AND COALESCE(currency, 'IQD') = 'IQD'
+                 AND (type LIKE 'باقي%' OR type LIKE 'سحب%')
+                 AND type NOT LIKE 'واصل%' AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            let paid_iqd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = 'زبون' AND COALESCE(currency, 'IQD') = 'IQD'
+                 AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
+                 AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            let debt_usd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = 'زبون' AND COALESCE(currency, 'IQD') = 'USD'
+                 AND (type LIKE 'باقي%' OR type LIKE 'سحب%')
+                 AND type NOT LIKE 'واصل%' AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            let paid_usd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = 'زبون' AND COALESCE(currency, 'IQD') = 'USD'
+                 AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
+                 AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            (debt_iqd - paid_iqd, debt_usd - paid_usd)
+        } else if kind == "شريك" {
+            // Partner: use affects_partner_cash = 1 only
+            let deposits_iqd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = 'شريك' AND COALESCE(currency, 'IQD') = 'IQD'
+                 AND affects_partner_cash = 1
+                 AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                      OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                 AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            let withdrawals_iqd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = 'شريك' AND COALESCE(currency, 'IQD') = 'IQD'
+                 AND affects_partner_cash = 1
+                 AND (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                 AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            let deposits_usd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = 'شريك' AND COALESCE(currency, 'IQD') = 'USD'
+                 AND affects_partner_cash = 1
+                 AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                      OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                 AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            let withdrawals_usd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = 'شريك' AND COALESCE(currency, 'IQD') = 'USD'
+                 AND affects_partner_cash = 1
+                 AND (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                 AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            (deposits_iqd - withdrawals_iqd, deposits_usd - withdrawals_usd)
+        } else if kind == "مستثمر" {
+            // Investor: deposits increase liability, withdrawals decrease it
+            let deposits_iqd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = 'مستثمر' AND COALESCE(currency, 'IQD') = 'IQD'
+                 AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                      OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                 AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            let withdrawals_iqd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = 'مستثمر' AND COALESCE(currency, 'IQD') = 'IQD'
+                 AND (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                 AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            let deposits_usd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = 'مستثمر' AND COALESCE(currency, 'IQD') = 'USD'
+                 AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                      OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                 AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            let withdrawals_usd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = 'مستثمر' AND COALESCE(currency, 'IQD') = 'USD'
+                 AND (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                 AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
             (withdrawals_iqd - deposits_iqd, withdrawals_usd - deposits_usd)
         } else {
-            (deposits_iqd - withdrawals_iqd, deposits_usd - withdrawals_usd)
+            // ممول, شركة: withdrawals - deposits (liability logic)
+            let deposits_iqd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = ?2 AND COALESCE(currency, 'IQD') = 'IQD'
+                 AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                      OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                 AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim(), kind.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            let withdrawals_iqd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = ?2 AND COALESCE(currency, 'IQD') = 'IQD'
+                 AND (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                 AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim(), kind.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            let deposits_usd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = ?2 AND COALESCE(currency, 'IQD') = 'USD'
+                 AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                      OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                 AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim(), kind.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            let withdrawals_usd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE partner_name = ?1 AND kind = ?2 AND COALESCE(currency, 'IQD') = 'USD'
+                 AND (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                 AND type NOT LIKE 'تحويل%'",
+                params![partner_name.trim(), kind.trim()],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            (withdrawals_iqd - deposits_iqd, withdrawals_usd - deposits_usd)
         }
     };
 
@@ -3568,112 +3916,10 @@ fn recalculate_partner_total(
 
 #[allow(dead_code)]
 fn check_and_distribute_installment_profits(db: &Connection) -> Result<(), String> {
-    // 1. Fetch all sold installment / term cars
-    let mut stmt = db.prepare(
-        "SELECT car_number, car_name, chassis_number, purchase_price, currency, sale_currency, selling_price
-         FROM cars
-         WHERE status = 'مبيوعة' AND payment_type IN ('اقساط', 'موعد')"
-    ).map_err(|e| e.to_string())?;
-
-    struct TempCar {
-        car_number: String,
-        car_name: String,
-        chassis_number: String,
-        purchase_price: f64,
-        currency: String,
-        sale_currency: String,
-        selling_price: f64,
-    }
-
-    let cars = stmt.query_map([], |row| {
-        Ok(TempCar {
-            car_number: row.get(0)?,
-            car_name: row.get(1)?,
-            chassis_number: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-            purchase_price: row.get(3)?,
-            currency: row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "IQD".to_string()),
-            sale_currency: row.get::<_, Option<String>>(5)?.unwrap_or_else(|| "IQD".to_string()),
-            selling_price: row.get(6)?,
-        })
-    }).map_err(|e| e.to_string())?
-      .collect::<Result<Vec<TempCar>, rusqlite::Error>>()
-      .map_err(|e| e.to_string())?;
-
-    drop(stmt);
-
-    for car in cars {
-        let legacy_pattern = format!("%#بيع_سيارة_{}%", car.car_number);
-        let chassis_pattern = if car.chassis_number.trim().is_empty() {
-            format!("%{}%", car.car_number)
-        } else {
-            format!("%{}%", car.chassis_number.trim())
-        };
-
-        // 2. Count unpaid installments
-        let unpaid_count: i64 = db.query_row(
-            "SELECT COUNT(*) FROM partner_transactions
-             WHERE (notes LIKE ?1 OR notes LIKE ?2) AND type LIKE 'باقي%'",
-            params![&legacy_pattern, &chassis_pattern],
-            |row| row.get(0),
-        ).unwrap_or(0);
-
-        // 3. Count existing distributed profit
-        let distributed_count: i64 = db.query_row(
-            "SELECT COUNT(*) FROM partner_transactions
-             WHERE (notes LIKE ?1 OR notes LIKE ?2) AND type = 'ايداع ارباح سيارة'",
-            params![&legacy_pattern, &chassis_pattern],
-            |row| row.get(0),
-        ).unwrap_or(0);
-
-        if unpaid_count == 0 {
-            if distributed_count == 0 {
-                // If purchase currency matches sale currency
-                if car.currency == car.sale_currency {
-                    // Calculate expenses
-                    let expenses_sum: f64 = db.query_row(
-                        "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
-                        [&car.car_number],
-                        |row| row.get(0),
-                    ).unwrap_or(0.0);
-
-                    let profit = car.selling_price - (car.purchase_price + expenses_sum);
-                    if profit > 0.0 {
-                        let profit_note = format!(
-                            "ايداع ارباح سيارة {} {} #بيع_سيارة_{}",
-                            car.car_name.trim(),
-                            car.chassis_number.trim(),
-                            car.car_number
-                        ).trim().replace("  ", " ");
-
-                        let (today, _) = now_datetime();
-
-                        distribute_to_partners_50(
-                            db,
-                            profit,
-                            &car.sale_currency,
-                            &today,
-                            "قاصه",
-                            "ايداع ارباح سيارة",
-                            &profit_note,
-                        )?;
-                    }
-                }
-            }
-        } else {
-            // unpaid_count > 0, if profit was distributed, reverse it!
-            if distributed_count > 0 {
-                db.execute(
-                    "DELETE FROM partner_transactions WHERE (notes LIKE ?1 OR notes LIKE ?2) AND type = 'ايداع ارباح سيارة'",
-                    params![&legacy_pattern, &chassis_pattern],
-                ).map_err(|e| e.to_string())?;
-
-                // Recalculate partner totals for Amir and Muntasir
-                recalculate_partner_total(db, "أمير", "شريك")?;
-                recalculate_partner_total(db, "منتصر", "شريك")?;
-            }
-        }
-    }
-
+    // DEPRECATED: Installment profits are now recognized per customer payment according to Instructions.md.
+    // Never add full car profit at the last installment.
+    // This function is intentionally a no-op.
+    let _ = db;
     Ok(())
 }
 
@@ -4027,13 +4273,13 @@ fn rebuild_customer_payment_profit_splits(db: &Connection) -> Result<(), String>
             continue;
         }
 
-        let payment_profit = calculate_customer_payment_profit(db, &car_num, row.amount, &row.currency)?;
+        let payment_profit = calculate_customer_payment_profit_capped(db, &car_num, row.amount, &row.currency)?;
         if payment_profit > 0.0 {
             let profit_note = format!(
                 "ربح دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
                 row.notes, row.id, car_num
             );
-            distribute_to_partners_50(
+            distribute_to_partners_50_with_effects(
                 db,
                 payment_profit,
                 &row.currency,
@@ -4041,6 +4287,12 @@ fn rebuild_customer_payment_profit_splits(db: &Connection) -> Result<(), String>
                 "قاصه",
                 "ايداع ارباح سيارة",
                 &profit_note,
+                "customer_payment",
+                &row.id.to_string(),
+                "profit_recognition",
+                false, // affects_qasa
+                false, // affects_partner_cash
+                true,  // affects_profit
             )?;
         }
     }
@@ -4066,7 +4318,11 @@ fn apply_partner_transaction_splits(
     // === 1. Investor Repayment (سحب مستثمر) ===
     if kind == "مستثمر" && type_.starts_with("سحب") {
         let partner_note = format!("تسديد مستثمر: {} ({})", partner_name, tx_id);
-        deduct_from_partners_5050(db, amount, currency, date, "قاصه", "سحب تسديد", &partner_note)?;
+        deduct_from_partners_5050_with_effects(
+            db, amount, currency, date, "قاصه", "سحب تسديد", &partner_note,
+            "investor_transaction", &tx_id.to_string(), "partner_cash_payment",
+            true, true, false,
+        )?;
     }
 
     // === 2. Company Cash Withdrawal (سحب شركة) ===
@@ -4075,24 +4331,30 @@ fn apply_partner_transaction_splits(
         && notes.unwrap_or("").contains("سحب نقدي");
     if is_company_cash_withdrawal {
         let partner_note = format!("تسديد شركة: {} ({})", partner_name, tx_id);
-        deduct_from_partners_5050(db, amount, currency, date, "قاصه", "سحب تسديد", &partner_note)?;
+        deduct_from_partners_5050_with_effects(
+            db, amount, currency, date, "قاصه", "سحب تسديد", &partner_note,
+            "company_payment", &tx_id.to_string(), "partner_cash_payment",
+            true, true, false,
+        )?;
     }
 
-    // === 3. Funder Deposit (تمويل ممول) ===
-    if kind == "ممول" && type_.starts_with("تمويل") {
-        let partner_note = format!("تسديد ممول: {} ({})", partner_name, tx_id);
-        deduct_from_partners_5050(db, amount, currency, date, "قاصه", "سحب تسديد", &partner_note)?;
-    }
+    // === 3. Funder Deposit (تمويل ممول) — Phase 15: Do NOT deduct from partners ===
+    // Financing means the funder provided financing, not that partners paid.
+    // Funder records do not affect Qasa/Cash.
 
     // === 4. Funder Repayment (سحب ممول) ===
     let is_financier_repayment = kind == "ممول" && type_.starts_with("سحب");
     if is_financier_repayment {
         let partner_note = format!("تسديد ممول: {} ({})", partner_name, tx_id);
-        deduct_from_partners_5050(db, amount, currency, date, "قاصه", "سحب تسديد", &partner_note)?;
+        deduct_from_partners_5050_with_effects(
+            db, amount, currency, date, "قاصه", "سحب تسديد", &partner_note,
+            "funder_payment", &tx_id.to_string(), "partner_cash_payment",
+            true, true, false,
+        )?;
         distribute_financier_repayment_to_partners(db, partner_name, amount, date, currency, notes, tx_id)?;
     }
 
-    // === 5. Customer Payments (دفعات الزبائن) ===
+    // === 5. Customer Payments (دفعات الزبائن) — Phase 5: Two separate effects ===
     let is_customer_payment = kind == "زبون" && (
         type_.starts_with("ايداع")
         || type_.starts_with("إيداع")
@@ -4104,13 +4366,15 @@ fn apply_partner_transaction_splits(
     if is_customer_payment {
         let notes_str = notes.unwrap_or("");
         if let Some(car_num) = extract_car_number_from_notes(notes_str) {
-            let payment_profit = calculate_customer_payment_profit(db, &car_num, amount, currency)?;
+            // Phase 6: Use capped profit calculation
+            let payment_profit = calculate_customer_payment_profit_capped(db, &car_num, amount, currency)?;
             if payment_profit > 0.0 {
+                // Effect 2: Profit recognition row — does NOT affect Qasa/Cash
                 let profit_note = format!(
                     "ربح دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
                     notes_str, tx_id, car_num
                 );
-                distribute_to_partners_50(
+                distribute_to_partners_50_with_effects(
                     db,
                     payment_profit,
                     currency,
@@ -4118,6 +4382,12 @@ fn apply_partner_transaction_splits(
                     "قاصه",
                     "ايداع ارباح سيارة",
                     &profit_note,
+                    "customer_payment",
+                    &tx_id.to_string(),
+                    "profit_recognition",
+                    false, // affects_qasa
+                    false, // affects_partner_cash
+                    true,  // affects_profit
                 )?;
             }
         }
@@ -4615,15 +4885,16 @@ fn get_cash_register_entries(
 
     if let Some(pt) = &payment_type {
         if pt == "الكاش" || pt == "قاصه" || pt == "قاصة" {
+            // Phase 3: Use affects_qasa / affects_partner_cash flags
             let query = if pt == "الكاش" {
                 "SELECT id, date, COALESCE(time, '00:00'), type, amount, partner_name, notes, COALESCE(currency, 'IQD'), kind
                  FROM partner_transactions
-                 WHERE kind = 'شريك' AND type NOT LIKE '%تحويل%'
+                 WHERE affects_partner_cash = 1 AND kind = 'شريك' AND type NOT LIKE '%تحويل%'
                  ORDER BY date ASC, time ASC, id ASC"
             } else {
                 "SELECT id, date, COALESCE(time, '00:00'), type, amount, partner_name, notes, COALESCE(currency, 'IQD'), kind
                  FROM partner_transactions
-                 WHERE (kind = 'شريك' OR kind = 'مستثمر') AND type NOT LIKE '%تحويل%'
+                 WHERE affects_qasa = 1 AND kind IN ('شريك', 'مستثمر') AND type NOT LIKE '%تحويل%'
                  ORDER BY date ASC, time ASC, id ASC"
             };
 
@@ -4639,7 +4910,7 @@ fn get_cash_register_entries(
                 let partner_name: String = row.get(5).map_err(|e| e.to_string())?;
                 let notes: Option<String> = row.get(6).map_err(|e| e.to_string())?;
                 let currency: String = row.get(7).map_err(|e| e.to_string())?;
-                let kind: String = row.get(8).map_err(|e| e.to_string())?;
+                let _kind: String = row.get(8).map_err(|e| e.to_string())?;
 
                 let is_deposit = tx_type.starts_with("ايداع")
                     || tx_type.starts_with("إيداع")
@@ -4659,17 +4930,12 @@ fn get_cash_register_entries(
                     0.0
                 };
 
-                let type_display = if kind == "شريك" {
-                    if is_deposit { "ايداع شريك".to_string() } else { "سحب شريك".to_string() }
-                } else {
-                    if is_deposit { "ايداع مستثمر".to_string() } else { "سحب مستثمر".to_string() }
-                };
-
+                // Phase 3: Show original transaction type for clear audit trail
                 entries.push(CashRegisterEntry {
                     id,
                     date,
                     time,
-                    type_: type_display,
+                    type_: tx_type,
                     amount,
                     description: partner_name,
                     notes,
@@ -4852,7 +5118,7 @@ fn add_expense(
 
             let exp_id = db.last_insert_rowid();
 
-            // 2. تسجيل القيد في دفتر الأستاذ
+            // Phase 12: Use reference_type = "car_expense"
             record_ledger_entry(
                 &db,
                 date.trim(),
@@ -4862,7 +5128,7 @@ fn add_expense(
                 amount,
                 0.0,
                 &currency_val,
-                "expense",
+                "car_expense",
                 &exp_id.to_string(),
                 "مصروف سيارة",
                 &format!("مصروف سيارة {} - {}", car_num, description.trim()),
@@ -4878,7 +5144,7 @@ fn add_expense(
                 0.0,
                 amount,
                 &currency_val,
-                "expense",
+                "car_expense",
                 &exp_id.to_string(),
                 "دفع مصروف سيارة",
                 &format!("دفع مصروف سيارة: {} - {}", car_num, description.trim()),
@@ -4887,7 +5153,7 @@ fn add_expense(
 
             if amount > 0.0 {
                 let expense_note = car_expense_partner_note(&db, car_num, description.trim(), exp_id);
-                distribute_to_partners_50(
+                distribute_to_partners_50_with_effects(
                     &db,
                     amount,
                     &currency_val,
@@ -4895,6 +5161,12 @@ fn add_expense(
                     "قاصه",
                     "سحب مصروف",
                     &expense_note,
+                    "car_expense",
+                    &exp_id.to_string(),
+                    "cash_payment",
+                    true,  // affects_qasa
+                    true,  // affects_partner_cash
+                    false, // affects_profit
                 )?;
             }
 
@@ -4969,18 +5241,23 @@ fn add_expense(
         notes.as_deref(),
     )?;
 
-    // توزيع 50% من المصروف العام على حسابات الشركاء
+    // Phase 13: Use source fields for partner transactions
     if amount > 0.0 {
-        let expense_note = format!("سحب مصروف {}", description.trim());
-        let expense_date = date.trim();
-        distribute_to_partners_50(
+        let expense_note = format!("سحب مصروف {} (رقم المصروف: {})", description.trim(), exp_id);
+        distribute_to_partners_50_with_effects(
             &db,
             amount,
             &currency_val,
-            expense_date,
+            date.trim(),
             "قاصه",
             "سحب مصروف",
             &expense_note,
+            "expense",
+            &exp_id.to_string(),
+            "cash_payment",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
+            false, // affects_profit
         )?;
     }
 
@@ -5018,24 +5295,12 @@ fn get_expenses(state: State<AppState>) -> Result<Vec<ExpenseEntry>, String> {
 fn delete_expense(state: State<AppState>, id: i64) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    // جلب وصف المصروف لحذف حركات الشركاء المرتبطة
-    let (exp_desc, _exp_currency): (String, Option<String>) = db
-        .query_row(
-            "SELECT description, currency FROM expenses WHERE id = ?1",
-            [id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap_or_default();
-
-    // حذف حركات الشركاء المرتبطة بالمصروف
-    if !exp_desc.is_empty() {
-        let expense_note = format!("سحب مصروف {}", exp_desc.trim());
-        db.execute(
-            "DELETE FROM partner_transactions WHERE notes = ?1",
-            [&expense_note],
-        )
-        .map_err(|e| e.to_string())?;
-    }
+    // Phase 13: Delete partner transactions by source fields, not by description
+    db.execute(
+        "DELETE FROM partner_transactions WHERE source_type = 'expense' AND source_id = ?1 AND source_role = 'cash_payment'",
+        [id.to_string()],
+    )
+    .map_err(|e| e.to_string())?;
 
     // حذف حركات القيد في دفتر الأستاذ
     delete_ledger_entries(&db, "expense", &id.to_string())?;
@@ -5063,22 +5328,12 @@ fn update_expense(
     let currency_val = currency.unwrap_or_else(|| "IQD".to_string());
     let (_, current_time) = now_datetime();
 
-    // 1. حذف حركات الشركاء القديمة المرتبطة بالمصروف
-    let old_desc: String = db
-        .query_row(
-            "SELECT description FROM expenses WHERE id = ?1",
-            [id],
-            |row| row.get(0),
-        )
-        .unwrap_or_default();
-    if !old_desc.trim().is_empty() {
-        let old_expense_note = format!("سحب مصروف {}", old_desc.trim());
-        db.execute(
-            "DELETE FROM partner_transactions WHERE notes = ?1",
-            [&old_expense_note],
-        )
-        .map_err(|e| e.to_string())?;
-    }
+    // Phase 13: Delete old partner transactions by source fields
+    db.execute(
+        "DELETE FROM partner_transactions WHERE source_type = 'expense' AND source_id = ?1 AND source_role = 'cash_payment'",
+        [id.to_string()],
+    )
+    .map_err(|e| e.to_string())?;
 
     // 2. عكس القيد القديم
     reverse_ledger_entries(&db, "expense", &id.to_string())?;
@@ -5130,10 +5385,10 @@ fn update_expense(
         notes.as_deref(),
     )?;
 
-    // 5. إعادة توزيع 50% من المصروف على حسابات الشركاء
+    // 5. إعادة توزيع 50% من المصروف على حسابات الشركاء (Phase 13: with source fields)
     if amount > 0.0 {
-        let expense_note = format!("سحب مصروف {}", description.trim());
-        distribute_to_partners_50(
+        let expense_note = format!("سحب مصروف {} (رقم المصروف: {})", description.trim(), id);
+        distribute_to_partners_50_with_effects(
             &db,
             amount,
             &currency_val,
@@ -5141,6 +5396,12 @@ fn update_expense(
             "قاصه",
             "سحب مصروف",
             &expense_note,
+            "expense",
+            &id.to_string(),
+            "cash_payment",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
+            false, // affects_profit
         )?;
     }
 
@@ -5174,7 +5435,7 @@ fn add_car_expense_record(
     .map_err(|e| e.to_string())?;
     let id = db.last_insert_rowid();
 
-    // Record ledger entries
+    // Phase 12: Use reference_type = "car_expense"
     record_ledger_entry(
         &db,
         date.trim(),
@@ -5184,7 +5445,7 @@ fn add_car_expense_record(
         amount,
         0.0,
         &currency_val,
-        "expense",
+        "car_expense",
         &id.to_string(),
         "مصروف سيارة",
         &format!("مصروف سيارة {} - {}", car_number.trim(), description.trim()),
@@ -5200,7 +5461,7 @@ fn add_car_expense_record(
         0.0,
         amount,
         &currency_val,
-        "expense",
+        "car_expense",
         &id.to_string(),
         "دفع مصروف سيارة",
         &format!(
@@ -5213,7 +5474,7 @@ fn add_car_expense_record(
 
     if amount > 0.0 {
         let expense_note = car_expense_partner_note(&db, car_number.trim(), description.trim(), id);
-        distribute_to_partners_50(
+        distribute_to_partners_50_with_effects(
             &db,
             amount,
             &currency_val,
@@ -5221,6 +5482,12 @@ fn add_car_expense_record(
             "قاصه",
             "سحب مصروف",
             &expense_note,
+            "car_expense",
+            &id.to_string(),
+            "cash_payment",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
+            false, // affects_profit
         )?;
     }
 
@@ -5286,20 +5553,19 @@ fn delete_car_expense_record(state: State<AppState>, id: i64) -> Result<(), Stri
     );
 
     if let Ok((car_number, _expense_amount)) = row_result {
+        // Phase 13: Delete partner transactions by source fields, not by notes
         db.execute(
-            "DELETE FROM partner_transactions WHERE notes LIKE ?1",
-            [format!("%(رقم المصروف: {})%", id)],
+            "DELETE FROM partner_transactions WHERE source_type = 'car_expense' AND source_id = ?1 AND source_role = 'cash_payment'",
+            [id.to_string()],
         )
         .map_err(|e| e.to_string())?;
 
-        // 2. عكس حركات القيد في دفتر الأستاذ
-        reverse_ledger_entries(&db, "expense", &id.to_string())?;
+        // Phase 12: Use "car_expense" reference type
+        delete_ledger_entries(&db, "car_expense", &id.to_string())?;
 
-        // 3. حذف سجل المصروف
         db.execute("DELETE FROM car_expenses WHERE id = ?1", [id])
             .map_err(|e| e.to_string())?;
 
-        // 4. إذا كانت السيارة مبيوعة، نقوم بتحديث تكلفة المبيعات (COGS)
         let is_sold: bool = db
             .query_row(
                 "SELECT COUNT(1) FROM cars WHERE car_number = ?1 AND status = 'مبيوعة'",
@@ -5456,13 +5722,12 @@ fn agency_profit_note(old_agent_name: &str, new_agent_name: &str) -> String {
 
 fn delete_agency_profit_distributions(
     db: &Connection,
-    old_agent_name: &str,
-    new_agent_name: &str,
+    agency_id: i64,
 ) -> Result<(), String> {
-    let note = agency_profit_note(old_agent_name, new_agent_name);
+    // Phase 14: Delete by source fields instead of name/date/notes
     db.execute(
-        "DELETE FROM partner_transactions WHERE type = 'ايداع ارباح وكالة' AND notes = ?1",
-        [&note],
+        "DELETE FROM partner_transactions WHERE source_type = 'agency' AND source_id = ?1 AND source_role = 'profit_recognition'",
+        [agency_id.to_string()],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -5481,11 +5746,12 @@ fn distribute_agency_base_profit(db: &Connection, agency_id: i64) -> Result<(), 
         Err(e) => return Err(e.to_string()),
     };
 
-    delete_agency_profit_distributions(db, &old_agent_name, &new_agent_name)?;
+    // Phase 14: Delete by agency_id
+    delete_agency_profit_distributions(db, agency_id)?;
     let note = agency_profit_note(&old_agent_name, &new_agent_name);
 
     if amount_usd > 0.0 {
-        distribute_to_partners_50(
+        distribute_to_partners_50_with_effects(
             db,
             amount_usd,
             "USD",
@@ -5493,10 +5759,16 @@ fn distribute_agency_base_profit(db: &Connection, agency_id: i64) -> Result<(), 
             "قاصه",
             "ايداع ارباح وكالة",
             &note,
+            "agency",
+            &agency_id.to_string(),
+            "profit_recognition",
+            false, // affects_qasa
+            false, // affects_partner_cash
+            true,  // affects_profit
         )?;
     }
     if amount_iqd > 0.0 {
-        distribute_to_partners_50(
+        distribute_to_partners_50_with_effects(
             db,
             amount_iqd,
             "IQD",
@@ -5504,6 +5776,12 @@ fn distribute_agency_base_profit(db: &Connection, agency_id: i64) -> Result<(), 
             "قاصه",
             "ايداع ارباح وكالة",
             &note,
+            "agency",
+            &agency_id.to_string(),
+            "profit_recognition",
+            false, // affects_qasa
+            false, // affects_partner_cash
+            true,  // affects_profit
         )?;
     }
 
@@ -5617,14 +5895,8 @@ fn update_agency(
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    let old_names: (String, String) = db
-        .query_row(
-            "SELECT old_agent_name, new_agent_name FROM agencies WHERE id = ?1",
-            [id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap_or_default();
-    delete_agency_profit_distributions(&db, &old_names.0, &old_names.1)?;
+    // Phase 14: Delete by agency_id
+    delete_agency_profit_distributions(&db, id)?;
 
     // تحديث جدول الوكالات بالبيانات الجديدة
     db.execute(
@@ -5667,7 +5939,8 @@ fn delete_agency(state: State<AppState>, id: i64) -> Result<(), String> {
     let tx_agency_note = format!("وكالة {} {}", old_agent_name.trim(), new_agent_name.trim())
         .trim()
         .replace("  ", " ");
-    delete_agency_profit_distributions(&db, &old_agent_name, &new_agent_name)?;
+    // Phase 14: Delete by agency_id
+    delete_agency_profit_distributions(&db, id)?;
 
     // حذف حركات القيد في دفتر الأستاذ للوكالة وحركاتها
     delete_ledger_entries(&db, "agency", &id.to_string())?;
@@ -5682,6 +5955,11 @@ fn delete_agency(state: State<AppState>, id: i64) -> Result<(), String> {
     drop(stmt);
     for tx_id in &tx_ids {
         delete_ledger_entries(&db, "agency_transaction", &tx_id.to_string())?;
+        // Phase 14: Delete transaction profits by source fields
+        db.execute(
+            "DELETE FROM partner_transactions WHERE source_type = 'agency_transaction' AND source_id = ?1",
+            [tx_id.to_string()],
+        ).map_err(|e| e.to_string())?;
     }
 
     db.execute(
@@ -5790,7 +6068,8 @@ fn add_agency_transaction(
         )
         .trim()
         .replace("  ", " ");
-        distribute_to_partners_50(
+        // Phase 14: Use source fields for transaction profit
+        distribute_to_partners_50_with_effects(
             &db,
             amount,
             &curr,
@@ -5798,6 +6077,12 @@ fn add_agency_transaction(
             "قاصه",
             "ايداع ارباح وكالة",
             &agency_note,
+            "agency_transaction",
+            &tx_id.to_string(),
+            "profit_recognition",
+            false, // affects_qasa
+            false, // affects_partner_cash
+            true,  // affects_profit
         )?;
     }
 
@@ -5808,7 +6093,7 @@ fn add_agency_transaction(
 fn delete_agency_transaction(state: State<AppState>, id: i64) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    let (agency_id, tx_date, tx_type): (i64, String, String) = db
+    let (agency_id, _tx_date, _tx_type): (i64, String, String) = db
         .query_row(
             "SELECT agency_id, date, type_ FROM agency_transactions WHERE id = ?1",
             [id],
@@ -5816,38 +6101,38 @@ fn delete_agency_transaction(state: State<AppState>, id: i64) -> Result<(), Stri
         )
         .map_err(|e| e.to_string())?;
 
+    // Phase 14: Delete by source fields instead of name/date/notes
+    // حذف حركات القيد في دفتر الأستاذ
+    delete_ledger_entries(&db, "agency_transaction", &id.to_string())?;
+
+    // Delete profit rows for this specific transaction
+    db.execute(
+        "DELETE FROM partner_transactions WHERE source_type = 'agency_transaction' AND source_id = ?1",
+        [id.to_string()],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Also delete legacy rows that might not have source fields
     let (old_agent_name, new_agent_name): (String, String) = db
         .query_row(
             "SELECT old_agent_name, new_agent_name FROM agencies WHERE id = ?1",
             [agency_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .map_err(|e| e.to_string())?;
-
+        .unwrap_or_default();
     let agency_note = format!("وكالة {} {}", old_agent_name.trim(), new_agent_name.trim())
         .trim()
         .replace("  ", " ");
-
-    let agency_profit_note = format!(
+    let agency_profit_note_str = format!(
         "ايداع ارباح وكالة {} {}",
         old_agent_name.trim(),
         new_agent_name.trim()
     )
     .trim()
     .replace("  ", " ");
-
-    let partner_tx_type = if tx_type.trim() == "ايداع" {
-        "ايداع وكالة"
-    } else {
-        "سحب وكالة"
-    };
-
-    // حذف حركات القيد في دفتر الأستاذ
-    delete_ledger_entries(&db, "agency_transaction", &id.to_string())?;
-
     db.execute(
-        "DELETE FROM partner_transactions WHERE (type = ?1 AND notes = ?2 AND date = ?3) OR (type = 'ايداع ارباح وكالة' AND notes = ?4 AND date = ?5)",
-        params![partner_tx_type, agency_note, tx_date.trim(), agency_profit_note, tx_date.trim()],
+        "DELETE FROM partner_transactions WHERE source_type IS NULL AND (notes = ?1 OR notes = ?2)",
+        params![&agency_note, &agency_profit_note_str],
     )
     .map_err(|e| e.to_string())?;
 
@@ -5866,35 +6151,79 @@ fn get_financial_summary(
     payment_type: Option<String>,
 ) -> Result<FinancialSummary, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    recalculate_all_partners(&db)?;
+    // NOTE: Read-only function — must NOT call recalculate_all_partners or any write operation
     let payment_type = payment_type.map(|pt| pt.trim().to_string());
 
-    let partner_balance = |currency: &str, is_safe: bool| -> f64 {
-        let sql = if is_safe {
-            "SELECT COALESCE(SUM(CASE 
-                WHEN type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%' OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%' OR type LIKE 'تسوية%' OR type LIKE 'تسديد%' THEN amount
-                WHEN type LIKE 'سحب%' OR type LIKE 'باقي%' THEN -amount
+    // Phase 4: Calculate qasa (partners + investors) and cash (partners only) using affects_* flags
+    let qasa_iqd: f64 = db.query_row(
+        "SELECT COALESCE(SUM(
+            CASE
+                WHEN (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                      OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                     AND type NOT LIKE 'تحويل%' THEN amount
+                WHEN (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                     AND type NOT LIKE 'تحويل%' THEN -amount
                 ELSE 0
-             END), 0.0)
-             FROM partner_transactions
-             WHERE (kind = 'شريك' OR kind = 'مستثمر') AND COALESCE(currency, 'IQD') = ?1 AND type NOT LIKE '%تحويل%'"
-        } else {
-            "SELECT COALESCE(SUM(CASE 
-                WHEN type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%' OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%' OR type LIKE 'تسوية%' OR type LIKE 'تسديد%' THEN amount
-                WHEN type LIKE 'سحب%' OR type LIKE 'باقي%' THEN -amount
+            END
+         ), 0.0)
+         FROM partner_transactions
+         WHERE affects_qasa = 1 AND kind IN ('شريك', 'مستثمر') AND COALESCE(currency, 'IQD') = 'IQD'",
+        [],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
+    let qasa_usd: f64 = db.query_row(
+        "SELECT COALESCE(SUM(
+            CASE
+                WHEN (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                      OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                     AND type NOT LIKE 'تحويل%' THEN amount
+                WHEN (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                     AND type NOT LIKE 'تحويل%' THEN -amount
                 ELSE 0
-             END), 0.0)
-             FROM partner_transactions
-             WHERE kind = 'شريك' AND COALESCE(currency, 'IQD') = ?1 AND type NOT LIKE '%تحويل%'"
-        };
-        db.query_row(sql, [currency], |row| row.get(0)).unwrap_or(0.0)
-    };
+            END
+         ), 0.0)
+         FROM partner_transactions
+         WHERE affects_qasa = 1 AND kind IN ('شريك', 'مستثمر') AND COALESCE(currency, 'IQD') = 'USD'",
+        [],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
 
-    // 1. الكاش — أموال الشريكين فقط (Instructions §7, §9)
-    // §7: القاصة تمثل فقط تحركات حسابات الشريكين
-    // §9: الكاش ← قسم القاصة → تبويب الكاش
-    let cash_iqd = partner_balance("IQD", false);
-    let cash_usd = partner_balance("USD", false);
+    let cash_iqd: f64 = db.query_row(
+        "SELECT COALESCE(SUM(
+            CASE
+                WHEN (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                      OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                     AND type NOT LIKE 'تحويل%' THEN amount
+                WHEN (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                     AND type NOT LIKE 'تحويل%' THEN -amount
+                ELSE 0
+            END
+         ), 0.0)
+         FROM partner_transactions
+         WHERE affects_partner_cash = 1 AND kind = 'شريك' AND COALESCE(currency, 'IQD') = 'IQD'",
+        [],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
+    let cash_usd: f64 = db.query_row(
+        "SELECT COALESCE(SUM(
+            CASE
+                WHEN (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                      OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                     AND type NOT LIKE 'تحويل%' THEN amount
+                WHEN (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                     AND type NOT LIKE 'تحويل%' THEN -amount
+                ELSE 0
+            END
+         ), 0.0)
+         FROM partner_transactions
+         WHERE affects_partner_cash = 1 AND kind = 'شريك' AND COALESCE(currency, 'IQD') = 'USD'",
+        [],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
 
     // 2. Inventory Value — from ledger entries. Car purchases, including cash purchases,
     // are recorded in record_car_ledger_entries(), so adding cars.purchase_price here
@@ -5983,8 +6312,8 @@ fn get_financial_summary(
         |row| row.get(0),
     ).unwrap_or(0.0);
 
-    let net_capital_iqd = partner_balance("IQD", false);
-    let net_capital_usd = partner_balance("USD", false);
+    let net_capital_iqd = cash_iqd;
+    let net_capital_usd = cash_usd;
 
     // 8. Profits since the first day of the month or the latest manual reset.
     let (current_date, current_time) = now_datetime();
@@ -5996,6 +6325,8 @@ fn get_financial_summary(
     Ok(FinancialSummary {
         cash_iqd,
         cash_usd,
+        qasa_iqd,
+        qasa_usd,
         inventory_value_iqd,
         inventory_value_usd,
         total_investments_iqd,
@@ -6069,11 +6400,12 @@ fn calculate_profit_totals_since(
     start_date: &str,
     _start_time: &str,
 ) -> Result<(f64, f64), String> {
+    // Phase 9: Use affects_profit = 1 instead of type names
     let realized_profit_iqd: f64 = db.query_row(
         "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
          WHERE kind = 'شريك' AND COALESCE(currency, 'IQD') = 'IQD'
-           AND type IN ('ايداع ارباح سيارة', 'ايداع ارباح وكالة')
-           AND (date > ?1 OR date = ?1)",
+           AND affects_profit = 1
+           AND (date > ?1 OR (date = ?1))",
         [start_date],
         |row| row.get(0),
     ).unwrap_or(0.0);
@@ -6081,17 +6413,18 @@ fn calculate_profit_totals_since(
     let realized_profit_usd: f64 = db.query_row(
         "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
          WHERE kind = 'شريك' AND COALESCE(currency, 'IQD') = 'USD'
-           AND type IN ('ايداع ارباح سيارة', 'ايداع ارباح وكالة')
-           AND (date > ?1 OR date = ?1)",
+           AND affects_profit = 1
+           AND (date > ?1 OR (date = ?1))",
         [start_date],
         |row| row.get(0),
     ).unwrap_or(0.0);
 
+    // Phase 9: Only general expenses (not linked to a car)
     let general_expenses_iqd: f64 = db.query_row(
         "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
          WHERE COALESCE(currency, 'IQD') = 'IQD'
            AND (car_number IS NULL OR car_number = '')
-           AND (date > ?1 OR date = ?1)",
+           AND (date > ?1 OR (date = ?1))",
         [start_date],
         |row| row.get(0),
     ).unwrap_or(0.0);
@@ -6100,7 +6433,7 @@ fn calculate_profit_totals_since(
         "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
          WHERE COALESCE(currency, 'IQD') = 'USD'
            AND (car_number IS NULL OR car_number = '')
-           AND (date > ?1 OR date = ?1)",
+           AND (date > ?1 OR (date = ?1))",
         [start_date],
         |row| row.get(0),
     ).unwrap_or(0.0);
@@ -6171,21 +6504,20 @@ fn get_profit_distribution_summary(
 
     let mut partners = Vec::new();
     for name in partners_list {
-        // Query IQD profit from partner_transactions directly (car profits + agency profits)
+        // Phase 9: Use affects_profit = 1 instead of type names
         let profit_iqd: f64 = db.query_row(
             "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
              WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'IQD'
-               AND type IN ('ايداع ارباح سيارة', 'ايداع ارباح وكالة')
+               AND affects_profit = 1
                AND date >= ?2 AND date <= ?3",
             params![&name, &start, &end],
             |row| row.get(0),
         ).unwrap_or(0.0);
 
-        // Query USD profit from partner_transactions directly (car profits + agency profits)
         let profit_usd: f64 = db.query_row(
             "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
              WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'USD'
-               AND type IN ('ايداع ارباح سيارة', 'ايداع ارباح وكالة')
+               AND affects_profit = 1
                AND date >= ?2 AND date <= ?3",
             params![&name, &start, &end],
             |row| row.get(0),
@@ -6220,9 +6552,11 @@ fn get_profit_distribution_summary(
         });
     }
 
+    // Phase 9: Only general expenses (not linked to a car)
     let expenses_iqd: f64 = db.query_row(
         "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
          WHERE COALESCE(currency, 'IQD') = 'IQD'
+           AND (car_number IS NULL OR car_number = '')
            AND date >= ?1 AND date <= ?2",
         params![&start, &end],
         |row| row.get(0),
@@ -6231,6 +6565,7 @@ fn get_profit_distribution_summary(
     let expenses_usd: f64 = db.query_row(
         "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
          WHERE COALESCE(currency, 'IQD') = 'USD'
+           AND (car_number IS NULL OR car_number = '')
            AND date >= ?1 AND date <= ?2",
         params![&start, &end],
         |row| row.get(0),
@@ -6477,6 +6812,207 @@ fn deduct_from_partners_5050(
     notes: &str,
 ) -> Result<(), String> {
     distribute_to_partners_50(db, amount, currency, date, payment_type, tx_type, notes)
+}
+
+// ==================== PHASE 2: CENTRALIZED PARTNER TRANSACTION HELPERS ====================
+
+#[allow(clippy::too_many_arguments)]
+fn insert_partner_transaction_with_effects(
+    db: &Connection,
+    partner_name: &str,
+    kind: &str,
+    type_: &str,
+    amount: f64,
+    date: &str,
+    payment_type: &str,
+    notes: &str,
+    currency: &str,
+    source_type: &str,
+    source_id: &str,
+    source_role: &str,
+    affects_qasa: bool,
+    affects_partner_cash: bool,
+    affects_profit: bool,
+) -> Result<i64, String> {
+    if amount <= 0.0 {
+        return Ok(0);
+    }
+
+    db.execute(
+        "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, ?2)",
+        params![partner_name.trim(), kind.trim()],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let time_str = db
+        .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .unwrap_or_else(|_| "00:00".to_string());
+
+    db.execute(
+        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        params![
+            partner_name.trim(),
+            kind.trim(),
+            type_.trim(),
+            amount,
+            date.trim(),
+            &time_str,
+            notes.trim(),
+            currency.trim(),
+            payment_type.trim(),
+            source_type.trim(),
+            source_id.trim(),
+            source_role.trim(),
+            affects_qasa as i32,
+            affects_partner_cash as i32,
+            affects_profit as i32,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let tx_id = db.last_insert_rowid();
+
+    // Ledger entry for partner/investor transactions
+    record_partner_ledger_entries(db, tx_id)?;
+    recalculate_partner_total(db, partner_name.trim(), kind.trim())?;
+
+    Ok(tx_id)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn distribute_to_partners_50_with_effects(
+    db: &Connection,
+    amount: f64,
+    currency: &str,
+    date: &str,
+    payment_type: &str,
+    tx_type: &str,
+    notes: &str,
+    source_type: &str,
+    source_id: &str,
+    source_role: &str,
+    affects_qasa: bool,
+    affects_partner_cash: bool,
+    affects_profit: bool,
+) -> Result<(), String> {
+    if amount <= 0.0 {
+        return Ok(());
+    }
+    let per_partner = amount / 2.0;
+    for p_name in &["أمير".to_string(), "منتصر".to_string()] {
+        insert_partner_transaction_with_effects(
+            db,
+            p_name,
+            "شريك",
+            tx_type,
+            per_partner,
+            date,
+            payment_type,
+            notes,
+            currency,
+            source_type,
+            source_id,
+            source_role,
+            affects_qasa,
+            affects_partner_cash,
+            affects_profit,
+        )?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn deduct_from_partners_5050_with_effects(
+    db: &Connection,
+    amount: f64,
+    currency: &str,
+    date: &str,
+    payment_type: &str,
+    tx_type: &str,
+    notes: &str,
+    source_type: &str,
+    source_id: &str,
+    source_role: &str,
+    affects_qasa: bool,
+    affects_partner_cash: bool,
+    affects_profit: bool,
+) -> Result<(), String> {
+    distribute_to_partners_50_with_effects(
+        db, amount, currency, date, payment_type, tx_type, notes,
+        source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit,
+    )
+}
+
+// ==================== PHASE 6: PROFIT CAP FUNCTIONS ====================
+
+fn calculate_car_total_profit(db: &Connection, car_number: &str) -> Result<f64, String> {
+    let car_info: Result<(f64, f64, String, String), rusqlite::Error> = db.query_row(
+        "SELECT purchase_price, selling_price, COALESCE(currency, 'IQD'), COALESCE(sale_currency, 'IQD')
+         FROM cars WHERE car_number = ?1",
+        [car_number],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    );
+
+    let (purchase_price, selling_price, purchase_currency, sale_currency) = match car_info {
+        Ok(info) => info,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(0.0),
+        Err(e) => return Err(e.to_string()),
+    };
+
+    if purchase_currency != sale_currency {
+        return Ok(0.0);
+    }
+
+    let expenses_sum: f64 = db.query_row(
+        "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+        [car_number],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
+
+    let total_cost = purchase_price + expenses_sum;
+    Ok(selling_price - total_cost)
+}
+
+fn get_recognized_profit_for_car(db: &Connection, car_number: &str) -> Result<f64, String> {
+    let pattern = format!("%#بيع_سيارة_{}%", car_number);
+    let recognized: f64 = db.query_row(
+        "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+         WHERE kind = 'شريك' AND affects_profit = 1 AND type = 'ايداع ارباح سيارة'
+           AND notes LIKE ?1",
+        [&pattern],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
+    Ok(recognized)
+}
+
+fn calculate_customer_payment_profit_capped(
+    db: &Connection,
+    car_number: &str,
+    payment_amount: f64,
+    payment_currency: &str,
+) -> Result<f64, String> {
+    let theoretical_profit = calculate_customer_payment_profit(db, car_number, payment_amount, payment_currency)?;
+    if theoretical_profit <= 0.0 {
+        return Ok(0.0);
+    }
+
+    let total_profit = calculate_car_total_profit(db, car_number)?;
+    if total_profit <= 0.0 {
+        return Ok(0.0);
+    }
+
+    // recognized profit from both partners combined = company profit
+    let recognized = get_recognized_profit_for_car(db, car_number)?;
+    let remaining = total_profit - recognized;
+
+    if remaining <= 0.0 {
+        return Ok(0.0);
+    }
+
+    Ok(theoretical_profit.min(remaining))
 }
 
 // ==================== COMPANY SETTLEMENT THROUGH FUNDER ====================

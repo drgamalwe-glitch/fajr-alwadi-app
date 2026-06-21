@@ -156,6 +156,8 @@ export type TabId = "dashboard" | "company-status" | "cars" | "partners-financia
 export interface FinancialSummary {
   cash_iqd: number;
   cash_usd: number;
+  qasa_iqd: number;
+  qasa_usd: number;
   inventory_value_iqd: number;
   inventory_value_usd: number;
   total_investments_iqd: number;

@@ -67,8 +67,9 @@ export function CompanyStatusTab({
     }
   });
 
-  const netCashIqd = sharikPartners.reduce((sum, p) => sum + (p.iqd_balance ?? 0), 0);
-  const netCashUsd = sharikPartners.reduce((sum, p) => sum + (p.usd_balance ?? 0), 0);
+  // Phase 4: Use cash_iqd/cash_usd from summary (partner movements only)
+  const netCashIqd = summary.cash_iqd;
+  const netCashUsd = summary.cash_usd;
 
   const companyValueIqd = (netCashIqd + summary.inventory_value_iqd + receivablesIqd) - liabilitiesIqd;
   const companyValueUsd = (netCashUsd + summary.inventory_value_usd + receivablesUsd) - liabilitiesUsd;
