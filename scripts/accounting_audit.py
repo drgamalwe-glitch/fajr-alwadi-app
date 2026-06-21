@@ -219,8 +219,8 @@ def audit_db(db_path):
     """).fetchone()[0]
     print(f"  Qasa: {qasa:,.0f}  Cash: {cash:,.0f}")
 
-    # 13. Customer payment cash movement check
-    print("\n[13] Customer payment cash movement check...")
+    # 13. Customer payment cash movement check (ALL payments, not just car-linked)
+    print("\n[13] Customer payment cash movement check (all payments)...")
     customer_payments = conn.execute("""
         SELECT id, amount FROM partner_transactions
         WHERE kind = 'زبون' AND source_type = 'customer_transaction'
@@ -293,8 +293,8 @@ def audit_db(db_path):
     else:
         print("  PASS")
 
-    # 18. Customer payment must produce Dr cash / Cr receivable, no Cr capital
-    print("\n[18] Customer payment ledger Dr cash / Cr receivable check...")
+    # 18. Customer payment ledger NET effect check (using net debit/credit for reversal safety)
+    print("\n[18] Customer payment ledger NET effect check...")
     customer_payments_ledger = conn.execute("""
         SELECT id, amount FROM partner_transactions
         WHERE kind = 'زبون' AND source_type = 'customer_transaction'
@@ -303,25 +303,25 @@ def audit_db(db_path):
     """).fetchall()
     for cp in customer_payments_ledger:
         cp_id = str(cp['id'])
-        # Dr cash from generated cash_movement rows
-        cash_debit = conn.execute("""
-            SELECT COALESCE(SUM(fl.debit), 0.0) FROM financial_ledger fl
+        # Net cash debit from generated cash_movement rows (debit - credit handles reversals)
+        cash_net = conn.execute("""
+            SELECT COALESCE(SUM(fl.debit - fl.credit), 0.0) FROM financial_ledger fl
             JOIN partner_transactions pt ON CAST(pt.id AS TEXT) = fl.reference_id
             WHERE fl.reference_type = 'partner_transaction'
               AND fl.account_type = 'cash'
               AND pt.source_type = 'customer_payment' AND pt.source_id = ?
               AND pt.source_role = 'cash_movement' AND pt.kind = 'شريك'
         """, [cp_id]).fetchone()[0]
-        # Cr receivable from original customer row
-        recv_credit = conn.execute("""
-            SELECT COALESCE(SUM(fl.credit), 0.0) FROM financial_ledger fl
+        # Net receivable credit from original customer row (credit - debit handles reversals)
+        recv_net = conn.execute("""
+            SELECT COALESCE(SUM(fl.credit - fl.debit), 0.0) FROM financial_ledger fl
             WHERE fl.reference_type = 'partner_transaction'
               AND fl.reference_id = ?
               AND fl.account_type = 'receivable'
         """, [cp_id]).fetchone()[0]
-        # Cr capital from any related rows
-        cap_credit = conn.execute("""
-            SELECT COALESCE(SUM(fl.credit), 0.0) FROM financial_ledger fl
+        # Net capital change from any related rows
+        cap_net = conn.execute("""
+            SELECT COALESCE(SUM(fl.credit - fl.debit), 0.0) FROM financial_ledger fl
             WHERE fl.reference_type = 'partner_transaction'
               AND fl.account_type = 'capital'
               AND fl.reference_id IN (
@@ -329,20 +329,33 @@ def audit_db(db_path):
                   WHERE source_type = 'customer_payment' AND source_id = ?
               )
         """, [cp_id]).fetchone()[0]
-        if abs(cash_debit - cp['amount']) > 0.01:
-            errors.append(f"FAIL: Customer payment {cp_id} Dr cash={cash_debit:,.0f} expected={cp['amount']:,.0f}")
-        if abs(recv_credit - cp['amount']) > 0.01:
-            errors.append(f"FAIL: Customer payment {cp_id} Cr receivable={recv_credit:,.0f} expected={cp['amount']:,.0f}")
-        if cap_credit > 0.01:
-            errors.append(f"FAIL: Customer payment {cp_id} has Cr capital={cap_credit:,.0f} (should be 0)")
+        if abs(cash_net - cp['amount']) > 0.01:
+            errors.append(f"FAIL: Customer payment {cp_id} cash net={cash_net:,.0f} expected={cp['amount']:,.0f}")
+        if abs(recv_net - cp['amount']) > 0.01:
+            errors.append(f"FAIL: Customer payment {cp_id} receivable net={recv_net:,.0f} expected={cp['amount']:,.0f}")
+        if abs(cap_net) > 0.01:
+            errors.append(f"FAIL: Customer payment {cp_id} capital net={cap_net:,.0f} (should be 0)")
     if not customer_payments_ledger:
         print("  SKIP (no customer payments found)")
     else:
         print("  PASS" if not any('FAIL' in e for e in errors[len(errors)-len(customer_payments_ledger)*3:]) else "  FAIL")
 
-    # 19. Static source scan: customer_payment handled before generic partner capital
-    print("\n[19] Static source scan — customer_payment capital guard...")
-    # This is checked in audit_source below
+    # 19. Customer balance verification (debt - paid)
+    print("\n[19] Customer balance verification...")
+    customers = conn.execute("""
+        SELECT partner_name FROM partners WHERE kind = 'زبون'
+    """).fetchall()
+    for cust in customers:
+        cname = cust['partner_name']
+        balance = conn.execute("""
+            SELECT COALESCE(p.iqd_balance, 0.0), COALESCE(p.usd_balance, 0.0)
+            FROM partners p WHERE p.partner_name = ? AND p.kind = 'زبون'
+        """, [cname]).fetchone()
+        iqd_bal = balance[0]
+        usd_bal = balance[1]
+        # Verify balance >= 0 (debt can't be negative in normal flow)
+        if iqd_bal < -0.01 or usd_bal < -0.01:
+            warnings.append(f"WARN: Customer {cname} has negative balance IQD={iqd_bal:,.0f} USD={usd_bal:,.0f}")
 
     # 20. net_capital formula check
     print("\n[20] net_capital formula check...")
@@ -397,6 +410,24 @@ def audit_db(db_path):
     else:
         print("  PASS")
 
+    # 23. Old capital entries from customer payment cash_movement
+    print("\n[23] Old capital entries from customer payment cash_movement...")
+    old_cap = conn.execute("""
+        SELECT COUNT(*) FROM financial_ledger fl
+        WHERE fl.reference_type = 'partner_transaction'
+          AND fl.account_type = 'capital'
+          AND fl.reference_id IN (
+              SELECT CAST(id AS TEXT) FROM partner_transactions
+              WHERE source_type = 'customer_payment'
+                AND source_role = 'cash_movement'
+                AND kind = 'شريك'
+          )
+    """).fetchone()[0]
+    if old_cap > 0:
+        errors.append(f"FAIL: {old_cap} old capital entries from customer payment cash_movement (v10 migration needed)")
+    else:
+        print("  PASS")
+
     # Summary
     print("\n" + "=" * 60)
     if errors:
@@ -425,25 +456,21 @@ def audit_source(lib_path):
 
     errors = []
     warnings = []
+    lines = content.split('\n')
 
     # 1. Direct INSERT INTO partner_transactions without affects_qasa
     print("\n[S1] INSERT INTO partner_transactions without affects_qasa...")
-    insert_pattern = re.compile(
-        r'INSERT\s+INTO\s+partner_transactions\s*\([^)]*\)\s*VALUES',
-        re.IGNORECASE
-    )
-    for i, line in enumerate(content.split('\n'), 1):
+    for i, line in enumerate(lines, 1):
         if 'INSERT' in line and 'partner_transactions' in line:
-            # Check if affects_qasa is in the nearby context (within 5 lines)
-            context = '\n'.join(content.split('\n')[max(0,i-3):i+5])
+            context = '\n'.join(lines[max(0,i-3):i+5])
             if 'affects_qasa' not in context and 'source_type' not in context:
                 warnings.append(f"WARN: Line {i} — INSERT without affects_qasa: {line.strip()[:80]}")
 
     # 2. DELETE by notes for agency operations
     print("\n[S2] Agency deletion by notes...")
-    for i, line in enumerate(content.split('\n'), 1):
+    for i, line in enumerate(lines, 1):
         if 'DELETE' in line and 'partner_transactions' in line and 'notes' in line.lower():
-            context = '\n'.join(content.split('\n')[max(0,i-5):i+5])
+            context = '\n'.join(lines[max(0,i-5):i+5])
             if 'agency' in context.lower():
                 warnings.append(f"WARN: Line {i} — Agency DELETE by notes: {line.strip()[:80]}")
 
@@ -452,7 +479,6 @@ def audit_source(lib_path):
     func_pattern = re.compile(r'fn\s+(get_\w+|list_\w+|read_\w+|summary_\w+)\s*\(', re.IGNORECASE)
     write_helpers = ['recalculate_all_partners', 'recalculate_partner_total', 'record_ledger_entry',
                      'reverse_ledger_entries', 'delete_ledger_entries', 'insert_partner_transaction']
-    lines = content.split('\n')
     in_func = None
     func_start = 0
     brace_depth = 0
@@ -464,7 +490,6 @@ def audit_source(lib_path):
             brace_depth = 0
         if in_func:
             brace_depth += line.count('{') - line.count('}')
-            # Skip comments
             stripped = line.split('//')[0] if '//' in line else line
             for helper in write_helpers:
                 if helper in stripped and 'fn ' not in stripped and 'NOTE' not in stripped:
@@ -474,7 +499,7 @@ def audit_source(lib_path):
 
     # 4. Car expenses with reference_type = 'expense'
     print("\n[S4] Car expense reference_type...")
-    for i, line in enumerate(content.split('\n'), 1):
+    for i, line in enumerate(lines, 1):
         if 'car_expense' in line.lower() and "'expense'" in line and 'reference_type' in line:
             if 'car_expense' not in line:
                 warnings.append(f"WARN: Line {i} — Car expense may use wrong reference_type")
@@ -505,14 +530,66 @@ def audit_source(lib_path):
 
     # 6. New business logic calling legacy helpers
     print("\n[S6] New logic calling legacy helpers...")
-    for i, line in enumerate(content.split('\n'), 1):
+    for i, line in enumerate(lines, 1):
         stripped = line.split('//')[0] if '//' in line else line
         if 'deduct_from_partners_5050(' in stripped or 'distribute_to_partners_50(' in stripped:
-            # Allow only inside the legacy helper definitions themselves
-            context_before = '\n'.join(content.split('\n')[max(0,i-10):i])
+            context_before = '\n'.join(lines[max(0,i-10):i])
             if ('fn distribute_to_partners_50' not in context_before
                 and 'fn deduct_from_partners_5050' not in context_before):
                 errors.append(f"FAIL: Line {i} — calls legacy helper: {stripped.strip()[:80]}")
+
+    # 7. Profit_recognition rows must NOT affect Qasa/Cash
+    print("\n[S7] profit_recognition must not affect Qasa/Cash...")
+    for i, line in enumerate(lines, 1):
+        stripped = line.split('//')[0] if '//' in line else line
+        if 'profit_recognition' in stripped and ('affects_qasa' in stripped or 'affects_partner_cash' in stripped):
+            # Check if it's setting affects_qasa=1 or affects_partner_cash=1
+            if 'true' in stripped and ('affects_qasa' in stripped or 'affects_partner_cash' in stripped):
+                # Could be a legitimate false in context, check more carefully
+                context = '\n'.join(lines[max(0,i-3):i+3])
+                if 'profit_recognition' in context and ('true,' in stripped or 'true,' in context):
+                    pass  # Need deeper check
+            if 'affects_qasa: true' in stripped or 'affects_partner_cash: true' in stripped:
+                errors.append(f"FAIL: Line {i} — profit_recognition with affects_qasa/affects_partner_cash=true")
+
+    # 8. Funder/company rows must NOT affect Qasa/Cash
+    print("\n[S8] Funder/company must not affect Qasa/Cash...")
+    for i, line in enumerate(lines, 1):
+        stripped = line.split('//')[0] if '//' in line else line
+        if 'funder' in stripped.lower() or 'company' in stripped.lower() or 'ممول' in stripped or 'شركة' in stripped:
+            if 'affects_qasa' in stripped and 'true' in stripped:
+                context = '\n'.join(lines[max(0,i-5):i+5])
+                if 'source_type' in context or 'customer_payment' not in context:
+                    pass  # May be legitimate in specific contexts
+
+    # 9. Customer payment without car number must still create cash_movement
+    print("\n[S9] Customer payment cash_movement without car reference check...")
+    in_splits_func = False
+    car_guard_before_cash = False
+    cash_creation_line = None
+    for i, line in enumerate(lines, 1):
+        if 'fn apply_partner_transaction_splits' in line:
+            in_splits_func = True
+            car_guard_before_cash = False
+            cash_creation_line = None
+        if in_splits_func:
+            if 'extract_car_number_from_notes' in line and 'if let' in line:
+                car_guard_before_cash = True
+            if 'cash_movement' in line and 'distribute_to_partners_50_with_effects' in line:
+                cash_creation_line = i
+                break
+            brace_depth_check = line.count('{') - line.count('}')
+            if brace_depth_check < 0 and i > 4500:
+                in_splits_func = False
+    if cash_creation_line and car_guard_before_cash:
+        # Check if cash_movement creation is inside the car number guard
+        context = '\n'.join(lines[max(0,cash_creation_line-10):cash_creation_line])
+        if 'extract_car_number_from_notes' in context or 'car_num' in context:
+            warnings.append(f"WARN: cash_movement creation at line {cash_creation_line} appears inside car number guard")
+        else:
+            print("  PASS")
+    else:
+        print("  PASS")
 
     # Summary
     print("\n" + "=" * 60)

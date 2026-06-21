@@ -671,7 +671,7 @@ export function CarsTab({
           amount: amountPaidNum,
           date: formData.saleDate || todayIsoDate(),
           notes: isInstallmentsOrDue
-            ? `استلام مقدمة سيارة من ${buyerName} رقم الشاصي ${chassisLabel}`
+            ? `استلام مقدمة سيارة من ${buyerName} رقم الشاصي ${chassisLabel} #بيع_سيارة_${formData.num}`
             : `دفعة أولى مستلمة - بيع ${carLabel} #بيع_سيارة_${formData.num}`,
           currency: formData.saleCurrency,
           paymentType: "قاصه",

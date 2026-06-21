@@ -709,6 +709,69 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         let _ = conn.execute("INSERT INTO db_version (version) VALUES (9)", []);
     }
 
+    // Version 10: Clean old capital ledger entries from customer payment cash_movement rows
+    // AND rebuild cash_movement for ALL customer payments (including those without car references)
+    // AND create missing ledger entries for customer payment rows
+    if version < 10 {
+        let _ = conn.execute(
+            "DELETE FROM financial_ledger
+             WHERE reference_type = 'partner_transaction'
+               AND account_type = 'capital'
+               AND reference_id IN (
+                   SELECT CAST(id AS TEXT)
+                   FROM partner_transactions
+                   WHERE source_type = 'customer_payment'
+                     AND source_role = 'cash_movement'
+                     AND kind = 'شريك'
+               )",
+            [],
+        );
+        // Also clean capital entries from legacy 'ايداع دفعات زبائن' type rows
+        let _ = conn.execute(
+            "DELETE FROM financial_ledger
+             WHERE reference_type = 'partner_transaction'
+               AND account_type = 'capital'
+               AND reference_id IN (
+                   SELECT CAST(id AS TEXT)
+                   FROM partner_transactions
+                   WHERE type = 'ايداع دفعات زبائن'
+               )",
+            [],
+        );
+        // Create missing ledger entries for existing customer payment rows
+        // (Cr receivable for the original customer row)
+        let _ = conn.execute(
+            "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
+             SELECT
+                 pt.date,
+                 COALESCE(pt.time, '00:00'),
+                 'receivable',
+                 pt.partner_name,
+                 0.0,
+                 pt.amount,
+                 COALESCE(pt.currency, 'IQD'),
+                 'partner_transaction',
+                 CAST(pt.id AS TEXT),
+                 'ايداع زبون مديونية',
+                 'تخفيض مديونية الزبون ' || pt.partner_name,
+                 pt.notes
+             FROM partner_transactions pt
+             WHERE pt.kind = 'زبون'
+               AND (pt.type LIKE 'ايداع%' OR pt.type LIKE 'إيداع%' OR pt.type LIKE 'مقدمة%'
+                    OR pt.type LIKE 'استلام%' OR pt.type LIKE 'إستلام%' OR pt.type LIKE 'تسديد%')
+               AND NOT EXISTS (
+                   SELECT 1 FROM financial_ledger fl
+                   WHERE fl.reference_type = 'partner_transaction'
+                     AND fl.reference_id = CAST(pt.id AS TEXT)
+                     AND fl.account_type = 'receivable'
+               )",
+            [],
+        );
+        // Rebuild cash_movement for ALL customer payments (including without car references)
+        let _ = rebuild_customer_payment_profit_splits(conn);
+        let _ = conn.execute("INSERT INTO db_version (version) VALUES (10)", []);
+    }
+
     // Performance indexes
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cars_status ON cars(status)",
@@ -2117,20 +2180,8 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
                     ],
                 )?;
             } else {
-                if amount_paid > 0.0 {
-                    conn.execute(
-                        "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-                         VALUES (?1, ?2, 'cash', 'قاصه', ?3, 0.0, ?4, 'car', ?5, 'مقدمة سيارة', ?6, NULL)",
-                        params![
-                            sale_date,
-                            sale_time,
-                            amount_paid,
-                            sale_currency,
-                            car_number,
-                            format!("دفعة نقدية مستلمة بيع سيارة {} ({})", car_name, car_number)
-                        ],
-                    )?;
-                }
+                // Installment/term sale: cash is recorded through customer_payment rows
+                // to avoid double-counting. Only record receivable for remaining amount.
                 if amount_remaining > 0.0 {
                     conn.execute(
                         "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
@@ -2763,7 +2814,7 @@ fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), St
         let s_time = sale_time;
         let buyer_name = buyer_name_opt.unwrap_or_else(|| "مشتري مجهول".to_string());
         let payment_type = payment_type_opt.unwrap_or_else(|| "كاش".to_string());
-        let amount_paid = amount_paid_opt.unwrap_or(selling_price);
+        let _amount_paid = amount_paid_opt.unwrap_or(selling_price);
         let amount_remaining = amount_remaining_opt.unwrap_or(0.0);
 
         let expenses_sum: f64 = db
@@ -2813,40 +2864,11 @@ fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), St
                 None,
             )?;
         } else {
-            // Phase 17: Installment/term sale — gradual profit recognition
-            // Record only amount_paid as cash revenue
-            if amount_paid > 0.0 {
-                record_ledger_entry(
-                    db,
-                    &s_date,
-                    &s_time,
-                    "revenue",
-                    Some(car_number),
-                    0.0,
-                    amount_paid,
-                    &sale_currency,
-                    "car",
-                    car_number,
-                    "بيع سيارة - جزئي",
-                    &format!("إيراد جزئي بيع سيارة {} ({})", car_name, car_number),
-                    None,
-                )?;
-                record_ledger_entry(
-                    db,
-                    &s_date,
-                    &s_time,
-                    "cash",
-                    Some("قاصه"),
-                    amount_paid,
-                    0.0,
-                    &sale_currency,
-                    "car",
-                    car_number,
-                    "مقدمة سيارة",
-                    &format!("مقدمة سيارة {} ({})", car_name, car_number),
-                    None,
-                )?;
-            }
+            // Installment/term sale — gradual profit recognition
+            // Cash is recorded through customer_payment rows to avoid double-counting.
+            // The frontend creates a customer payment row for amount_paid which generates
+            // cash_movement partner rows. The car ledger must NOT also debit cash.
+            // Record receivable for amount_remaining only.
             if amount_remaining > 0.0 {
                 record_ledger_entry(
                     db,
@@ -3221,22 +3243,10 @@ fn add_car(
         }
     }
 
-    // حذف حركات الشراء القديمة (الخلفية والواجهة) ثم إعادة إنشائها حسب نوع الشراء الحالي
-    let new_front_note = format!(
-        "استلام تمويل لشراء سيارة {} {} {}",
-        model.trim(),
-        year.trim(),
-        clean_chassis
-    )
-    .trim()
-    .replace("  ", " ");
-
+    // حذف حركات الشراء القديمة ثم إعادة إنشائها حسب نوع الشراء الحالي (باستخدام حقول المصدر)
     if should_create_purchase_transactions {
-        db.execute(
-            "DELETE FROM partner_transactions WHERE notes = ?1 OR notes = ?2 OR notes = ?3",
-            params![&new_purchase_note, &new_debt_note, &new_front_note],
-        )
-        .map_err(|e| e.to_string())?;
+        // Delete car purchase/sale generated rows by source fields (not notes)
+        delete_generated_car_partner_transactions(&db, &car_number)?;
     }
 
     if should_create_purchase_transactions && purchase_type.as_deref() == Some("كاش") {
@@ -3306,27 +3316,23 @@ fn add_car(
     let profit_note = format!("ايداع ارباح سيارة {} {}", name.trim(), chassis.trim())
         .trim()
         .replace("  ", " ");
-    let down_payment_note = format!("مقدمة بيع سيارة {} {}", name.trim(), chassis.trim())
-        .trim()
-        .replace("  ", " ");
-    let debt_sale_prefix = format!("ارجاع (الكاش + الأرباح) لشراكة سيارة {}", name.trim())
-        .trim()
-        .replace("  ", " ");
 
     if should_create_sale_transactions {
-        db.execute(
-            "DELETE FROM partner_transactions WHERE notes = ?1 OR notes = ?2 OR notes = ?3 OR notes LIKE ?4",
-            params![&sale_note, &profit_note, &down_payment_note, format!("{}%", debt_sale_prefix)],
-        )
-        .map_err(|e| e.to_string())?;
+        // Delete car sale generated rows by source fields (not notes)
+        delete_generated_car_partner_transactions(&db, &car_number)?;
 
-        // Delete any installment profit distributions for this car
-        let profit_inst_pattern = format!("ايداع ارباح سيارة {} {} %", name.trim(), chassis.trim()).trim().replace("  ", " ");
-        db.execute(
-            "DELETE FROM partner_transactions WHERE notes LIKE ?1",
-            [profit_inst_pattern],
-        )
-        .map_err(|e| e.to_string())?;
+        // Also delete customer payment splits for payments linked to this car
+        let car_payment_ids: Vec<i64> = db
+            .prepare("SELECT id FROM partner_transactions WHERE kind = 'زبون' AND notes LIKE ?1")
+            .map_err(|e| e.to_string())?
+            .query_map([format!("%#بيع_سيارة_{}%", car_number)], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        for pid in car_payment_ids {
+            delete_customer_payment_partner_splits(&db, pid)?;
+            delete_customer_payment_profit_splits(&db, pid)?;
+        }
     }
 
     if should_create_sale_transactions {
@@ -3811,6 +3817,14 @@ fn get_unified_accounts(state: State<AppState>) -> Result<Vec<UnifiedAccount>, S
                 "زبون" => {
                     if is_customer_remaining_type(&tx_type) {
                         amount
+                    } else if tx_type.starts_with("ايداع")
+                        || tx_type.starts_with("إيداع")
+                        || tx_type.starts_with("مقدمة")
+                        || tx_type.starts_with("استلام")
+                        || tx_type.starts_with("إستلام")
+                        || tx_type.starts_with("تسديد")
+                    {
+                        -amount
                     } else {
                         continue;
                     }
@@ -4330,6 +4344,32 @@ fn extract_car_number_from_notes(notes: &str) -> Option<String> {
     None
 }
 
+/// Delete generated car-related partner transactions by source fields (not notes).
+/// This deletes rows where source_type IN ('car_purchase','car_sale') AND source_id = car_number.
+/// Also deletes their financial_ledger entries first.
+fn delete_generated_car_partner_transactions(db: &Connection, car_number: &str) -> Result<(), String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT id FROM partner_transactions
+             WHERE source_type IN ('car_purchase', 'car_sale')
+               AND source_id = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let ids: Vec<i64> = stmt
+        .query_map([car_number], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    for tx_id in ids {
+        delete_ledger_entries(db, "partner_transaction", &tx_id.to_string())?;
+        db.execute("DELETE FROM partner_transactions WHERE id = ?1", [tx_id])
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn calculate_customer_payment_profit(
     db: &Connection,
     car_number: &str,
@@ -4387,8 +4427,7 @@ fn rebuild_customer_payment_profit_splits(db: &Connection) -> Result<(), String>
              FROM partner_transactions
              WHERE kind = 'زبون'
                AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
-                    OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
-               AND notes LIKE '%#بيع_سيارة_%'",
+                    OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')",
         )
         .map_err(|e| e.to_string())?;
 
@@ -4416,11 +4455,7 @@ fn rebuild_customer_payment_profit_splits(db: &Connection) -> Result<(), String>
     drop(stmt);
 
     for row in rows {
-        let Some(car_num) = extract_car_number_from_notes(&row.notes) else {
-            continue;
-        };
-
-        // Issue 4: Check if cash_movement exists
+        // Always create cash_movement for every customer payment
         let cash_exists: bool = db
             .query_row(
                 "SELECT COUNT(*) > 0 FROM partner_transactions
@@ -4430,12 +4465,19 @@ fn rebuild_customer_payment_profit_splits(db: &Connection) -> Result<(), String>
             )
             .unwrap_or(false);
 
-        // Issue 4: Create cash_movement if it doesn't exist
         if !cash_exists {
-            let cash_note = format!(
-                "دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
-                row.notes, row.id, car_num
-            );
+            let car_num = extract_car_number_from_notes(&row.notes);
+            let cash_note = if let Some(ref cn) = car_num {
+                format!(
+                    "دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
+                    row.notes, row.id, cn
+                )
+            } else {
+                format!(
+                    "دفعة زبون: {} (رقم حركة دفعة: {})",
+                    row.notes, row.id
+                )
+            };
             distribute_to_partners_50_with_effects(
                 db,
                 row.amount,
@@ -4453,39 +4495,40 @@ fn rebuild_customer_payment_profit_splits(db: &Connection) -> Result<(), String>
             )?;
         }
 
-        // Issue 4: Check if profit_recognition exists
-        let profit_exists: bool = db
-            .query_row(
-                "SELECT COUNT(*) > 0 FROM partner_transactions
-                 WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'profit_recognition' AND kind = 'شريك'",
-                [row.id],
-                |row| row.get(0),
-            )
-            .unwrap_or(false);
+        // Only create profit_recognition when payment is linked to a car
+        if let Some(car_num) = extract_car_number_from_notes(&row.notes) {
+            let profit_exists: bool = db
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM partner_transactions
+                     WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'profit_recognition' AND kind = 'شريك'",
+                    [row.id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
 
-        // Issue 4: Create profit_recognition if it doesn't exist
-        if !profit_exists {
-            let payment_profit = calculate_customer_payment_profit_capped(db, &car_num, row.amount, &row.currency)?;
-            if payment_profit > 0.0 {
-                let profit_note = format!(
-                    "ربح دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
-                    row.notes, row.id, car_num
-                );
-                distribute_to_partners_50_with_effects(
-                    db,
-                    payment_profit,
-                    &row.currency,
-                    &row.date,
-                    "قاصه",
-                    "ايداع ارباح سيارة",
-                    &profit_note,
-                    "customer_payment",
-                    &row.id.to_string(),
-                    "profit_recognition",
-                    false, // affects_qasa
-                    false, // affects_partner_cash
-                    true,  // affects_profit
-                )?;
+            if !profit_exists {
+                let payment_profit = calculate_customer_payment_profit_capped(db, &car_num, row.amount, &row.currency)?;
+                if payment_profit > 0.0 {
+                    let profit_note = format!(
+                        "ربح دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
+                        row.notes, row.id, car_num
+                    );
+                    distribute_to_partners_50_with_effects(
+                        db,
+                        payment_profit,
+                        &row.currency,
+                        &row.date,
+                        "قاصه",
+                        "ايداع ارباح سيارة",
+                        &profit_note,
+                        "customer_payment",
+                        &row.id.to_string(),
+                        "profit_recognition",
+                        false, // affects_qasa
+                        false, // affects_partner_cash
+                        true,  // affects_profit
+                    )?;
+                }
             }
         }
     }
@@ -4553,37 +4596,46 @@ fn apply_partner_transaction_splits(
     );
     if is_customer_payment {
         let notes_str = notes.unwrap_or("");
-        if let Some(car_num) = extract_car_number_from_notes(notes_str) {
-            // Issue 1: Create partner cash movement for the FULL payment amount
-            let cash_exists: bool = db.query_row(
-                "SELECT COUNT(*) > 0 FROM partner_transactions WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'cash_movement' AND kind = 'شريك'",
-                [tx_id],
-                |row| row.get(0),
-            ).unwrap_or(false);
+        let car_num = extract_car_number_from_notes(notes_str);
 
-            if !cash_exists {
-                let cash_note = format!(
+        // Always create cash_movement for real customer payments
+        let cash_exists: bool = db.query_row(
+            "SELECT COUNT(*) > 0 FROM partner_transactions WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'cash_movement' AND kind = 'شريك'",
+            [tx_id],
+            |row| row.get(0),
+        ).unwrap_or(false);
+
+        if !cash_exists {
+            let cash_note = if let Some(ref cn) = car_num {
+                format!(
                     "دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
-                    notes_str, tx_id, car_num
-                );
-                distribute_to_partners_50_with_effects(
-                    db,
-                    amount,
-                    currency,
-                    date,
-                    "قاصه",
-                    "ايداع دفعة زبون",
-                    &cash_note,
-                    "customer_payment",
-                    &tx_id.to_string(),
-                    "cash_movement",
-                    true,  // affects_qasa
-                    true,  // affects_partner_cash
-                    false, // affects_profit
-                )?;
-            }
+                    notes_str, tx_id, cn
+                )
+            } else {
+                format!(
+                    "دفعة زبون: {} (رقم حركة دفعة: {})",
+                    notes_str, tx_id
+                )
+            };
+            distribute_to_partners_50_with_effects(
+                db,
+                amount,
+                currency,
+                date,
+                "قاصه",
+                "ايداع دفعة زبون",
+                &cash_note,
+                "customer_payment",
+                &tx_id.to_string(),
+                "cash_movement",
+                true,  // affects_qasa
+                true,  // affects_partner_cash
+                false, // affects_profit
+            )?;
+        }
 
-            // Issue 1: Create profit recognition rows for the payment profit only
+        // Only create profit_recognition when payment is linked to a car
+        if let Some(ref car_num) = car_num {
             let profit_exists: bool = db.query_row(
                 "SELECT COUNT(*) > 0 FROM partner_transactions WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'profit_recognition' AND kind = 'شريك'",
                 [tx_id],
@@ -4591,7 +4643,7 @@ fn apply_partner_transaction_splits(
             ).unwrap_or(false);
 
             if !profit_exists {
-                let payment_profit = calculate_customer_payment_profit_capped(db, &car_num, amount, currency)?;
+                let payment_profit = calculate_customer_payment_profit_capped(db, car_num, amount, currency)?;
                 if payment_profit > 0.0 {
                     let profit_note = format!(
                         "ربح دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",

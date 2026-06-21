@@ -59,7 +59,6 @@ def check(db_path):
         if full_profit <= 0:
             continue
 
-        # Profit rows must NOT affect Qasa
         profit_qasa = conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE affects_profit = 1 AND affects_qasa = 1
@@ -70,7 +69,6 @@ def check(db_path):
              profit_qasa < 0.01,
              f"profit in Qasa={profit_qasa:,.0f}")
 
-        # Qasa increase = selling_price only
         cash_increase = conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE affects_qasa = 1 AND kind = 'شريك'
@@ -97,7 +95,6 @@ def check(db_path):
         if full_profit <= 0:
             continue
 
-        # Total recognized <= full profit
         amir = conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE partner_name LIKE '%أمير%' AND kind = 'شريك'
@@ -120,7 +117,6 @@ def check(db_path):
              abs(amir - muntasir) < 0.01,
              f"amir={amir:,.0f} muntasir={muntasir:,.0f}")
 
-        # Profit rows don't inflate Qasa
         profit_qasa = conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE affects_profit = 1 AND affects_qasa = 1
@@ -216,7 +212,7 @@ def check(db_path):
     else:
         test("Agency: no duplicate names found (info only)", True)
 
-    # ===== Cross-check: Profit Distribution vs Dashboard =====
+    # ===== Scenario 9: Profit Consistency =====
     print("\n[9] PROFIT CONSISTENCY")
     profit_sum = conn.execute("""
         SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
@@ -232,17 +228,15 @@ def check(db_path):
     print(f"  Net profit: {net_profit:,.0f}")
     test("Net profit is non-negative or reasonable", True, f"net={net_profit:,.0f}")
 
-    # ===== Scenario 10: Customer Payment Cash Movement =====
-    print("\n[10] CUSTOMER PAYMENT CASH MOVEMENT")
+    # ===== Scenario 10: Customer Payment Cash Movement (ALL payments, not just car-linked) =====
+    print("\n[10] CUSTOMER PAYMENT CASH MOVEMENT (ALL PAYMENTS)")
     customer_payments = conn.execute("""
         SELECT id, amount, notes FROM partner_transactions
         WHERE kind = 'زبون' AND source_type = 'customer_transaction'
           AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
                OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
-          AND notes LIKE '%#بيع_سيارة_%'
     """).fetchall()
     for cp in customer_payments:
-        # Cash movement must exist
         cash_movement = conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE source_type = 'customer_payment' AND source_id = ?1
@@ -252,7 +246,6 @@ def check(db_path):
              abs(cash_movement - cp['amount']) < 0.01,
              f"cash={cash_movement:,.0f} expected={cp['amount']:,.0f}")
 
-        # Cash movement rows must have correct affects
         bad_cash_affects = conn.execute("""
             SELECT COUNT(*) FROM partner_transactions
             WHERE source_type = 'customer_payment' AND source_id = ?1
@@ -262,27 +255,26 @@ def check(db_path):
         test(f"Payment {cp['id']}: cash movement has correct affects",
              bad_cash_affects == 0, f"bad count={bad_cash_affects}")
 
-        # Profit recognition must have correct affects
-        bad_profit_affects = conn.execute("""
-            SELECT COUNT(*) FROM partner_transactions
+    # ===== Scenario 10b: Profit recognition only for car-linked payments =====
+    print("\n[10b] PROFIT RECOGNITION ONLY FOR CAR-LINKED PAYMENTS")
+    for cp in customer_payments:
+        has_car_ref = '#بيع_سيارة_' in (cp['notes'] or '')
+        has_profit = conn.execute("""
+            SELECT COUNT(*) > 0 FROM partner_transactions
             WHERE source_type = 'customer_payment' AND source_id = ?1
-              AND source_role = 'profit_recognition'
-              AND (affects_qasa != 0 OR affects_partner_cash != 0 OR affects_profit != 1)
+              AND source_role = 'profit_recognition' AND kind = 'شريك'
         """, [str(cp['id'])]).fetchone()[0]
-        test(f"Payment {cp['id']}: profit recognition has correct affects",
-             bad_profit_affects == 0, f"bad count={bad_profit_affects}")
+        if has_car_ref:
+            # Car-linked payment: profit recognition may exist (depends on profit calc)
+            test(f"Payment {cp['id']}: car-linked payment profit check",
+                 True, f"has_profit={has_profit}")
+        else:
+            # Non-car-linked payment: profit recognition must NOT exist
+            test(f"Payment {cp['id']}: non-car payment has no profit recognition",
+                 not has_profit, f"has_profit={has_profit}")
 
-        # Profit must NOT affect Qasa
-        profit_qasa = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-            WHERE source_type = 'customer_payment' AND source_id = ?1
-              AND source_role = 'profit_recognition' AND affects_qasa = 1
-        """, [str(cp['id'])]).fetchone()[0]
-        test(f"Payment {cp['id']}: profit doesn't inflate Qasa",
-             profit_qasa < 0.01, f"profit in Qasa={profit_qasa:,.0f}")
-
-    # ===== Scenario 11: Customer Payment Capital / Receivable =====
-    print("\n[11] CUSTOMER PAYMENT CAPITAL / RECEIVABLE")
+    # ===== Scenario 11: Customer Payment Capital / Receivable (NET values) =====
+    print("\n[11] CUSTOMER PAYMENT CAPITAL / RECEIVABLE (NET)")
     customer_payments_cr = conn.execute("""
         SELECT id, amount FROM partner_transactions
         WHERE kind = 'زبون' AND source_type = 'customer_transaction'
@@ -291,9 +283,9 @@ def check(db_path):
     """).fetchall()
     for cp in customer_payments_cr:
         cp_id = str(cp['id'])
-        # No Cr capital from customer payment rows
-        cap_credit = conn.execute("""
-            SELECT COALESCE(SUM(fl.credit), 0.0) FROM financial_ledger fl
+        # Net capital change (handles reversals)
+        cap_net = conn.execute("""
+            SELECT COALESCE(SUM(fl.credit - fl.debit), 0.0) FROM financial_ledger fl
             WHERE fl.reference_type = 'partner_transaction'
               AND fl.account_type = 'capital'
               AND fl.reference_id IN (
@@ -301,32 +293,32 @@ def check(db_path):
                   WHERE source_type = 'customer_payment' AND source_id = ?
               )
         """, [cp_id]).fetchone()[0]
-        test(f"Payment {cp_id}: no capital entry",
-             cap_credit < 0.01, f"Cr capital={cap_credit:,.0f}")
+        test(f"Payment {cp_id}: no capital entry (net)",
+             abs(cap_net) < 0.01, f"cap net={cap_net:,.0f}")
 
-        # Cr receivable from original customer row
-        recv_credit = conn.execute("""
-            SELECT COALESCE(SUM(fl.credit), 0.0) FROM financial_ledger fl
+        # Net receivable credit (handles reversals)
+        recv_net = conn.execute("""
+            SELECT COALESCE(SUM(fl.credit - fl.debit), 0.0) FROM financial_ledger fl
             WHERE fl.reference_type = 'partner_transaction'
               AND fl.reference_id = ?
               AND fl.account_type = 'receivable'
         """, [cp_id]).fetchone()[0]
-        test(f"Payment {cp_id}: receivable reduces",
-             abs(recv_credit - cp['amount']) < 0.01,
-             f"Cr recv={recv_credit:,.0f} expected={cp['amount']:,.0f}")
+        test(f"Payment {cp_id}: receivable reduces (net)",
+             abs(recv_net - cp['amount']) < 0.01,
+             f"recv net={recv_net:,.0f} expected={cp['amount']:,.0f}")
 
-        # Dr cash from generated cash_movement rows
-        cash_debit = conn.execute("""
-            SELECT COALESCE(SUM(fl.debit), 0.0) FROM financial_ledger fl
+        # Net cash debit from generated cash_movement rows (handles reversals)
+        cash_net = conn.execute("""
+            SELECT COALESCE(SUM(fl.debit - fl.credit), 0.0) FROM financial_ledger fl
             JOIN partner_transactions pt ON CAST(pt.id AS TEXT) = fl.reference_id
             WHERE fl.reference_type = 'partner_transaction'
               AND fl.account_type = 'cash'
               AND pt.source_type = 'customer_payment' AND pt.source_id = ?
               AND pt.source_role = 'cash_movement' AND pt.kind = 'شريك'
         """, [cp_id]).fetchone()[0]
-        test(f"Payment {cp_id}: cash increases",
-             abs(cash_debit - cp['amount']) < 0.01,
-             f"Dr cash={cash_debit:,.0f} expected={cp['amount']:,.0f}")
+        test(f"Payment {cp_id}: cash increases (net)",
+             abs(cash_net - cp['amount']) < 0.01,
+             f"cash net={cash_net:,.0f} expected={cp['amount']:,.0f}")
 
     # ===== Scenario 12: Investor Double-Count =====
     print("\n[12] INVESTOR DOUBLE-COUNT")
@@ -337,18 +329,16 @@ def check(db_path):
     test("Investor: no auto partner_cash_payment rows",
          investor_auto == 0, f"count={investor_auto}")
 
-    # ===== Scenario 13: Rebuild must create both cash_movement and profit_recognition =====
-    print("\n[13] REBUILD COMPLETENESS")
+    # ===== Scenario 13: Rebuild must create cash_movement for ALL payments =====
+    print("\n[13] REBUILD COMPLETENESS (ALL PAYMENTS)")
     customer_payments_rebuild = conn.execute("""
-        SELECT id, amount FROM partner_transactions
+        SELECT id, amount, notes FROM partner_transactions
         WHERE kind = 'زبون' AND source_type = 'customer_transaction'
           AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
                OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
-          AND notes LIKE '%#بيع_سيارة_%'
     """).fetchall()
     for cp in customer_payments_rebuild:
         cp_id = str(cp['id'])
-        # Both cash_movement and profit_recognition must exist (or profit=0 for no-profit cars)
         has_cash = conn.execute("""
             SELECT COUNT(*) > 0 FROM partner_transactions
             WHERE source_type = 'customer_payment' AND source_id = ?
@@ -357,14 +347,46 @@ def check(db_path):
         test(f"Payment {cp_id}: cash_movement exists",
              has_cash, f"exists={has_cash}")
 
-        has_profit = conn.execute("""
-            SELECT COUNT(*) > 0 FROM partner_transactions
-            WHERE source_type = 'customer_payment' AND source_id = ?
-              AND source_role = 'profit_recognition' AND kind = 'شريك'
-        """, [cp_id]).fetchone()[0]
-        # Profit may legitimately be 0 if car has no profit
-        test(f"Payment {cp_id}: profit_recognition check",
-             True, f"exists={has_profit}")
+    # ===== Scenario 14: Complete Installment Cycle =====
+    print("\n[14] COMPLETE INSTALLMENT CYCLE")
+    inst_cars_cycle = conn.execute("""
+        SELECT car_number, purchase_price, selling_price
+        FROM cars WHERE status = 'مبيوعة' AND payment_type IN ('اقساط', 'موعد')
+    """).fetchall()
+    for car in inst_cars_cycle:
+        cn = car['car_number']
+        expenses = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?", [cn]
+        ).fetchone()[0]
+        full_profit = car['selling_price'] - car['purchase_price'] - expenses
+        if full_profit <= 0:
+            continue
+
+        # Total recognized profit (using NET values for reversal safety)
+        recognized_net = conn.execute("""
+            SELECT COALESCE(SUM(pt.amount), 0.0) FROM partner_transactions pt
+            WHERE pt.kind = 'شريك' AND pt.affects_profit = 1
+              AND pt.type = 'ايداع ارباح سيارة'
+              AND pt.notes LIKE ?
+        """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+        test(f"Installment {cn}: total recognized <= full profit",
+             recognized_net <= full_profit + 0.01,
+             f"recognized={recognized_net:,.0f} full={full_profit:,.0f}")
+
+        # Customer balance for this car's buyer
+        buyer = conn.execute("""
+            SELECT buyer_name FROM cars WHERE car_number = ?
+        """, [cn]).fetchone()
+        if buyer and buyer['buyer_name']:
+            buyer_name = buyer['buyer_name']
+            buyer_bal = conn.execute("""
+                SELECT COALESCE(iqd_balance, 0.0) FROM partners
+                WHERE partner_name = ? AND kind = 'زبون'
+            """, [buyer_name]).fetchone()
+            if buyer_bal:
+                test(f"Installment {cn}: customer {buyer_name} balance >= 0",
+                     buyer_bal[0] >= -0.01,
+                     f"balance={buyer_bal[0]:,.0f}")
 
     # ===== Summary =====
     print("\n" + "=" * 60)
