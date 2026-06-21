@@ -232,6 +232,64 @@ def check(db_path):
     print(f"  Net profit: {net_profit:,.0f}")
     test("Net profit is non-negative or reasonable", True, f"net={net_profit:,.0f}")
 
+    # ===== Scenario 10: Customer Payment Cash Movement =====
+    print("\n[10] CUSTOMER PAYMENT CASH MOVEMENT")
+    customer_payments = conn.execute("""
+        SELECT id, amount, notes FROM partner_transactions
+        WHERE kind = 'زبون' AND source_type = 'customer_transaction'
+          AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+               OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
+          AND notes LIKE '%#بيع_سيارة_%'
+    """).fetchall()
+    for cp in customer_payments:
+        # Cash movement must exist
+        cash_movement = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+            WHERE source_type = 'customer_payment' AND source_id = ?1
+              AND source_role = 'cash_movement' AND kind = 'شريك'
+        """, [str(cp['id'])]).fetchone()[0]
+        test(f"Payment {cp['id']}: cash movement = payment amount",
+             abs(cash_movement - cp['amount']) < 0.01,
+             f"cash={cash_movement:,.0f} expected={cp['amount']:,.0f}")
+
+        # Cash movement rows must have correct affects
+        bad_cash_affects = conn.execute("""
+            SELECT COUNT(*) FROM partner_transactions
+            WHERE source_type = 'customer_payment' AND source_id = ?1
+              AND source_role = 'cash_movement'
+              AND (affects_qasa != 1 OR affects_partner_cash != 1 OR affects_profit != 0)
+        """, [str(cp['id'])]).fetchone()[0]
+        test(f"Payment {cp['id']}: cash movement has correct affects",
+             bad_cash_affects == 0, f"bad count={bad_cash_affects}")
+
+        # Profit recognition must have correct affects
+        bad_profit_affects = conn.execute("""
+            SELECT COUNT(*) FROM partner_transactions
+            WHERE source_type = 'customer_payment' AND source_id = ?1
+              AND source_role = 'profit_recognition'
+              AND (affects_qasa != 0 OR affects_partner_cash != 0 OR affects_profit != 1)
+        """, [str(cp['id'])]).fetchone()[0]
+        test(f"Payment {cp['id']}: profit recognition has correct affects",
+             bad_profit_affects == 0, f"bad count={bad_profit_affects}")
+
+        # Profit must NOT affect Qasa
+        profit_qasa = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+            WHERE source_type = 'customer_payment' AND source_id = ?1
+              AND source_role = 'profit_recognition' AND affects_qasa = 1
+        """, [str(cp['id'])]).fetchone()[0]
+        test(f"Payment {cp['id']}: profit doesn't inflate Qasa",
+             profit_qasa < 0.01, f"profit in Qasa={profit_qasa:,.0f}")
+
+    # ===== Scenario 11: Investor Double-Count =====
+    print("\n[11] INVESTOR DOUBLE-COUNT")
+    investor_auto = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE source_type = 'investor_transaction' AND source_role = 'partner_cash_payment'
+    """).fetchone()[0]
+    test("Investor: no auto partner_cash_payment rows",
+         investor_auto == 0, f"count={investor_auto}")
+
     # ===== Summary =====
     print("\n" + "=" * 60)
     passed_count = sum(1 for _, p, _ in results if p)

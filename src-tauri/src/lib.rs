@@ -1065,15 +1065,15 @@ fn delete_ledger_entries(conn: &Connection, reference_type: &str, reference_id: 
 
 /// Removes 50/50 partner deposit entries created for a customer payment (e.g. تسديد قسط).
 fn delete_customer_payment_partner_splits(db: &Connection, payment_tx_id: i64) -> Result<(), String> {
-    let pattern = format!("%({})%", payment_tx_id);
+    // Issue 6: Use source fields instead of notes LIKE
     let mut stmt = db
         .prepare(
             "SELECT id, partner_name FROM partner_transactions
-             WHERE kind = 'شريك' AND type = 'ايداع دفعات زبائن' AND notes LIKE ?1",
+             WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'cash_movement' AND kind = 'شريك'",
         )
         .map_err(|e| e.to_string())?;
     let rows: Vec<(i64, String)> = stmt
-        .query_map([&pattern], |row| Ok((row.get(0)?, row.get(1)?)))
+        .query_map([payment_tx_id], |row| Ok((row.get(0)?, row.get(1)?)))
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
@@ -1095,15 +1095,15 @@ fn delete_customer_payment_partner_splits(db: &Connection, payment_tx_id: i64) -
 }
 
 fn delete_customer_payment_profit_splits(db: &Connection, payment_tx_id: i64) -> Result<(), String> {
-    let pattern = format!("%(رقم حركة دفعة: {})%", payment_tx_id);
+    // Issue 6: Use source fields instead of notes LIKE
     let mut stmt = db
         .prepare(
             "SELECT id, partner_name FROM partner_transactions
-             WHERE kind = 'شريك' AND type = 'ايداع ارباح سيارة' AND notes LIKE ?1",
+             WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'profit_recognition' AND kind = 'شريك'",
         )
         .map_err(|e| e.to_string())?;
     let rows: Vec<(i64, String)> = stmt
-        .query_map([&pattern], |row| Ok((row.get(0)?, row.get(1)?)))
+        .query_map([payment_tx_id], |row| Ok((row.get(0)?, row.get(1)?)))
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
@@ -1238,11 +1238,17 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
         return Ok(());
     }
 
+    // Issue 3: Read source_role to handle partner_cash_payment rows properly
+    let source_role: String = conn.query_row(
+        "SELECT COALESCE(source_role, '') FROM partner_transactions WHERE id = ?1",
+        [tx_id],
+        |row| row.get(0),
+    ).unwrap_or_default();
+
     if tx_type.starts_with("سحب شراء سيارة")
         || tx_type.starts_with("ايداع بيع سيارة")
         || tx_type.starts_with("مقدمة بيع سيارة")
         || tx_type.starts_with("سحب مصروف")
-        || tx_type.starts_with("سحب تسديد")
         || tx_type.starts_with("ايداع ارباح وكالة")
         || tx_type.starts_with("ايداع ارباح سيارة")
         || tx_type.starts_with("تسديد قسط")
@@ -1256,6 +1262,30 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
         || tx_type.starts_with("إعادة استثمار")
         || notes.contains("توزيع أرباح")
     {
+        return Ok(());
+    }
+
+    // Issue 3: For "سحب تسديد" rows — only process if it's a partner_cash_payment
+    if tx_type.starts_with("سحب تسديد") {
+        if kind == "شريك" && source_role == "partner_cash_payment" && should_create_cash_entry {
+            // Record cash outflow for partner repayment
+            record_ledger_entry(
+                conn,
+                &tx_date,
+                &tx_time,
+                "cash",
+                Some(&payment_type),
+                0.0,
+                amount,
+                &curr,
+                "partner_transaction",
+                &ref_id,
+                "سحب شريك نقدي",
+                &format!("سحب نقدي شريك: {} — {}", p_name, notes),
+                Some(&notes),
+            )
+            .map_err(|e| e.to_string())?;
+        }
         return Ok(());
     }
 
@@ -4136,7 +4166,8 @@ fn distribute_financier_repayment_to_partners(
 
         let commission_partner_note =
             format!("عمولة ممول: {}", financier_name);
-        deduct_from_partners_5050(
+        // Issue 5: Use source-aware helper instead of legacy deduct_from_partners_5050
+        deduct_from_partners_5050_with_effects(
             db,
             commission_amount,
             currency,
@@ -4144,6 +4175,12 @@ fn distribute_financier_repayment_to_partners(
             "قاصه",
             "سحب مصروف",
             &commission_partner_note,
+            "expense",
+            &exp_id.to_string(),
+            "cash_payment",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
+            false, // affects_profit
         )?;
     }
 
@@ -4308,14 +4345,9 @@ fn apply_partner_transaction_splits(
     }
 
     // === 1. Investor Repayment (سحب مستثمر) ===
-    if kind == "مستثمر" && type_.starts_with("سحب") {
-        let partner_note = format!("تسديد مستثمر: {} ({})", partner_name, tx_id);
-        deduct_from_partners_5050_with_effects(
-            db, amount, currency, date, "قاصه", "سحب تسديد", &partner_note,
-            "investor_transaction", &tx_id.to_string(), "partner_cash_payment",
-            true, true, false,
-        )?;
-    }
+    // Issue 2: Do NOT auto-deduct partners for investor withdrawals.
+    // The investor row itself already has affects_qasa=1 which handles the Qasa movement.
+    // Creating partner cash movements would double-count the Qasa reduction.
 
     // === 2. Company Cash Withdrawal (سحب شركة) ===
     let is_company_cash_withdrawal = kind == "شركة"
@@ -4346,7 +4378,7 @@ fn apply_partner_transaction_splits(
         distribute_financier_repayment_to_partners(db, partner_name, amount, date, currency, notes, tx_id)?;
     }
 
-    // === 5. Customer Payments (دفعات الزبائن) — Phase 5: Two separate effects ===
+    // === 5. Customer Payments (دفعات الزبائن) — Two separate effects ===
     let is_customer_payment = kind == "زبون" && (
         type_.starts_with("ايداع")
         || type_.starts_with("إيداع")
@@ -4358,29 +4390,65 @@ fn apply_partner_transaction_splits(
     if is_customer_payment {
         let notes_str = notes.unwrap_or("");
         if let Some(car_num) = extract_car_number_from_notes(notes_str) {
-            // Phase 6: Use capped profit calculation
-            let payment_profit = calculate_customer_payment_profit_capped(db, &car_num, amount, currency)?;
-            if payment_profit > 0.0 {
-                // Effect 2: Profit recognition row — does NOT affect Qasa/Cash
-                let profit_note = format!(
-                    "ربح دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
+            // Issue 1: Create partner cash movement for the FULL payment amount
+            let cash_exists: bool = db.query_row(
+                "SELECT COUNT(*) > 0 FROM partner_transactions WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'cash_movement' AND kind = 'شريك'",
+                [tx_id],
+                |row| row.get(0),
+            ).unwrap_or(false);
+
+            if !cash_exists {
+                let cash_note = format!(
+                    "دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
                     notes_str, tx_id, car_num
                 );
                 distribute_to_partners_50_with_effects(
                     db,
-                    payment_profit,
+                    amount,
                     currency,
                     date,
                     "قاصه",
-                    "ايداع ارباح سيارة",
-                    &profit_note,
+                    "ايداع دفعة زبون",
+                    &cash_note,
                     "customer_payment",
                     &tx_id.to_string(),
-                    "profit_recognition",
-                    false, // affects_qasa
-                    false, // affects_partner_cash
-                    true,  // affects_profit
+                    "cash_movement",
+                    true,  // affects_qasa
+                    true,  // affects_partner_cash
+                    false, // affects_profit
                 )?;
+            }
+
+            // Issue 1: Create profit recognition rows for the payment profit only
+            let profit_exists: bool = db.query_row(
+                "SELECT COUNT(*) > 0 FROM partner_transactions WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'profit_recognition' AND kind = 'شريك'",
+                [tx_id],
+                |row| row.get(0),
+            ).unwrap_or(false);
+
+            if !profit_exists {
+                let payment_profit = calculate_customer_payment_profit_capped(db, &car_num, amount, currency)?;
+                if payment_profit > 0.0 {
+                    let profit_note = format!(
+                        "ربح دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
+                        notes_str, tx_id, car_num
+                    );
+                    distribute_to_partners_50_with_effects(
+                        db,
+                        payment_profit,
+                        currency,
+                        date,
+                        "قاصه",
+                        "ايداع ارباح سيارة",
+                        &profit_note,
+                        "customer_payment",
+                        &tx_id.to_string(),
+                        "profit_recognition",
+                        false, // affects_qasa
+                        false, // affects_partner_cash
+                        true,  // affects_profit
+                    )?;
+                }
             }
         }
     }
@@ -5713,7 +5781,8 @@ fn distribute_to_partners_50(
         )
         .map_err(|e| e.to_string())?;
 
-        // Issue 12: Use safe default source fields for legacy helper
+        // Issue 5: Use unique source_id to prevent collisions
+        let unique_source_id = format!("legacy_{}_{}_{}_{}", p_name, date, &time_str, tx_type.len());
         db.execute(
             "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit)
              VALUES (?1, 'شريك', ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'legacy_distribution', ?9, 'legacy_cash_movement', 1, 1, 0)",
@@ -5726,7 +5795,7 @@ fn distribute_to_partners_50(
                 notes,
                 currency,
                 payment_type,
-                format!("legacy_{}_{}", p_name, date),
+                unique_source_id,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -6297,8 +6366,19 @@ fn get_financial_summary(
         |row| row.get(0),
     ).unwrap_or(0.0);
 
-    let net_capital_iqd = cash_iqd;
-    let net_capital_usd = cash_usd;
+    // Issue 4: Company Value = Cash + Inventory + Receivables - Investors - Funders - Payables
+    let net_capital_iqd = cash_iqd
+        + inventory_value_iqd
+        + total_debtors_iqd
+        - total_investments_iqd
+        - total_funders_iqd
+        - total_payables_iqd;
+    let net_capital_usd = cash_usd
+        + inventory_value_usd
+        + total_debtors_usd
+        - total_investments_usd
+        - total_funders_usd
+        - total_payables_usd;
 
     // 8. Profits since the first day of the month or the latest manual reset.
     let (current_date, current_time) = now_datetime();

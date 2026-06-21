@@ -219,6 +219,94 @@ def audit_db(db_path):
     """).fetchone()[0]
     print(f"  Qasa: {qasa:,.0f}  Cash: {cash:,.0f}")
 
+    # 13. Customer payment cash movement check
+    print("\n[13] Customer payment cash movement check...")
+    customer_payments = conn.execute("""
+        SELECT id, amount FROM partner_transactions
+        WHERE kind = 'زبون' AND source_type = 'customer_transaction'
+          AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+               OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
+    """).fetchall()
+    for cp in customer_payments:
+        cash_movement = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+            WHERE source_type = 'customer_payment' AND source_id = ?1
+              AND source_role = 'cash_movement' AND kind = 'شريك'
+        """, [str(cp['id'])]).fetchone()[0]
+        if abs(cash_movement - cp['amount']) > 0.01:
+            errors.append(f"FAIL: Customer payment {cp['id']} amount={cp['amount']:,.0f} but cash_movement={cash_movement:,.0f}")
+
+    # 14. Customer payment profit recognition check
+    print("\n[14] Customer payment profit recognition check...")
+    for cp in customer_payments:
+        profit_rows = conn.execute("""
+            SELECT COUNT(*) FROM partner_transactions
+            WHERE source_type = 'customer_payment' AND source_id = ?1
+              AND source_role = 'profit_recognition' AND kind = 'شريك'
+              AND affects_qasa = 1
+        """, [str(cp['id'])]).fetchone()[0]
+        if profit_rows > 0:
+            errors.append(f"FAIL: Customer payment {cp['id']} profit rows have affects_qasa=1")
+
+    # 15. Investor double-count check
+    print("\n[15] Investor double-count check...")
+    investor_auto_deduct = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE source_type = 'investor_transaction' AND source_role = 'partner_cash_payment'
+    """).fetchone()[0]
+    if investor_auto_deduct > 0:
+        errors.append(f"FAIL: {investor_auto_deduct} investor rows auto-created partner_cash_payment (double-count risk)")
+
+    # 16. Funder repayment ledger check
+    print("\n[16] Funder repayment ledger check...")
+    partner_repayments = conn.execute("""
+        SELECT id, amount, currency FROM partner_transactions
+        WHERE source_role = 'partner_cash_payment'
+          AND source_type IN ('funder_payment', 'company_payment')
+          AND kind = 'شريك'
+    """).fetchall()
+    for pr in partner_repayments:
+        ledger_cash = conn.execute("""
+            SELECT COUNT(*) FROM financial_ledger
+            WHERE reference_type = 'partner_transaction'
+              AND reference_id = ?1
+              AND account_type = 'cash'
+        """, [str(pr['id'])]).fetchone()[0]
+        if ledger_cash == 0:
+            warnings.append(f"WARN: Partner repayment {pr['id']} has no cash ledger entry")
+
+    # 17. net_capital formula check
+    print("\n[17] net_capital formula check...")
+    cash_val = conn.execute("""
+        SELECT COALESCE(SUM(CASE
+            WHEN (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                  OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                  OR type LIKE 'تسوية%' OR type LIKE 'تسديد%') THEN amount
+            WHEN (type LIKE 'سحب%' OR type LIKE 'باقي%') THEN -amount
+            ELSE 0 END), 0.0)
+        FROM partner_transactions
+        WHERE affects_partner_cash = 1 AND kind = 'شريك'
+    """).fetchone()[0]
+    inv_val = conn.execute("SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'inventory'").fetchone()[0]
+    recv_val = conn.execute("SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'receivable'").fetchone()[0]
+    investor_val = conn.execute("SELECT COALESCE(SUM(credit - debit), 0.0) FROM financial_ledger WHERE account_type = 'investor'").fetchone()[0]
+    funder_val = conn.execute("SELECT COALESCE(SUM(credit - debit), 0.0) FROM financial_ledger WHERE account_type = 'funder'").fetchone()[0]
+    payable_val = conn.execute("SELECT COALESCE(SUM(credit - debit), 0.0) FROM financial_ledger WHERE account_type = 'payable'").fetchone()[0]
+    expected_net = cash_val + inv_val + recv_val - investor_val - funder_val - payable_val
+    print(f"  Expected net_capital = {cash_val:,.0f} + {inv_val:,.0f} + {recv_val:,.0f} - {investor_val:,.0f} - {funder_val:,.0f} - {payable_val:,.0f} = {expected_net:,.0f}")
+
+    # 18. Legacy helper collision check
+    print("\n[18] Legacy helper source_id collision check...")
+    collisions = conn.execute("""
+        SELECT source_type, source_id, source_role, partner_name, kind, COUNT(*) as cnt
+        FROM partner_transactions
+        WHERE source_type IS NOT NULL AND source_id IS NOT NULL AND source_role IS NOT NULL
+        GROUP BY source_type, source_id, source_role, partner_name, kind
+        HAVING cnt > 1
+    """).fetchall()
+    for c in collisions:
+        errors.append(f"FAIL: Duplicate source: {c['source_type']}/{c['source_id']}/{c['source_role']} ({c['cnt']} rows)")
+
     # Summary
     print("\n" + "=" * 60)
     if errors:
@@ -300,6 +388,17 @@ def audit_source(lib_path):
         if 'car_expense' in line.lower() and "'expense'" in line and 'reference_type' in line:
             if 'car_expense' not in line:
                 warnings.append(f"WARN: Line {i} — Car expense may use wrong reference_type")
+
+    # 5. New business logic calling legacy helpers
+    print("\n[S5] New logic calling legacy helpers...")
+    for i, line in enumerate(content.split('\n'), 1):
+        stripped = line.split('//')[0] if '//' in line else line
+        if 'deduct_from_partners_5050(' in stripped or 'distribute_to_partners_50(' in stripped:
+            # Allow only inside the legacy helper definitions themselves
+            context_before = '\n'.join(content.split('\n')[max(0,i-10):i])
+            if ('fn distribute_to_partners_50' not in context_before
+                and 'fn deduct_from_partners_5050' not in context_before):
+                errors.append(f"FAIL: Line {i} — calls legacy helper: {stripped.strip()[:80]}")
 
     # Summary
     print("\n" + "=" * 60)
