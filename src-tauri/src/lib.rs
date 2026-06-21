@@ -688,6 +688,27 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         let _ = conn.execute("INSERT INTO db_version (version) VALUES (8)", []);
     }
 
+    // Version 9: Clean up double-counted receivable entries for customer payments
+    if version < 9 {
+        // Old code created Cr receivable for BOTH customer rows AND partner cash_movement rows.
+        // The partner cash_movement rows should only create Dr cash (no receivable).
+        // Delete Cr receivable entries that belong to partner cash_movement rows (type_ = 'ايداع دفعة زبون').
+        let _ = conn.execute(
+            "DELETE FROM financial_ledger
+             WHERE reference_type = 'partner_transaction'
+               AND account_type = 'receivable'
+               AND type_ = 'ايداع دفعة زبون'
+               AND reference_id IN (
+                   SELECT CAST(pt.id AS TEXT) FROM partner_transactions pt
+                   WHERE pt.source_type = 'customer_payment'
+                     AND pt.source_role = 'cash_movement'
+                     AND pt.kind = 'شريك'
+               )",
+            [],
+        );
+        let _ = conn.execute("INSERT INTO db_version (version) VALUES (9)", []);
+    }
+
     // Performance indexes
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cars_status ON cars(status)",
@@ -936,6 +957,82 @@ fn is_customer_remaining_type(tx_type: &str) -> bool {
         && (tx_type.starts_with("باقي") || tx_type.starts_with("سحب"))
 }
 
+// Issue 3: Classification helper for partner transactions
+struct TransactionClassification {
+    source_type: String,
+    source_id: String,
+    source_role: String,
+    affects_qasa: i32,
+    affects_partner_cash: i32,
+    affects_profit: i32,
+}
+
+fn classify_partner_transaction(kind: &str, type_: &str, tx_id: i64) -> TransactionClassification {
+    match kind {
+        "مستثمر" => TransactionClassification {
+            source_type: "investor_transaction".to_string(),
+            source_id: tx_id.to_string(),
+            source_role: "account_movement".to_string(),
+            affects_qasa: 1,
+            affects_partner_cash: 0,
+            affects_profit: 0,
+        },
+        "ممول" => TransactionClassification {
+            source_type: "funder_transaction".to_string(),
+            source_id: tx_id.to_string(),
+            source_role: "account_movement".to_string(),
+            affects_qasa: 0,
+            affects_partner_cash: 0,
+            affects_profit: 0,
+        },
+        "شركة" => TransactionClassification {
+            source_type: "company_transaction".to_string(),
+            source_id: tx_id.to_string(),
+            source_role: "account_movement".to_string(),
+            affects_qasa: 0,
+            affects_partner_cash: 0,
+            affects_profit: 0,
+        },
+        "زبون" => TransactionClassification {
+            source_type: "customer_transaction".to_string(),
+            source_id: tx_id.to_string(),
+            source_role: "account_movement".to_string(),
+            affects_qasa: 0,
+            affects_partner_cash: 0,
+            affects_profit: 0,
+        },
+        "شريك" => {
+            if type_ == "ايداع ارباح سيارة" || type_ == "ايداع ارباح وكالة" {
+                TransactionClassification {
+                    source_type: "partner_profit".to_string(),
+                    source_id: tx_id.to_string(),
+                    source_role: "profit_recognition".to_string(),
+                    affects_qasa: 0,
+                    affects_partner_cash: 0,
+                    affects_profit: 1,
+                }
+            } else {
+                TransactionClassification {
+                    source_type: "partner_cash".to_string(),
+                    source_id: tx_id.to_string(),
+                    source_role: "cash_movement".to_string(),
+                    affects_qasa: 1,
+                    affects_partner_cash: 1,
+                    affects_profit: 0,
+                }
+            }
+        }
+        _ => TransactionClassification {
+            source_type: "manual_transaction".to_string(),
+            source_id: tx_id.to_string(),
+            source_role: "account_movement".to_string(),
+            affects_qasa: 1,
+            affects_partner_cash: 1,
+            affects_profit: 0,
+        },
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn record_ledger_entry(
     conn: &Connection,
@@ -1127,9 +1224,11 @@ fn delete_customer_payment_profit_splits(db: &Connection, payment_tx_id: i64) ->
 #[allow(clippy::type_complexity)]
 fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), String> {
     // Issue 11: Read affects_* flags to decide whether to create cash ledger entries
-    let tx_info: Result<(String, String, String, f64, String, Option<String>, Option<String>, String, String, i32, i32, i32), rusqlite::Error> = conn.query_row(
+    // Issue 1: Also read source_type and source_role for proper classification
+    let tx_info: Result<(String, String, String, f64, String, Option<String>, Option<String>, String, String, i32, i32, i32, String, String), rusqlite::Error> = conn.query_row(
         "SELECT partner_name, kind, type, amount, date, notes, currency, COALESCE(payment_type, 'قاصه'), COALESCE(time, '00:00'),
-                COALESCE(affects_qasa, 1), COALESCE(affects_partner_cash, 1), COALESCE(affects_profit, 0)
+                COALESCE(affects_qasa, 1), COALESCE(affects_partner_cash, 1), COALESCE(affects_profit, 0),
+                COALESCE(source_type, ''), COALESCE(source_role, '')
          FROM partner_transactions WHERE id = ?1",
         [tx_id],
         |row| {
@@ -1146,11 +1245,13 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
                 row.get(9)?,
                 row.get(10)?,
                 row.get(11)?,
+                row.get(12)?,
+                row.get(13)?,
             ))
         }
     );
 
-    let (p_name, kind, tx_type, amount, tx_date, notes_opt, curr_opt, payment_type, tx_time, affects_qasa, affects_partner_cash, _affects_profit) =
+    let (p_name, kind, tx_type, amount, tx_date, notes_opt, curr_opt, payment_type, tx_time, affects_qasa, affects_partner_cash, _affects_profit, source_type, source_role) =
         match tx_info {
             Ok(info) => info,
             Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
@@ -1166,25 +1267,78 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
     // Issue 11: Skip cash ledger entries for rows that don't affect Qasa/Cash
     let should_create_cash_entry = affects_qasa == 1 || affects_partner_cash == 1;
 
+    // Issue 1: Handle customer_payment cash_movement rows (kind="شريك", source_type="customer_payment", source_role="cash_movement")
+    // These should record Dr cash only. Cr receivable is handled by the original customer row (kind="زبون").
+    if kind == "شريك" && source_type == "customer_payment" && source_role == "cash_movement" {
+        // Look up the original customer payment row to get the customer name for receivable
+        let source_id_val: i64 = conn.query_row(
+            "SELECT CAST(source_id AS INTEGER) FROM partner_transactions WHERE id = ?1",
+            [tx_id],
+            |row| row.get(0),
+        ).unwrap_or(0);
+
+        let customer_name: String = if source_id_val > 0 {
+            conn.query_row(
+                "SELECT partner_name FROM partner_transactions WHERE id = ?1 AND kind = 'زبون'",
+                [source_id_val],
+                |row| row.get(0),
+            ).unwrap_or_else(|_| p_name.clone())
+        } else {
+            p_name.clone()
+        };
+
+        // Record Dr cash only (cash increases)
+        // Cr receivable is handled by the original customer row (kind="زبون")
+        record_ledger_entry(
+            conn,
+            &tx_date,
+            &tx_time,
+            "cash",
+            Some(&payment_type),
+            amount,
+            0.0,
+            &curr,
+            "partner_transaction",
+            &ref_id,
+            "ايداع دفعة زبون",
+            &format!("إيداع دفعة زبون: {}", customer_name),
+            Some(&notes),
+        )
+        .map_err(|e| e.to_string())?;
+
+        return Ok(());
+    }
+
+    // Issue 1: Handle customer_payment profit_recognition rows (kind="شريك", source_type="customer_payment", source_role="profit_recognition")
+    // These should not create any ledger entries (profit recognition only)
+    if kind == "شريك" && source_type == "customer_payment" && source_role == "profit_recognition" {
+        return Ok(());
+    }
+
     if kind == "زبون" {
-        // Issue 11: Only create cash ledger entries if the row affects Qasa/Cash
-        if is_deposit && should_create_cash_entry {
-            record_ledger_entry(
-                conn,
-                &tx_date,
-                &tx_time,
-                "cash",
-                Some(&payment_type),
-                amount,
-                0.0,
-                &curr,
-                "partner_transaction",
-                &ref_id,
-                "ايداع زبون",
-                &format!("إيداع زبون: {}", p_name),
-                Some(&notes),
-            )
-            .map_err(|e| e.to_string())?;
+        // Issue 2: For customer payment rows, always record receivable reduction
+        // Even if affects_qasa=0, the receivable must still decrease
+        if is_deposit {
+            // Only record cash entry if the row affects Qasa/Cash
+            if should_create_cash_entry {
+                record_ledger_entry(
+                    conn,
+                    &tx_date,
+                    &tx_time,
+                    "cash",
+                    Some(&payment_type),
+                    amount,
+                    0.0,
+                    &curr,
+                    "partner_transaction",
+                    &ref_id,
+                    "ايداع زبون",
+                    &format!("إيداع زبون: {}", p_name),
+                    Some(&notes),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            // Always record receivable reduction for customer payments
             record_ledger_entry(
                 conn,
                 &tx_date,
@@ -1237,13 +1391,6 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
         }
         return Ok(());
     }
-
-    // Issue 3: Read source_role to handle partner_cash_payment rows properly
-    let source_role: String = conn.query_row(
-        "SELECT COALESCE(source_role, '') FROM partner_transactions WHERE id = ?1",
-        [tx_id],
-        |row| row.get(0),
-    ).unwrap_or_default();
 
     if tx_type.starts_with("سحب شراء سيارة")
         || tx_type.starts_with("ايداع بيع سيارة")
@@ -4048,25 +4195,11 @@ fn add_partner_transaction(
 
     let tx_id = db.last_insert_rowid();
 
-    // Issue 2: Classify the inserted row immediately based on kind
-    let (src_type, src_role, aq, apc, apr) = match kind.trim() {
-        "مستثمر" => ("investor_transaction", "account_movement", 1, 0, 0),
-        "ممول" => ("funder_transaction", "account_movement", 0, 0, 0),
-        "شركة" => ("company_transaction", "account_movement", 0, 0, 0),
-        "زبون" => ("customer_transaction", "account_movement", 0, 0, 0),
-        "شريك" => {
-            // For partners, check if it's profit recognition or real cash
-            if type_.trim() == "ايداع ارباح سيارة" || type_.trim() == "ايداع ارباح وكالة" {
-                ("partner_profit", "profit_recognition", 0, 0, 1)
-            } else {
-                ("partner_cash", "cash_movement", 1, 1, 0)
-            }
-        }
-        _ => ("manual_transaction", "account_movement", 1, 1, 0),
-    };
+    // Issue 3: Use classification helper
+    let classification = classify_partner_transaction(kind.trim(), type_.trim(), tx_id);
     db.execute(
         "UPDATE partner_transactions SET source_type = ?1, source_id = ?2, source_role = ?3, affects_qasa = ?4, affects_partner_cash = ?5, affects_profit = ?6 WHERE id = ?7",
-        params![src_type, tx_id.to_string(), src_role, aq, apc, apr, tx_id],
+        params![classification.source_type, classification.source_id, classification.source_role, classification.affects_qasa, classification.affects_partner_cash, classification.affects_profit, tx_id],
     ).map_err(|e| e.to_string())?;
 
     // Ledger record
@@ -4287,42 +4420,73 @@ fn rebuild_customer_payment_profit_splits(db: &Connection) -> Result<(), String>
             continue;
         };
 
-        let exists_pattern = format!("%(رقم حركة دفعة: {})%", row.id);
-        let already_exists: bool = db
+        // Issue 4: Check if cash_movement exists
+        let cash_exists: bool = db
             .query_row(
-                "SELECT COUNT(*) FROM partner_transactions
-                 WHERE kind = 'شريك' AND type = 'ايداع ارباح سيارة' AND notes LIKE ?1",
-                [&exists_pattern],
-                |row| row.get::<_, i64>(0),
+                "SELECT COUNT(*) > 0 FROM partner_transactions
+                 WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'cash_movement' AND kind = 'شريك'",
+                [row.id],
+                |row| row.get(0),
             )
-            .unwrap_or(0)
-            > 0;
+            .unwrap_or(false);
 
-        if already_exists {
-            continue;
-        }
-
-        let payment_profit = calculate_customer_payment_profit_capped(db, &car_num, row.amount, &row.currency)?;
-        if payment_profit > 0.0 {
-            let profit_note = format!(
-                "ربح دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
+        // Issue 4: Create cash_movement if it doesn't exist
+        if !cash_exists {
+            let cash_note = format!(
+                "دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
                 row.notes, row.id, car_num
             );
             distribute_to_partners_50_with_effects(
                 db,
-                payment_profit,
+                row.amount,
                 &row.currency,
                 &row.date,
                 "قاصه",
-                "ايداع ارباح سيارة",
-                &profit_note,
+                "ايداع دفعة زبون",
+                &cash_note,
                 "customer_payment",
                 &row.id.to_string(),
-                "profit_recognition",
-                false, // affects_qasa
-                false, // affects_partner_cash
-                true,  // affects_profit
+                "cash_movement",
+                true,  // affects_qasa
+                true,  // affects_partner_cash
+                false, // affects_profit
             )?;
+        }
+
+        // Issue 4: Check if profit_recognition exists
+        let profit_exists: bool = db
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM partner_transactions
+                 WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'profit_recognition' AND kind = 'شريك'",
+                [row.id],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        // Issue 4: Create profit_recognition if it doesn't exist
+        if !profit_exists {
+            let payment_profit = calculate_customer_payment_profit_capped(db, &car_num, row.amount, &row.currency)?;
+            if payment_profit > 0.0 {
+                let profit_note = format!(
+                    "ربح دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
+                    row.notes, row.id, car_num
+                );
+                distribute_to_partners_50_with_effects(
+                    db,
+                    payment_profit,
+                    &row.currency,
+                    &row.date,
+                    "قاصه",
+                    "ايداع ارباح سيارة",
+                    &profit_note,
+                    "customer_payment",
+                    &row.id.to_string(),
+                    "profit_recognition",
+                    false, // affects_qasa
+                    false, // affects_partner_cash
+                    true,  // affects_profit
+                )?;
+            }
         }
     }
 
@@ -4715,6 +4879,13 @@ fn update_partner_transaction(
         ),
     )
     .map_err(|e| e.to_string())?;
+
+    // Issue 3: Recalculate source/affects classification after update
+    let classification = classify_partner_transaction(kind.trim(), type_.trim(), id);
+    db.execute(
+        "UPDATE partner_transactions SET source_type = ?1, source_id = ?2, source_role = ?3, affects_qasa = ?4, affects_partner_cash = ?5, affects_profit = ?6 WHERE id = ?7",
+        params![classification.source_type, classification.source_id, classification.source_role, classification.affects_qasa, classification.affects_partner_cash, classification.affects_profit, id],
+    ).map_err(|e| e.to_string())?;
 
     // Write new ledger entries
     record_partner_ledger_entries(&db, id)?;

@@ -275,8 +275,77 @@ def audit_db(db_path):
         if ledger_cash == 0:
             warnings.append(f"WARN: Partner repayment {pr['id']} has no cash ledger entry")
 
-    # 17. net_capital formula check
-    print("\n[17] net_capital formula check...")
+    # 17. Customer payment must not create capital ledger entries
+    print("\n[17] Customer payment capital ledger check...")
+    bad_capital = conn.execute("""
+        SELECT fl.reference_id, fl.account_type
+        FROM financial_ledger fl
+        JOIN partner_transactions pt ON CAST(pt.id AS TEXT) = fl.reference_id
+        WHERE fl.reference_type = 'partner_transaction'
+          AND pt.source_type = 'customer_payment'
+          AND pt.source_role = 'cash_movement'
+          AND pt.kind = 'شريك'
+          AND fl.account_type = 'capital'
+    """).fetchall()
+    if bad_capital:
+        for r in bad_capital:
+            errors.append(f"FAIL: Customer payment cash_movement {r['reference_id']} has capital ledger entry")
+    else:
+        print("  PASS")
+
+    # 18. Customer payment must produce Dr cash / Cr receivable, no Cr capital
+    print("\n[18] Customer payment ledger Dr cash / Cr receivable check...")
+    customer_payments_ledger = conn.execute("""
+        SELECT id, amount FROM partner_transactions
+        WHERE kind = 'زبون' AND source_type = 'customer_transaction'
+          AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+               OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
+    """).fetchall()
+    for cp in customer_payments_ledger:
+        cp_id = str(cp['id'])
+        # Dr cash from generated cash_movement rows
+        cash_debit = conn.execute("""
+            SELECT COALESCE(SUM(fl.debit), 0.0) FROM financial_ledger fl
+            JOIN partner_transactions pt ON CAST(pt.id AS TEXT) = fl.reference_id
+            WHERE fl.reference_type = 'partner_transaction'
+              AND fl.account_type = 'cash'
+              AND pt.source_type = 'customer_payment' AND pt.source_id = ?
+              AND pt.source_role = 'cash_movement' AND pt.kind = 'شريك'
+        """, [cp_id]).fetchone()[0]
+        # Cr receivable from original customer row
+        recv_credit = conn.execute("""
+            SELECT COALESCE(SUM(fl.credit), 0.0) FROM financial_ledger fl
+            WHERE fl.reference_type = 'partner_transaction'
+              AND fl.reference_id = ?
+              AND fl.account_type = 'receivable'
+        """, [cp_id]).fetchone()[0]
+        # Cr capital from any related rows
+        cap_credit = conn.execute("""
+            SELECT COALESCE(SUM(fl.credit), 0.0) FROM financial_ledger fl
+            WHERE fl.reference_type = 'partner_transaction'
+              AND fl.account_type = 'capital'
+              AND fl.reference_id IN (
+                  SELECT CAST(id AS TEXT) FROM partner_transactions
+                  WHERE source_type = 'customer_payment' AND source_id = ?
+              )
+        """, [cp_id]).fetchone()[0]
+        if abs(cash_debit - cp['amount']) > 0.01:
+            errors.append(f"FAIL: Customer payment {cp_id} Dr cash={cash_debit:,.0f} expected={cp['amount']:,.0f}")
+        if abs(recv_credit - cp['amount']) > 0.01:
+            errors.append(f"FAIL: Customer payment {cp_id} Cr receivable={recv_credit:,.0f} expected={cp['amount']:,.0f}")
+        if cap_credit > 0.01:
+            errors.append(f"FAIL: Customer payment {cp_id} has Cr capital={cap_credit:,.0f} (should be 0)")
+    if not customer_payments_ledger:
+        print("  SKIP (no customer payments found)")
+    else:
+        print("  PASS" if not any('FAIL' in e for e in errors[len(errors)-len(customer_payments_ledger)*3:]) else "  FAIL")
+
+    # 19. Static source scan: customer_payment handled before generic partner capital
+    print("\n[19] Static source scan — customer_payment capital guard...")
+    # This is checked in audit_source below
+
+    # 20. net_capital formula check
+    print("\n[20] net_capital formula check...")
     cash_val = conn.execute("""
         SELECT COALESCE(SUM(CASE
             WHEN (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
@@ -295,8 +364,8 @@ def audit_db(db_path):
     expected_net = cash_val + inv_val + recv_val - investor_val - funder_val - payable_val
     print(f"  Expected net_capital = {cash_val:,.0f} + {inv_val:,.0f} + {recv_val:,.0f} - {investor_val:,.0f} - {funder_val:,.0f} - {payable_val:,.0f} = {expected_net:,.0f}")
 
-    # 18. Legacy helper collision check
-    print("\n[18] Legacy helper source_id collision check...")
+    # 21. Legacy helper collision check
+    print("\n[21] Legacy helper source_id collision check...")
     collisions = conn.execute("""
         SELECT source_type, source_id, source_role, partner_name, kind, COUNT(*) as cnt
         FROM partner_transactions
@@ -306,6 +375,27 @@ def audit_db(db_path):
     """).fetchall()
     for c in collisions:
         errors.append(f"FAIL: Duplicate source: {c['source_type']}/{c['source_id']}/{c['source_role']} ({c['cnt']} rows)")
+
+    # 22. Receivable double-count: partner cash_movement rows should not have receivable entries
+    print("\n[22] Receivable double-count check...")
+    bad_recv = conn.execute("""
+        SELECT fl.id, fl.reference_id, fl.credit
+        FROM financial_ledger fl
+        WHERE fl.reference_type = 'partner_transaction'
+          AND fl.account_type = 'receivable'
+          AND fl.type_ = 'ايداع دفعة زبون'
+          AND fl.reference_id IN (
+              SELECT CAST(pt.id AS TEXT) FROM partner_transactions pt
+              WHERE pt.source_type = 'customer_payment'
+                AND pt.source_role = 'cash_movement'
+                AND pt.kind = 'شريك'
+          )
+    """).fetchall()
+    if bad_recv:
+        for r in bad_recv:
+            errors.append(f"FAIL: Partner cash_movement {r['reference_id']} has receivable entry {r['id']} (double-count)")
+    else:
+        print("  PASS")
 
     # Summary
     print("\n" + "=" * 60)
@@ -389,8 +479,32 @@ def audit_source(lib_path):
             if 'car_expense' not in line:
                 warnings.append(f"WARN: Line {i} — Car expense may use wrong reference_type")
 
-    # 5. New business logic calling legacy helpers
-    print("\n[S5] New logic calling legacy helpers...")
+    # 5. Customer payment cash_movement must be handled before generic partner deposit
+    print("\n[S5] Customer payment capital guard in record_partner_ledger_entries...")
+    func_start = None
+    generic_deposit_line = None
+    customer_guard_line = None
+    for i, line in enumerate(lines, 1):
+        if 'fn record_partner_ledger_entries' in line:
+            func_start = i
+        if func_start and i > func_start:
+            if "source_type == \"customer_payment\"" in line and "source_role == \"cash_movement\"" in line:
+                customer_guard_line = i
+            if "ايداع شريك رأس مال" in line or "Cr capital" in line:
+                if generic_deposit_line is None:
+                    generic_deposit_line = i
+    if customer_guard_line and generic_deposit_line:
+        if customer_guard_line < generic_deposit_line:
+            print("  PASS — customer_payment guard before generic deposit")
+        else:
+            errors.append(f"FAIL: customer_payment guard (line {customer_guard_line}) after generic deposit (line {generic_deposit_line})")
+    elif generic_deposit_line and not customer_guard_line:
+        errors.append("FAIL: No customer_payment guard found before generic partner capital logic")
+    else:
+        print("  PASS")
+
+    # 6. New business logic calling legacy helpers
+    print("\n[S6] New logic calling legacy helpers...")
     for i, line in enumerate(content.split('\n'), 1):
         stripped = line.split('//')[0] if '//' in line else line
         if 'deduct_from_partners_5050(' in stripped or 'distribute_to_partners_50(' in stripped:
