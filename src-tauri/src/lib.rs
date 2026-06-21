@@ -2241,6 +2241,20 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
                         format!("ذمة مدينة كاملة بيع سيارة {} ({}) على {}", car_name, car_number, buyer_name)
                     ],
                 )?;
+                // Matching credit: deferred revenue (balances the receivable debit)
+                conn.execute(
+                    "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
+                     VALUES (?1, ?2, 'deferred_revenue', ?3, 0.0, ?4, ?5, 'car', ?6, 'إيراد مؤجل بيع سيارة', ?7, NULL)",
+                    params![
+                        sale_date,
+                        sale_time,
+                        car_number,
+                        selling_price,
+                        sale_currency,
+                        car_number,
+                        format!("إيراد مؤجل بيع سيارة {} ({}) إلى {}", car_name, car_number, buyer_name)
+                    ],
+                )?;
             }
 
             let mut exp_amount_sum = 0.0;
@@ -2932,6 +2946,26 @@ fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), St
                 ),
                 None,
             )?;
+
+            // Matching credit: deferred revenue (balances the receivable debit)
+            record_ledger_entry(
+                db,
+                &s_date,
+                &s_time,
+                "deferred_revenue",
+                Some(car_number),
+                0.0,
+                selling_price,
+                &sale_currency,
+                "car",
+                car_number,
+                "إيراد مؤجل بيع سيارة",
+                &format!(
+                    "إيراد مؤجل بيع سيارة {} ({}) إلى {}",
+                    car_name, car_number, buyer_name
+                ),
+                None,
+            )?;
         }
 
         // COGS and inventory reduction (same for both cash and installment)
@@ -3156,18 +3190,18 @@ fn add_car(
         if old_num != car_number {
             db.execute(
                 "UPDATE partner_transactions SET notes = REPLACE(notes, ?1, ?2)
-                 WHERE source_type = 'customer_payment' AND notes LIKE ?3",
+                 WHERE related_source_type = 'car' AND related_source_id = ?3",
                 params![
                     format!("#بيع_سيارة_{}", old_num),
                     format!("#بيع_سيارة_{}", car_number),
-                    format!("%#بيع_سيارة_{}%", old_num),
+                    old_num,
                 ],
             )
             .map_err(|e| e.to_string())?;
-            // Also update source_id for car-linked customer payment splits
+            // Update related_source_id (NOT source_id — source_id is the payment transaction ID)
             db.execute(
-                "UPDATE partner_transactions SET source_id = ?1
-                 WHERE source_type = 'customer_payment' AND source_id = ?2",
+                "UPDATE partner_transactions SET related_source_id = ?1
+                 WHERE related_source_type = 'car' AND related_source_id = ?2",
                 params![car_number, old_num],
             ).map_err(|e| e.to_string())?;
         }
@@ -4410,6 +4444,17 @@ fn rebuild_customer_payment_profit_splits(db: &Connection) -> Result<(), String>
     drop(stmt);
 
     for row in rows {
+        let car_num = extract_car_number_from_notes(&row.notes);
+
+        // Set related_source fields on the original customer payment row if car-linked
+        if let Some(ref cn) = car_num {
+            let _ = db.execute(
+                "UPDATE partner_transactions SET related_source_type = 'car', related_source_id = ?1
+                 WHERE id = ?2 AND (related_source_type IS NULL OR related_source_id IS NULL OR related_source_id = '')",
+                params![cn, row.id],
+            );
+        }
+
         // Always create cash_movement for every customer payment
         let cash_exists: bool = db
             .query_row(
@@ -4421,7 +4466,6 @@ fn rebuild_customer_payment_profit_splits(db: &Connection) -> Result<(), String>
             .unwrap_or(false);
 
         if !cash_exists {
-            let car_num = extract_car_number_from_notes(&row.notes);
             let cash_note = if let Some(ref cn) = car_num {
                 format!(
                     "دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
@@ -4433,7 +4477,7 @@ fn rebuild_customer_payment_profit_splits(db: &Connection) -> Result<(), String>
                     row.notes, row.id
                 )
             };
-            distribute_to_partners_50_with_effects(
+            distribute_to_partners_50_with_effects_and_related(
                 db,
                 row.amount,
                 &row.currency,
@@ -4447,11 +4491,13 @@ fn rebuild_customer_payment_profit_splits(db: &Connection) -> Result<(), String>
                 true,  // affects_qasa
                 true,  // affects_partner_cash
                 false, // affects_profit
+                car_num.as_deref().map(|_| "car"),
+                car_num.as_deref(),
             )?;
         }
 
         // Only create profit_recognition when payment is linked to a car
-        if let Some(car_num) = extract_car_number_from_notes(&row.notes) {
+        if let Some(ref car_num) = car_num {
             let profit_exists: bool = db
                 .query_row(
                     "SELECT COUNT(*) > 0 FROM partner_transactions
@@ -4462,13 +4508,13 @@ fn rebuild_customer_payment_profit_splits(db: &Connection) -> Result<(), String>
                 .unwrap_or(false);
 
             if !profit_exists {
-                let payment_profit = calculate_customer_payment_profit_capped(db, &car_num, row.amount, &row.currency)?;
+                let payment_profit = calculate_customer_payment_profit_capped(db, car_num, row.amount, &row.currency)?;
                 if payment_profit > 0.0 {
                     let profit_note = format!(
                         "ربح دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
                         row.notes, row.id, car_num
                     );
-                    distribute_to_partners_50_with_effects(
+                    distribute_to_partners_50_with_effects_and_related(
                         db,
                         payment_profit,
                         &row.currency,
@@ -4482,6 +4528,8 @@ fn rebuild_customer_payment_profit_splits(db: &Connection) -> Result<(), String>
                         false, // affects_qasa
                         false, // affects_partner_cash
                         true,  // affects_profit
+                        Some("car"),
+                        Some(car_num),
                     )?;
                 }
             }
@@ -4557,7 +4605,7 @@ fn apply_partner_transaction_splits(
         if let Some(ref cn) = car_num {
             let _ = db.execute(
                 "UPDATE partner_transactions SET related_source_type = 'car', related_source_id = ?1
-                 WHERE id = ?2 AND (related_source_type IS NULL OR related_source_id IS NULL)",
+                 WHERE id = ?2 AND (related_source_type IS NULL OR related_source_id IS NULL OR related_source_id = '')",
                 params![cn, tx_id],
             );
         }
@@ -4581,7 +4629,7 @@ fn apply_partner_transaction_splits(
                     notes_str, tx_id
                 )
             };
-            distribute_to_partners_50_with_effects(
+            distribute_to_partners_50_with_effects_and_related(
                 db,
                 amount,
                 currency,
@@ -4595,6 +4643,8 @@ fn apply_partner_transaction_splits(
                 true,  // affects_qasa
                 true,  // affects_partner_cash
                 false, // affects_profit
+                car_num.as_deref().map(|_| "car"),
+                car_num.as_deref(),
             )?;
         }
 
@@ -4613,7 +4663,7 @@ fn apply_partner_transaction_splits(
                         "ربح دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
                         notes_str, tx_id, car_num
                     );
-                    distribute_to_partners_50_with_effects(
+                    distribute_to_partners_50_with_effects_and_related(
                         db,
                         payment_profit,
                         currency,
@@ -4627,6 +4677,8 @@ fn apply_partner_transaction_splits(
                         false, // affects_qasa
                         false, // affects_partner_cash
                         true,  // affects_profit
+                        Some("car"),
+                        Some(car_num),
                     )?;
                 }
             }
@@ -7217,6 +7269,33 @@ fn insert_partner_transaction_with_effects(
     affects_partner_cash: bool,
     affects_profit: bool,
 ) -> Result<i64, String> {
+    insert_partner_transaction_with_effects_and_related(
+        db, partner_name, kind, type_, amount, date, payment_type, notes, currency,
+        source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit,
+        None, None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_partner_transaction_with_effects_and_related(
+    db: &Connection,
+    partner_name: &str,
+    kind: &str,
+    type_: &str,
+    amount: f64,
+    date: &str,
+    payment_type: &str,
+    notes: &str,
+    currency: &str,
+    source_type: &str,
+    source_id: &str,
+    source_role: &str,
+    affects_qasa: bool,
+    affects_partner_cash: bool,
+    affects_profit: bool,
+    related_source_type: Option<&str>,
+    related_source_id: Option<&str>,
+) -> Result<i64, String> {
     if amount <= 0.0 {
         return Ok(0);
     }
@@ -7234,8 +7313,8 @@ fn insert_partner_transaction_with_effects(
         .unwrap_or_else(|_| "00:00".to_string());
 
     db.execute(
-        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit, related_source_type, related_source_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
             partner_name.trim(),
             kind.trim(),
@@ -7252,6 +7331,8 @@ fn insert_partner_transaction_with_effects(
             affects_qasa as i32,
             affects_partner_cash as i32,
             affects_profit as i32,
+            related_source_type.unwrap_or(""),
+            related_source_id.unwrap_or(""),
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -7302,6 +7383,52 @@ fn distribute_to_partners_50_with_effects(
             affects_qasa,
             affects_partner_cash,
             affects_profit,
+        )?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn distribute_to_partners_50_with_effects_and_related(
+    db: &Connection,
+    amount: f64,
+    currency: &str,
+    date: &str,
+    payment_type: &str,
+    tx_type: &str,
+    notes: &str,
+    source_type: &str,
+    source_id: &str,
+    source_role: &str,
+    affects_qasa: bool,
+    affects_partner_cash: bool,
+    affects_profit: bool,
+    related_source_type: Option<&str>,
+    related_source_id: Option<&str>,
+) -> Result<(), String> {
+    if amount <= 0.0 {
+        return Ok(());
+    }
+    let per_partner = amount / 2.0;
+    for p_name in &["أمير".to_string(), "منتصر".to_string()] {
+        insert_partner_transaction_with_effects_and_related(
+            db,
+            p_name,
+            "شريك",
+            tx_type,
+            per_partner,
+            date,
+            payment_type,
+            notes,
+            currency,
+            source_type,
+            source_id,
+            source_role,
+            affects_qasa,
+            affects_partner_cash,
+            affects_profit,
+            related_source_type,
+            related_source_id,
         )?;
     }
     Ok(())
@@ -7360,22 +7487,24 @@ fn calculate_car_total_profit(db: &Connection, car_number: &str) -> Result<f64, 
 }
 
 fn get_recognized_profit_for_car(db: &Connection, car_number: &str) -> Result<f64, String> {
-    // Use source fields for new rows, fallback to notes LIKE for legacy rows
+    // Use related_source_id for new rows (source_id is payment ID, not car number)
     let recognized_new: f64 = db.query_row(
         "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
          WHERE kind = 'شريك' AND affects_profit = 1
            AND source_role = 'profit_recognition'
-           AND source_type = 'customer_payment'
-           AND source_id = ?1",
+           AND related_source_type = 'car'
+           AND related_source_id = ?1",
         [car_number],
         |row| row.get(0),
     ).unwrap_or(0.0);
 
+    // Legacy fallback for old rows without related_source_id
     let pattern = format!("%#بيع_سيارة_{}%", car_number);
     let recognized_legacy: f64 = db.query_row(
         "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
          WHERE kind = 'شريك' AND affects_profit = 1
-           AND (source_role IS NULL OR source_role != 'profit_recognition' OR source_type != 'customer_payment')
+           AND source_role = 'profit_recognition'
+           AND (related_source_id IS NULL OR related_source_id = '')
            AND notes LIKE ?1",
         [&pattern],
         |row| row.get(0),

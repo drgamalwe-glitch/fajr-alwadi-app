@@ -458,8 +458,16 @@ def audit_db(db_path):
         if balance and abs(balance['total_debit'] - balance['total_credit']) > 0.01:
             errors.append(f"FAIL: Car {cn} ledger unbalanced: debit={balance['total_debit']:,.0f} credit={balance['total_credit']:,.0f}")
 
-    # 26. Installment receivable check
+    # 26. Installment receivable check (corrected)
     print("\n[26] Installment receivable check...")
+    # Check if related_source_type column exists
+    has_related_col = False
+    try:
+        conn.execute("SELECT related_source_type FROM partner_transactions LIMIT 1")
+        has_related_col = True
+    except sqlite3.OperationalError:
+        pass
+
     installment_cars = conn.execute("""
         SELECT car_number, selling_price, buyer_name FROM cars
         WHERE status = 'مبيوعة' AND payment_type IN ('اقساط', 'موعد')
@@ -470,24 +478,135 @@ def audit_db(db_path):
         selling = car['selling_price']
         if not buyer:
             continue
-        # Receivable from car ledger
+        # Receivable from car ledger (should be full selling_price)
         car_recv = conn.execute("""
             SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
             WHERE reference_type = 'car' AND reference_id = ?
               AND account_type = 'receivable'
         """, [cn]).fetchone()[0]
-        # Receivable from customer payment rows
-        payment_recv = conn.execute("""
-            SELECT COALESCE(SUM(credit - debit), 0.0) FROM financial_ledger
-            WHERE reference_type = 'partner_transaction'
-              AND account_type = 'receivable'
-              AND account_id = ?
-        """, [buyer]).fetchone()[0]
-        expected_remaining = selling - payment_recv
-        if abs(car_recv - expected_remaining) > 0.01:
-            errors.append(f"FAIL: Car {cn} receivable mismatch: car_ledger={car_recv:,.0f} expected={expected_remaining:,.0f}")
+        # Car receivable should equal full selling price
+        if abs(car_recv - selling) > 0.01:
+            errors.append(f"FAIL: Car {cn} receivable={car_recv:,.0f} expected={selling:,.0f} (full selling price)")
+        # Receivable credits from customer payment rows linked to this car
+        if has_related_col:
+            payment_recv = conn.execute("""
+                SELECT COALESCE(SUM(fl.credit - fl.debit), 0.0) FROM financial_ledger fl
+                WHERE fl.reference_type = 'partner_transaction'
+                  AND fl.account_type = 'receivable'
+                  AND fl.account_id = ?
+                  AND fl.reference_id IN (
+                      SELECT CAST(pt.id AS TEXT) FROM partner_transactions pt
+                      WHERE (pt.related_source_type = 'car' AND pt.related_source_id = ?)
+                         OR (pt.related_source_id IS NULL AND pt.notes LIKE ?)
+                  )
+            """, [buyer, cn, f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+            total_payments = conn.execute("""
+                SELECT COALESCE(SUM(pt.amount), 0.0) FROM partner_transactions pt
+                WHERE pt.kind = 'زبون' AND pt.source_type = 'customer_transaction'
+                  AND ((pt.related_source_type = 'car' AND pt.related_source_id = ?)
+                       OR (pt.related_source_id IS NULL AND pt.notes LIKE ?))
+            """, [cn, f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+        else:
+            payment_recv = conn.execute("""
+                SELECT COALESCE(SUM(fl.credit - fl.debit), 0.0) FROM financial_ledger fl
+                WHERE fl.reference_type = 'partner_transaction'
+                  AND fl.account_type = 'receivable'
+                  AND fl.account_id = ?
+            """, [buyer]).fetchone()[0]
+            total_payments = conn.execute("""
+                SELECT COALESCE(SUM(pt.amount), 0.0) FROM partner_transactions pt
+                WHERE pt.kind = 'زبون' AND pt.source_type = 'customer_transaction'
+                  AND pt.notes LIKE ?
+            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+        # Net receivable = car ledger debit - payment credits
+        net_receivable = car_recv - payment_recv
+        # Expected remaining = selling - total payments
+        expected_remaining = selling - total_payments
+        if abs(net_receivable - expected_remaining) > 0.01:
+            errors.append(f"FAIL: Car {cn} net receivable={net_receivable:,.0f} expected remaining={expected_remaining:,.0f}")
 
-    # 27. No notes-based DELETE/UPDATE in runtime car flows (static check)
+    # 27. Profit cap source linking check
+    print("\n[27] Profit cap source linking check...")
+    if has_related_col:
+        bad_profit_rows = conn.execute("""
+            SELECT COUNT(*) FROM partner_transactions
+            WHERE kind = 'شريك' AND affects_profit = 1
+              AND source_role = 'profit_recognition'
+              AND source_type = 'customer_payment'
+              AND (related_source_id IS NULL OR related_source_id = '')
+              AND notes LIKE '%#بيع_سيارة_%'
+        """).fetchone()[0]
+        if bad_profit_rows > 0:
+            errors.append(f"FAIL: {bad_profit_rows} profit_recognition rows have car marker in notes but missing related_source_id")
+        else:
+            print("  PASS")
+    else:
+        print("  SKIP (related_source_id column not yet added)")
+
+    # 28. Profit cap exceeded check
+    print("\n[28] Profit cap exceeded check...")
+    sold_cars_profit = conn.execute("""
+        SELECT car_number, purchase_price, selling_price FROM cars WHERE status = 'مبيوعة'
+    """).fetchall()
+    for car in sold_cars_profit:
+        cn = car['car_number']
+        expenses = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?", [cn]
+        ).fetchone()[0]
+        full_profit = car['selling_price'] - car['purchase_price'] - expenses
+        if full_profit <= 0:
+            continue
+        if has_related_col:
+            recognized = conn.execute("""
+                SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                WHERE kind = 'شريك' AND affects_profit = 1
+                  AND source_role = 'profit_recognition'
+                  AND related_source_type = 'car' AND related_source_id = ?
+            """, [cn]).fetchone()[0]
+            recognized_legacy = conn.execute("""
+                SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                WHERE kind = 'شريك' AND affects_profit = 1
+                  AND source_role = 'profit_recognition'
+                  AND (related_source_id IS NULL OR related_source_id = '')
+                  AND notes LIKE ?
+            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+        else:
+            recognized = 0.0
+            recognized_legacy = conn.execute("""
+                SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                WHERE kind = 'شريك' AND affects_profit = 1
+                  AND notes LIKE ?
+            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+        total_recognized = recognized + recognized_legacy
+        if total_recognized > full_profit + 0.01:
+            errors.append(f"FAIL: Car {cn} recognized profit={total_recognized:,.0f} > full profit={full_profit:,.0f}")
+
+    # 29. Installment sale deferred_revenue check
+    print("\n[29] Installment sale deferred_revenue check...")
+    installment_cars_def = conn.execute("""
+        SELECT car_number, selling_price FROM cars
+        WHERE status = 'مبيوعة' AND payment_type IN ('اقساط', 'موعد')
+    """).fetchall()
+    for car in installment_cars_def:
+        cn = car['car_number']
+        selling = car['selling_price']
+        has_deferred = conn.execute("""
+            SELECT COUNT(*) FROM financial_ledger
+            WHERE reference_type = 'car' AND reference_id = ?
+              AND account_type = 'deferred_revenue'
+        """, [cn]).fetchone()[0]
+        if has_deferred == 0:
+            errors.append(f"FAIL: Installment car {cn} missing deferred_revenue entry (ledger unbalanced)")
+        else:
+            def_amount = conn.execute("""
+                SELECT COALESCE(SUM(credit), 0.0) FROM financial_ledger
+                WHERE reference_type = 'car' AND reference_id = ?
+                  AND account_type = 'deferred_revenue'
+            """, [cn]).fetchone()[0]
+            if abs(def_amount - selling) > 0.01:
+                errors.append(f"FAIL: Car {cn} deferred_revenue={def_amount:,.0f} expected={selling:,.0f}")
+
+    # 30. No notes-based DELETE/UPDATE in runtime car flows (static check)
     # This is checked in audit_source below
 
     # Summary
@@ -718,6 +837,44 @@ def audit_source(lib_path):
                 in_record_car = False
     if bad_cash_line:
         errors.append(f"FAIL: Line {bad_cash_line} — installment sale may debit cash in car ledger")
+    else:
+        print("  PASS")
+
+    # 14. get_recognized_profit_for_car uses related_source_id, not source_id=car_number
+    print("\n[S14] get_recognized_profit_for_car uses related_source_id...")
+    in_func = False
+    uses_related = False
+    uses_wrong_source_id = False
+    for i, line in enumerate(lines, 1):
+        if 'fn get_recognized_profit_for_car' in line:
+            in_func = True
+        if in_func:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'related_source_id' in stripped:
+                uses_related = True
+            if 'source_id = ?1' in stripped and 'customer_payment' in '\n'.join(lines[max(0,i-5):i]):
+                uses_wrong_source_id = True
+            if line.strip().startswith('}') and i > 7300:
+                in_func = False
+    if uses_related and not uses_wrong_source_id:
+        print("  PASS")
+    elif uses_wrong_source_id:
+        errors.append("FAIL: get_recognized_profit_for_car uses source_id=car_number for customer_payment rows")
+    else:
+        errors.append("FAIL: get_recognized_profit_for_car does not use related_source_id")
+
+    # 15. Customer payment source_id must not be changed to car_number
+    print("\n[S15] Customer payment source_id preservation...")
+    bad_update = False
+    for i, line in enumerate(lines, 1):
+        stripped = line.split('//')[0] if '//' in line else line
+        if 'UPDATE partner_transactions SET source_id' in stripped and 'customer_payment' in stripped:
+            context = '\n'.join(lines[max(0,i-3):i+3])
+            if 'related_source' not in context:
+                bad_update = True
+                break
+    if bad_update:
+        errors.append(f"FAIL: Line {i} — source_id update on customer_payment rows (should use related_source_id)")
     else:
         print("  PASS")
 

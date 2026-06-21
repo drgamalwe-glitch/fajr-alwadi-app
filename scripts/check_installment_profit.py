@@ -416,8 +416,16 @@ def check(db_path):
                  abs(bal[0] - bal[1]) < 0.01,
                  f"debit={bal[0]:,.0f} credit={bal[1]:,.0f}")
 
-    # ===== Scenario 17: Installment receivable net =====
+    # ===== Scenario 17: Installment receivable net (corrected) =====
     print("\n[17] INSTALLMENT RECEIVABLE NET")
+    # Check if related_source_type column exists
+    has_related_col = False
+    try:
+        conn.execute("SELECT related_source_type FROM partner_transactions LIMIT 1")
+        has_related_col = True
+    except:
+        pass
+
     inst_recv_cars = conn.execute("""
         SELECT car_number, selling_price, buyer_name FROM cars
         WHERE status = 'مبيوعة' AND payment_type IN ('اقساط', 'موعد')
@@ -428,24 +436,139 @@ def check(db_path):
         selling = car['selling_price']
         if not buyer:
             continue
+        # Car ledger receivable should be full selling price
         car_recv = conn.execute("""
             SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
             WHERE reference_type = 'car' AND reference_id = ?
               AND account_type = 'receivable'
         """, [cn]).fetchone()[0]
-        payment_recv = conn.execute("""
-            SELECT COALESCE(SUM(credit - debit), 0.0) FROM financial_ledger
-            WHERE reference_type = 'partner_transaction'
-              AND account_type = 'receivable'
-              AND account_id = ?
-        """, [buyer]).fetchone()[0]
-        expected_remaining = selling - payment_recv
-        test(f"Car {cn}: receivable net correct",
-             abs(car_recv - expected_remaining) < 0.01,
-             f"car_ledger={car_recv:,.0f} expected={expected_remaining:,.0f}")
+        test(f"Car {cn}: car ledger receivable = selling price",
+             abs(car_recv - selling) < 0.01,
+             f"car_recv={car_recv:,.0f} selling={selling:,.0f}")
+        # Payment receivable credits
+        if has_related_col:
+            payment_recv = conn.execute("""
+                SELECT COALESCE(SUM(fl.credit - fl.debit), 0.0) FROM financial_ledger fl
+                WHERE fl.reference_type = 'partner_transaction'
+                  AND fl.account_type = 'receivable'
+                  AND fl.account_id = ?
+                  AND fl.reference_id IN (
+                      SELECT CAST(pt.id AS TEXT) FROM partner_transactions pt
+                      WHERE (pt.related_source_type = 'car' AND pt.related_source_id = ?)
+                         OR (pt.related_source_id IS NULL AND pt.notes LIKE ?)
+                  )
+            """, [buyer, cn, f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+            total_payments = conn.execute("""
+                SELECT COALESCE(SUM(pt.amount), 0.0) FROM partner_transactions pt
+                WHERE pt.kind = 'زبون' AND pt.source_type = 'customer_transaction'
+                  AND ((pt.related_source_type = 'car' AND pt.related_source_id = ?)
+                       OR (pt.related_source_id IS NULL AND pt.notes LIKE ?))
+            """, [cn, f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+        else:
+            payment_recv = conn.execute("""
+                SELECT COALESCE(SUM(fl.credit - fl.debit), 0.0) FROM financial_ledger fl
+                WHERE fl.reference_type = 'partner_transaction'
+                  AND fl.account_type = 'receivable'
+                  AND fl.account_id = ?
+            """, [buyer]).fetchone()[0]
+            total_payments = conn.execute("""
+                SELECT COALESCE(SUM(pt.amount), 0.0) FROM partner_transactions pt
+                WHERE pt.kind = 'زبون' AND pt.source_type = 'customer_transaction'
+                  AND pt.notes LIKE ?
+            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+        net_receivable = car_recv - payment_recv
+        expected_remaining = selling - total_payments
+        test(f"Car {cn}: net receivable correct",
+             abs(net_receivable - expected_remaining) < 0.01,
+             f"net={net_receivable:,.0f} expected={expected_remaining:,.0f}")
 
-    # ===== Scenario 18: v11 migration exists =====
-    print("\n[18] V11 MIGRATION")
+    # ===== Scenario 18: Profit cap source linking =====
+    print("\n[18] PROFIT CAP SOURCE LINKING")
+    if has_related_col:
+        bad_profit_rows = conn.execute("""
+            SELECT COUNT(*) FROM partner_transactions
+            WHERE kind = 'شريك' AND affects_profit = 1
+              AND source_role = 'profit_recognition'
+              AND source_type = 'customer_payment'
+              AND (related_source_id IS NULL OR related_source_id = '')
+              AND notes LIKE '%#بيع_سيارة_%'
+        """).fetchone()[0]
+        test("Profit rows have related_source_id for car-linked payments",
+             bad_profit_rows == 0, f"bad count={bad_profit_rows}")
+    else:
+        test("Profit rows have related_source_id (column not yet added)", True, "SKIP")
+
+    # ===== Scenario 19: Profit cap not exceeded =====
+    print("\n[19] PROFIT CAP NOT EXCEEDED")
+    sold_cars_cap = conn.execute("""
+        SELECT car_number, purchase_price, selling_price FROM cars WHERE status = 'مبيوعة'
+    """).fetchall()
+    for car in sold_cars_cap:
+        cn = car['car_number']
+        expenses = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?", [cn]
+        ).fetchone()[0]
+        full_profit = car['selling_price'] - car['purchase_price'] - expenses
+        if full_profit <= 0:
+            continue
+        if has_related_col:
+            recognized = conn.execute("""
+                SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                WHERE kind = 'شريك' AND affects_profit = 1
+                  AND source_role = 'profit_recognition'
+                  AND related_source_type = 'car' AND related_source_id = ?
+            """, [cn]).fetchone()[0]
+            recognized_legacy = conn.execute("""
+                SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                WHERE kind = 'شريك' AND affects_profit = 1
+                  AND source_role = 'profit_recognition'
+                  AND (related_source_id IS NULL OR related_source_id = '')
+                  AND notes LIKE ?
+            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+        else:
+            recognized = 0.0
+            recognized_legacy = conn.execute("""
+                SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                WHERE kind = 'شريك' AND affects_profit = 1
+                  AND notes LIKE ?
+            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+        total_recognized = recognized + recognized_legacy
+        test(f"Car {cn}: profit cap respected",
+             total_recognized <= full_profit + 0.01,
+             f"recognized={total_recognized:,.0f} full={full_profit:,.0f}")
+
+    # ===== Scenario 20: Installment ledger balanced =====
+    print("\n[20] INSTALLMENT LEDGER BALANCED")
+    inst_bal_cars = conn.execute("""
+        SELECT car_number, selling_price FROM cars
+        WHERE status = 'مبيوعة' AND payment_type IN ('اقساط', 'موعد')
+    """).fetchall()
+    for car in inst_bal_cars:
+        cn = car['car_number']
+        selling = car['selling_price']
+        bal = conn.execute("""
+            SELECT COALESCE(SUM(debit), 0.0), COALESCE(SUM(credit), 0.0)
+            FROM financial_ledger
+            WHERE reference_type = 'car' AND reference_id = ?
+        """, [cn]).fetchone()
+        if bal:
+            test(f"Car {cn}: installment ledger balanced",
+                 abs(bal[0] - bal[1]) < 0.01,
+                 f"debit={bal[0]:,.0f} credit={bal[1]:,.0f}")
+
+    # ===== Scenario 21: source_id preserved for customer payments =====
+    print("\n[21] SOURCE_ID PRESERVATION")
+    bad_source_id = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE source_type = 'customer_payment'
+          AND source_role IN ('cash_movement', 'profit_recognition')
+          AND source_id NOT IN (SELECT CAST(id AS TEXT) FROM partner_transactions WHERE kind = 'زبون')
+    """).fetchone()[0]
+    test("Customer payment splits have correct source_id (payment ID, not car number)",
+         bad_source_id == 0, f"bad count={bad_source_id}")
+
+    # ===== Scenario 22: v11 migration =====
+    print("\n[22] V11 MIGRATION")
     # This is a static check — just verify the DB version
     db_ver = conn.execute("SELECT MAX(version) FROM db_version").fetchone()[0]
     test("DB version >= 11 (v11 migration applied)",
