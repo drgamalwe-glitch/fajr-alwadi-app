@@ -26,3 +26,4 @@ __pycache__/
 *.pyc
 
 testsprite_tests/tmp/config.json
+git/

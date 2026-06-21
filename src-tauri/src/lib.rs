@@ -540,6 +540,19 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         let _ = conn.execute("INSERT INTO db_version (version) VALUES (4)", []);
     }
 
+    if version < 5 {
+        let _ = conn.execute(
+            "DELETE FROM partner_transactions WHERE kind = 'شريك' AND type = 'ايداع دفعات زبائن'",
+            [],
+        );
+        let _ = conn.execute(
+            "DELETE FROM partner_transactions WHERE kind = 'شريك' AND type = 'ايداع ارباح سيارة' AND notes LIKE '%#بيع_سيارة_%' AND notes NOT LIKE '%رقم حركة دفعة:%'",
+            [],
+        );
+        let _ = conn.execute("INSERT INTO db_version (version) VALUES (5)", []);
+        let _ = rebuild_customer_payment_profit_splits(conn);
+    }
+
     // Performance indexes
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cars_status ON cars(status)",
@@ -940,6 +953,36 @@ fn delete_customer_payment_partner_splits(db: &Connection, payment_tx_id: i64) -
         .prepare(
             "SELECT id, partner_name FROM partner_transactions
              WHERE kind = 'شريك' AND type = 'ايداع دفعات زبائن' AND notes LIKE ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<(i64, String)> = stmt
+        .query_map([&pattern], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    let mut partners_to_recalc = std::collections::HashSet::new();
+    for (split_id, partner_name) in rows {
+        delete_ledger_entries(db, "partner_transaction", &split_id.to_string())?;
+        db.execute("DELETE FROM partner_transactions WHERE id = ?1", [split_id])
+            .map_err(|e| e.to_string())?;
+        partners_to_recalc.insert(partner_name);
+    }
+
+    for p_name in partners_to_recalc {
+        recalculate_partner_total(db, &p_name, "شريك")?;
+    }
+
+    Ok(())
+}
+
+fn delete_customer_payment_profit_splits(db: &Connection, payment_tx_id: i64) -> Result<(), String> {
+    let pattern = format!("%(رقم حركة دفعة: {})%", payment_tx_id);
+    let mut stmt = db
+        .prepare(
+            "SELECT id, partner_name FROM partner_transactions
+             WHERE kind = 'شريك' AND type = 'ايداع ارباح سيارة' AND notes LIKE ?1",
         )
         .map_err(|e| e.to_string())?;
     let rows: Vec<(i64, String)> = stmt
@@ -3523,6 +3566,7 @@ fn recalculate_partner_total(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn check_and_distribute_installment_profits(db: &Connection) -> Result<(), String> {
     // 1. Fetch all sold installment / term cars
     let mut stmt = db.prepare(
@@ -3634,8 +3678,6 @@ fn check_and_distribute_installment_profits(db: &Connection) -> Result<(), Strin
 }
 
 fn recalculate_all_partners(db: &Connection) -> Result<(), String> {
-    check_and_distribute_installment_profits(db)?;
-
     let mut stmt = db
         .prepare("SELECT partner_name, kind FROM partners")
         .map_err(|e| e.to_string())?;
@@ -3880,6 +3922,132 @@ fn extract_car_number_from_notes(notes: &str) -> Option<String> {
     None
 }
 
+fn calculate_customer_payment_profit(
+    db: &Connection,
+    car_number: &str,
+    payment_amount: f64,
+    payment_currency: &str,
+) -> Result<f64, String> {
+    if car_number.is_empty() || payment_amount <= 0.0 {
+        return Ok(0.0);
+    }
+
+    let car_info: Result<(f64, String, String, f64), rusqlite::Error> = db.query_row(
+        "SELECT purchase_price, COALESCE(currency, 'IQD'), COALESCE(sale_currency, 'IQD'), selling_price
+         FROM cars WHERE car_number = ?1",
+        [car_number],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    );
+
+    let (purchase_price, purchase_currency, sale_currency, selling_price) = match car_info {
+        Ok(info) => info,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(0.0),
+        Err(e) => return Err(e.to_string()),
+    };
+
+    if purchase_currency != sale_currency || purchase_currency != payment_currency {
+        return Ok(0.0);
+    }
+
+    let expenses_sum: f64 = db.query_row(
+        "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+        [car_number],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
+
+    let total_cost = purchase_price + expenses_sum;
+    let total_profit = selling_price - total_cost;
+
+    if total_profit <= 0.0 || selling_price <= 0.0 {
+        return Ok(0.0);
+    }
+
+    let profit_ratio = total_profit / selling_price;
+    let payment_profit = payment_amount * profit_ratio;
+
+    if payment_profit < 0.0 {
+        return Ok(0.0);
+    }
+
+    Ok(payment_profit)
+}
+
+fn rebuild_customer_payment_profit_splits(db: &Connection) -> Result<(), String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT id, amount, COALESCE(currency, 'IQD'), COALESCE(notes, ''), date
+             FROM partner_transactions
+             WHERE kind = 'زبون'
+               AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                    OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
+               AND notes LIKE '%#بيع_سيارة_%'",
+        )
+        .map_err(|e| e.to_string())?;
+
+    struct PaymentRow {
+        id: i64,
+        amount: f64,
+        currency: String,
+        notes: String,
+        date: String,
+    }
+
+    let rows: Vec<PaymentRow> = stmt
+        .query_map([], |row| {
+            Ok(PaymentRow {
+                id: row.get(0)?,
+                amount: row.get(1)?,
+                currency: row.get::<_, Option<String>>(2)?.unwrap_or_else(|| "IQD".to_string()),
+                notes: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                date: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    for row in rows {
+        let Some(car_num) = extract_car_number_from_notes(&row.notes) else {
+            continue;
+        };
+
+        let exists_pattern = format!("%(رقم حركة دفعة: {})%", row.id);
+        let already_exists: bool = db
+            .query_row(
+                "SELECT COUNT(*) FROM partner_transactions
+                 WHERE kind = 'شريك' AND type = 'ايداع ارباح سيارة' AND notes LIKE ?1",
+                [&exists_pattern],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+            > 0;
+
+        if already_exists {
+            continue;
+        }
+
+        let payment_profit = calculate_customer_payment_profit(db, &car_num, row.amount, &row.currency)?;
+        if payment_profit > 0.0 {
+            let profit_note = format!(
+                "ربح دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
+                row.notes, row.id, car_num
+            );
+            distribute_to_partners_50(
+                db,
+                payment_profit,
+                &row.currency,
+                &row.date,
+                "قاصه",
+                "ايداع ارباح سيارة",
+                &profit_note,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
 fn apply_partner_transaction_splits(
     db: &Connection,
     tx_id: i64,
@@ -3934,22 +4102,25 @@ fn apply_partner_transaction_splits(
         || type_.starts_with("تسديد")
     );
     if is_customer_payment {
-        let car_tag = if let Some(notes_str) = notes {
-            if let Some(car_num) = extract_car_number_from_notes(notes_str) {
-                format!(" #بيع_سيارة_{}", car_num)
-            } else {
-                "".to_string()
+        let notes_str = notes.unwrap_or("");
+        if let Some(car_num) = extract_car_number_from_notes(notes_str) {
+            let payment_profit = calculate_customer_payment_profit(db, &car_num, amount, currency)?;
+            if payment_profit > 0.0 {
+                let profit_note = format!(
+                    "ربح دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
+                    notes_str, tx_id, car_num
+                );
+                distribute_to_partners_50(
+                    db,
+                    payment_profit,
+                    currency,
+                    date,
+                    "قاصه",
+                    "ايداع ارباح سيارة",
+                    &profit_note,
+                )?;
             }
-        } else {
-            "".to_string()
-        };
-        let partner_note = format!(
-            "دفعات زبون: {} ({}){}",
-            notes.unwrap_or(""),
-            tx_id,
-            car_tag
-        );
-        distribute_to_partners_50(db, amount, currency, date, "قاصه", "ايداع دفعات زبائن", &partner_note)?;
+        }
     }
 
     Ok(())
@@ -4143,6 +4314,7 @@ fn update_partner_transaction(
     reverse_ledger_entries(&db, "partner_transaction", &id.to_string())?;
 
     delete_customer_payment_partner_splits(&db, id)?;
+    delete_customer_payment_profit_splits(&db, id)?;
 
     // Clean up old split transactions and profit distributions for this ID, with ledger reversing
     let target_pattern = format!("%(رقم الحركة: {})%", id);
@@ -4382,6 +4554,7 @@ fn delete_partner_transaction(
     }
 
     delete_customer_payment_partner_splits(&db, id)?;
+    delete_customer_payment_profit_splits(&db, id)?;
 
     // Delete ledger entries for this partner transaction
     delete_ledger_entries(&db, "partner_transaction", &id.to_string())?;
@@ -5894,61 +6067,47 @@ fn get_partners_totals(state: State<AppState>, kind: String) -> Result<(f64, f64
 fn calculate_profit_totals_since(
     db: &Connection,
     start_date: &str,
-    start_time: &str,
+    _start_time: &str,
 ) -> Result<(f64, f64), String> {
-    let revenue_iqd: f64 = db.query_row(
-        "SELECT COALESCE(SUM(credit - debit), 0.0) FROM financial_ledger
-         WHERE account_type = 'revenue' AND currency = 'IQD'
-           AND (date > ?1 OR (date = ?1 AND time > ?2))
-           AND NOT (reference_type = 'car' AND reference_id IN (
-               SELECT car_number FROM cars 
-               WHERE payment_type IN ('اقساط', 'موعد') 
-                 AND (SELECT COUNT(*) FROM partner_transactions WHERE notes LIKE '%#بيع_سيارة_' || cars.car_number || '%' AND type LIKE 'باقي%') > 0
-           ))",
-        params![start_date, start_time],
-        |row| row.get(0),
-    ).unwrap_or(0.0);
-    let revenue_usd: f64 = db.query_row(
-        "SELECT COALESCE(SUM(credit - debit), 0.0) FROM financial_ledger
-         WHERE account_type = 'revenue' AND currency = 'USD'
-           AND (date > ?1 OR (date = ?1 AND time > ?2))
-           AND NOT (reference_type = 'car' AND reference_id IN (
-               SELECT car_number FROM cars 
-               WHERE payment_type IN ('اقساط', 'موعد') 
-                 AND (SELECT COUNT(*) FROM partner_transactions WHERE notes LIKE '%#بيع_سيارة_' || cars.car_number || '%' AND type LIKE 'باقي%') > 0
-           ))",
-        params![start_date, start_time],
+    let realized_profit_iqd: f64 = db.query_row(
+        "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+         WHERE kind = 'شريك' AND COALESCE(currency, 'IQD') = 'IQD'
+           AND type IN ('ايداع ارباح سيارة', 'ايداع ارباح وكالة')
+           AND (date > ?1 OR date = ?1)",
+        [start_date],
         |row| row.get(0),
     ).unwrap_or(0.0);
 
-    let expenses_iqd: f64 = db.query_row(
-        "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
-         WHERE account_type = 'expense' AND currency = 'IQD'
-           AND (date > ?1 OR (date = ?1 AND time > ?2))
-           AND NOT (reference_type = 'car' AND reference_id IN (
-               SELECT car_number FROM cars 
-               WHERE payment_type IN ('اقساط', 'موعد') 
-                 AND (SELECT COUNT(*) FROM partner_transactions WHERE notes LIKE '%#بيع_سيارة_' || cars.car_number || '%' AND type LIKE 'باقي%') > 0
-           ))",
-        params![start_date, start_time],
+    let realized_profit_usd: f64 = db.query_row(
+        "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+         WHERE kind = 'شريك' AND COALESCE(currency, 'IQD') = 'USD'
+           AND type IN ('ايداع ارباح سيارة', 'ايداع ارباح وكالة')
+           AND (date > ?1 OR date = ?1)",
+        [start_date],
         |row| row.get(0),
     ).unwrap_or(0.0);
-    let expenses_usd: f64 = db.query_row(
-        "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
-         WHERE account_type = 'expense' AND currency = 'USD'
-           AND (date > ?1 OR (date = ?1 AND time > ?2))
-           AND NOT (reference_type = 'car' AND reference_id IN (
-               SELECT car_number FROM cars 
-               WHERE payment_type IN ('اقساط', 'موعد') 
-                 AND (SELECT COUNT(*) FROM partner_transactions WHERE notes LIKE '%#بيع_سيارة_' || cars.car_number || '%' AND type LIKE 'باقي%') > 0
-           ))",
-        params![start_date, start_time],
+
+    let general_expenses_iqd: f64 = db.query_row(
+        "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
+         WHERE COALESCE(currency, 'IQD') = 'IQD'
+           AND (car_number IS NULL OR car_number = '')
+           AND (date > ?1 OR date = ?1)",
+        [start_date],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
+
+    let general_expenses_usd: f64 = db.query_row(
+        "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
+         WHERE COALESCE(currency, 'IQD') = 'USD'
+           AND (car_number IS NULL OR car_number = '')
+           AND (date > ?1 OR date = ?1)",
+        [start_date],
         |row| row.get(0),
     ).unwrap_or(0.0);
 
     Ok((
-        revenue_iqd - expenses_iqd,
-        revenue_usd - expenses_usd,
+        realized_profit_iqd - general_expenses_iqd,
+        realized_profit_usd - general_expenses_usd,
     ))
 }
 
@@ -6083,6 +6242,8 @@ fn get_profit_distribution_summary(
         undistributed_iqd += p.profit_iqd - p.drawings_iqd;
         undistributed_usd += p.profit_usd - p.drawings_usd;
     }
+    undistributed_iqd -= expenses_iqd;
+    undistributed_usd -= expenses_usd;
 
     Ok(ProfitDistributionSummary {
         undistributed_iqd,
