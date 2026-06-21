@@ -657,6 +657,37 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         let _ = conn.execute("INSERT INTO db_version (version) VALUES (7)", []);
     }
 
+    // Version 8: Fix car_expense ledger rows that used reference_type = 'expense'
+    if version < 8 {
+        // Delete wrong car_expense ledger entries (they used 'expense' instead of 'car_expense')
+        let _ = conn.execute(
+            "DELETE FROM financial_ledger
+             WHERE reference_type = 'expense'
+               AND reference_id IN (SELECT CAST(id AS TEXT) FROM car_expenses)",
+            [],
+        );
+        // Also clean orphan car_expense entries
+        let _ = conn.execute(
+            "DELETE FROM financial_ledger
+             WHERE reference_type = 'car_expense'
+               AND reference_id NOT IN (SELECT CAST(id AS TEXT) FROM car_expenses)",
+            [],
+        );
+        // Classify all direct INSERT rows that still have NULL source_type
+        // (these were inserted by old code without source fields)
+        let _ = conn.execute(
+            "UPDATE partner_transactions
+             SET source_type = 'legacy_unclassified',
+                 source_role = 'legacy_account_movement',
+                 affects_qasa = CASE WHEN kind IN ('ممول', 'شركة') THEN 0 ELSE 1 END,
+                 affects_partner_cash = CASE WHEN kind IN ('ممول', 'شركة', 'مستثمر') THEN 0 ELSE 1 END,
+                 affects_profit = 0
+             WHERE source_type IS NULL AND kind IN ('ممول', 'شركة', 'مستثمر')",
+            [],
+        );
+        let _ = conn.execute("INSERT INTO db_version (version) VALUES (8)", []);
+    }
+
     // Performance indexes
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cars_status ON cars(status)",
@@ -1095,8 +1126,10 @@ fn delete_customer_payment_profit_splits(db: &Connection, payment_tx_id: i64) ->
 
 #[allow(clippy::type_complexity)]
 fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), String> {
-    let tx_info: Result<(String, String, String, f64, String, Option<String>, Option<String>, String, String), rusqlite::Error> = conn.query_row(
-        "SELECT partner_name, kind, type, amount, date, notes, currency, COALESCE(payment_type, 'قاصه'), COALESCE(time, '00:00')
+    // Issue 11: Read affects_* flags to decide whether to create cash ledger entries
+    let tx_info: Result<(String, String, String, f64, String, Option<String>, Option<String>, String, String, i32, i32, i32), rusqlite::Error> = conn.query_row(
+        "SELECT partner_name, kind, type, amount, date, notes, currency, COALESCE(payment_type, 'قاصه'), COALESCE(time, '00:00'),
+                COALESCE(affects_qasa, 1), COALESCE(affects_partner_cash, 1), COALESCE(affects_profit, 0)
          FROM partner_transactions WHERE id = ?1",
         [tx_id],
         |row| {
@@ -1110,11 +1143,14 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
                 row.get(6)?,
                 row.get(7)?,
                 row.get(8)?,
+                row.get(9)?,
+                row.get(10)?,
+                row.get(11)?,
             ))
         }
     );
 
-    let (p_name, kind, tx_type, amount, tx_date, notes_opt, curr_opt, payment_type, tx_time) =
+    let (p_name, kind, tx_type, amount, tx_date, notes_opt, curr_opt, payment_type, tx_time, affects_qasa, affects_partner_cash, _affects_profit) =
         match tx_info {
             Ok(info) => info,
             Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
@@ -1127,8 +1163,12 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
 
     let is_deposit = is_deposit_type(&tx_type);
 
+    // Issue 11: Skip cash ledger entries for rows that don't affect Qasa/Cash
+    let should_create_cash_entry = affects_qasa == 1 || affects_partner_cash == 1;
+
     if kind == "زبون" {
-        if is_deposit {
+        // Issue 11: Only create cash ledger entries if the row affects Qasa/Cash
+        if is_deposit && should_create_cash_entry {
             record_ledger_entry(
                 conn,
                 &tx_date,
@@ -1221,7 +1261,8 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
 
     match kind.as_str() {
         "شريك" => {
-            if is_deposit {
+            // Issue 11: Only create cash entries if the row affects Qasa/Cash
+            if is_deposit && should_create_cash_entry {
                 record_ledger_entry(
                     conn,
                     &tx_date,
@@ -1395,22 +1436,25 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
                     Some(&notes),
                 )
                 .map_err(|e| e.to_string())?;
-                record_ledger_entry(
-                    conn,
-                    &tx_date,
-                    &tx_time,
-                    "cash",
-                    Some(&payment_type),
-                    0.0,
-                    amount,
-                    &curr,
-                    "partner_transaction",
-                    &ref_id,
-                    "سداد ممول نقدي",
-                    &format!("سداد نقدي للممول: {}", p_name),
-                    Some(&notes),
-                )
-                .map_err(|e| e.to_string())?;
+                // Issue 11: Only create cash entry if the row affects Qasa/Cash
+                if should_create_cash_entry {
+                    record_ledger_entry(
+                        conn,
+                        &tx_date,
+                        &tx_time,
+                        "cash",
+                        Some(&payment_type),
+                        0.0,
+                        amount,
+                        &curr,
+                        "partner_transaction",
+                        &ref_id,
+                        "سداد ممول نقدي",
+                        &format!("سداد نقدي للممول: {}", p_name),
+                        Some(&notes),
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
             }
         }
         "شركة" => {
@@ -1448,22 +1492,25 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
                     Some(&notes),
                 )
                 .map_err(|e| e.to_string())?;
-                record_ledger_entry(
-                    conn,
-                    &tx_date,
-                    &tx_time,
-                    "cash",
-                    Some(&payment_type),
-                    0.0,
-                    amount,
-                    &curr,
-                    "partner_transaction",
-                    &ref_id,
-                    "سحب شركة نقدي",
-                    &format!("سداد نقدي لحساب الشركة: {}", p_name),
-                    Some(&notes),
-                )
-                .map_err(|e| e.to_string())?;
+                // Issue 11: Only create cash entry if the row affects Qasa/Cash
+                if should_create_cash_entry {
+                    record_ledger_entry(
+                        conn,
+                        &tx_date,
+                        &tx_time,
+                        "cash",
+                        Some(&payment_type),
+                        0.0,
+                        amount,
+                        &curr,
+                        "partner_transaction",
+                        &ref_id,
+                        "سحب شركة نقدي",
+                        &format!("سداد نقدي لحساب الشركة: {}", p_name),
+                        Some(&notes),
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
             }
         }
         _ => {}
@@ -1844,19 +1891,40 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
             let amount_paid = amount_paid_opt.unwrap_or(selling_price);
             let amount_remaining = amount_remaining_opt.unwrap_or(0.0);
 
-            conn.execute(
-                "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-                 VALUES (?1, ?2, 'revenue', ?3, 0.0, ?4, ?5, 'car', ?6, 'بيع سيارة', ?7, NULL)",
-                params![
-                    sale_date,
-                    sale_time,
-                    car_number,
-                    selling_price,
-                    sale_currency,
-                    car_number,
-                    format!("إيراد بيع سيارة {} ({}) إلى {}", car_name, car_number, buyer_name)
-                ],
-            )?;
+            // Issue 7: For installment/term sales, only record amount_paid as realized revenue
+            if payment_type == "كاش" {
+                // Cash sale: full selling price as revenue
+                conn.execute(
+                    "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
+                     VALUES (?1, ?2, 'revenue', ?3, 0.0, ?4, ?5, 'car', ?6, 'بيع سيارة', ?7, NULL)",
+                    params![
+                        sale_date,
+                        sale_time,
+                        car_number,
+                        selling_price,
+                        sale_currency,
+                        car_number,
+                        format!("إيراد بيع سيارة {} ({}) إلى {}", car_name, car_number, buyer_name)
+                    ],
+                )?;
+            } else {
+                // Installment/term sale: only amount_paid as realized revenue
+                if amount_paid > 0.0 {
+                    conn.execute(
+                        "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
+                         VALUES (?1, ?2, 'revenue', ?3, 0.0, ?4, ?5, 'car', ?6, 'بيع سيارة - جزئي', ?7, NULL)",
+                        params![
+                            sale_date,
+                            sale_time,
+                            car_number,
+                            amount_paid,
+                            sale_currency,
+                            car_number,
+                            format!("إيراد جزئي بيع سيارة {} ({})", car_name, car_number)
+                        ],
+                    )?;
+                }
+            }
 
             if payment_type == "كاش" {
                 conn.execute(
@@ -1940,7 +2008,7 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
         }
     }
 
-    // 2. Car Expenses
+    // 2. Car Expenses (Issue 6: use reference_type = 'car_expense')
     let mut ce_stmt = conn.prepare(
         "SELECT id, car_number, description, amount, date, currency, time FROM car_expenses",
     )?;
@@ -1961,7 +2029,7 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
 
         conn.execute(
             "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-             VALUES (?1, ?2, 'inventory', ?3, ?4, 0.0, ?5, 'expense', ?6, 'مصروف سيارة', ?7, NULL)",
+             VALUES (?1, ?2, 'inventory', ?3, ?4, 0.0, ?5, 'car_expense', ?6, 'مصروف سيارة', ?7, NULL)",
             params![
                 ce_date,
                 ce_time,
@@ -1975,7 +2043,7 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
 
         conn.execute(
             "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-             VALUES (?1, ?2, 'cash', 'قاصه', 0.0, ?3, ?4, 'expense', ?5, 'مصروف سيارة نقدي', ?6, NULL)",
+             VALUES (?1, ?2, 'cash', 'قاصه', 0.0, ?3, ?4, 'car_expense', ?5, 'مصروف سيارة نقدي', ?6, NULL)",
             params![
                 ce_date,
                 ce_time,
@@ -2087,7 +2155,7 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
                      VALUES (?1, ?2, 'receivable', ?3, 0.0, ?4, ?5, 'partner_transaction', ?6, 'ايداع زبون مديونية', ?7, ?8)",
                     params![tx_date, tx_time, p_name, amount, curr, id.to_string(), format!("تخفيض مديونية الزبون {}", p_name), notes],
                 )?;
-            } else if tx_type.starts_with("سحب") {
+        } else if tx_type.starts_with("سحب") {
                 conn.execute(
                     "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
                      VALUES (?1, ?2, 'receivable', ?3, ?4, 0.0, ?5, 'partner_transaction', ?6, 'سحب زبون مديونية', ?7, ?8)",
@@ -2137,7 +2205,7 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
                          VALUES (?1, ?2, 'capital', ?3, 0.0, ?4, ?5, 'partner_transaction', ?6, 'ايداع شريك رأس مال', ?7, ?8)",
                         params![tx_date, tx_time, p_name, amount, curr, id.to_string(), format!("إيداع رأس مال الشريك {}", p_name), notes],
                     )?;
-                } else if tx_type.starts_with("سحب شريك") {
+            } else if tx_type.starts_with("سحب شريك") {
                     conn.execute(
                         "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
                          VALUES (?1, ?2, 'capital', ?3, ?4, 0.0, ?5, 'partner_transaction', ?6, 'سحب شريك رأس مال', ?7, ?8)",
@@ -3036,8 +3104,8 @@ fn add_car(
                     .replace("  ", " ");
 
                 db.execute(
-                    "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
-                     VALUES (?1, ?2, 'سحب شراء سيارة', ?3, ?4, strftime('%H:%M', 'now', 'localtime'), ?5, ?6, ?7)",
+                    "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit)
+                     VALUES (?1, ?2, 'سحب شراء سيارة', ?3, ?4, strftime('%H:%M', 'now', 'localtime'), ?5, ?6, ?7, 'car_purchase', ?8, 'funder_or_company_account_movement', 0, 0, 0)",
                     params![
                         f_name,
                         p_kind,
@@ -3046,6 +3114,7 @@ fn add_car(
                         note,
                         currency.as_deref().unwrap_or("IQD"),
                         purchase_payment_type.as_deref().unwrap_or("قاصه"),
+                        car_number.as_str(),
                     ],
                 )
                 .map_err(|e| e.to_string())?;
@@ -3949,6 +4018,27 @@ fn add_partner_transaction(
 
     let tx_id = db.last_insert_rowid();
 
+    // Issue 2: Classify the inserted row immediately based on kind
+    let (src_type, src_role, aq, apc, apr) = match kind.trim() {
+        "مستثمر" => ("investor_transaction", "account_movement", 1, 0, 0),
+        "ممول" => ("funder_transaction", "account_movement", 0, 0, 0),
+        "شركة" => ("company_transaction", "account_movement", 0, 0, 0),
+        "زبون" => ("customer_transaction", "account_movement", 0, 0, 0),
+        "شريك" => {
+            // For partners, check if it's profit recognition or real cash
+            if type_.trim() == "ايداع ارباح سيارة" || type_.trim() == "ايداع ارباح وكالة" {
+                ("partner_profit", "profit_recognition", 0, 0, 1)
+            } else {
+                ("partner_cash", "cash_movement", 1, 1, 0)
+            }
+        }
+        _ => ("manual_transaction", "account_movement", 1, 1, 0),
+    };
+    db.execute(
+        "UPDATE partner_transactions SET source_type = ?1, source_id = ?2, source_role = ?3, affects_qasa = ?4, affects_partner_cash = ?5, affects_profit = ?6 WHERE id = ?7",
+        params![src_type, tx_id.to_string(), src_role, aq, apc, apr, tx_id],
+    ).map_err(|e| e.to_string())?;
+
     // Ledger record
     record_partner_ledger_entries(&db, tx_id)?;
 
@@ -4372,6 +4462,17 @@ fn pay_financier_from_partners(
     .map_err(|e| e.to_string())?;
 
     let tx_id = db.last_insert_rowid();
+
+    // Issue 4: Classify the original repayment row based on financier_kind
+    let (src_type, src_role, aq, apc, apr) = match financier_kind {
+        "مستثمر" => ("investor_transaction", "repayment_account_movement", 1, 0, 0),
+        "شركة" => ("company_transaction", "repayment_account_movement", 0, 0, 0),
+        _ => ("funder_transaction", "repayment_account_movement", 0, 0, 0),
+    };
+    db.execute(
+        "UPDATE partner_transactions SET source_type = ?1, source_id = ?2, source_role = ?3, affects_qasa = ?4, affects_partner_cash = ?5, affects_profit = ?6 WHERE id = ?7",
+        params![src_type, tx_id.to_string(), src_role, aq, apc, apr, tx_id],
+    ).map_err(|e| e.to_string())?;
 
     // Ledger record
     record_partner_ledger_entries(&db, tx_id)?;
@@ -5102,7 +5203,8 @@ fn add_expense(
                 > 0;
 
             if is_sold {
-                reverse_ledger_entries(&db, "car", car_num)?;
+                // Issue 10: Use delete instead of reverse for clean rebuild
+                delete_ledger_entries(&db, "car", car_num)?;
                 record_car_ledger_entries(&db, car_num)?;
             }
 
@@ -5422,7 +5524,8 @@ fn add_car_expense_record(
         > 0;
 
     if is_sold {
-        reverse_ledger_entries(&db, "car", car_number.trim())?;
+        // Issue 10: Use delete instead of reverse for clean rebuild
+        delete_ledger_entries(&db, "car", car_number.trim())?;
         record_car_ledger_entries(&db, car_number.trim())?;
     }
 
@@ -5497,7 +5600,8 @@ fn delete_car_expense_record(state: State<AppState>, id: i64) -> Result<(), Stri
             > 0;
 
         if is_sold {
-            reverse_ledger_entries(&db, "car", &car_number)?;
+            // Issue 10: Use delete instead of reverse for clean rebuild
+            delete_ledger_entries(&db, "car", &car_number)?;
             record_car_ledger_entries(&db, &car_number)?;
         }
     } else {
@@ -5609,9 +5713,10 @@ fn distribute_to_partners_50(
         )
         .map_err(|e| e.to_string())?;
 
+        // Issue 12: Use safe default source fields for legacy helper
         db.execute(
-            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
-             VALUES (?1, 'شريك', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit)
+             VALUES (?1, 'شريك', ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'legacy_distribution', ?9, 'legacy_cash_movement', 1, 1, 0)",
             params![
                 p_name,
                 tx_type,
@@ -5621,6 +5726,7 @@ fn distribute_to_partners_50(
                 notes,
                 currency,
                 payment_type,
+                format!("legacy_{}_{}", p_name, date),
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -5849,22 +5955,17 @@ fn update_agency(
 fn delete_agency(state: State<AppState>, id: i64) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    let (old_agent_name, new_agent_name): (String, String) = db
-        .query_row(
-            "SELECT old_agent_name, new_agent_name FROM agencies WHERE id = ?1",
-            [id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap_or_default();
+    // Issue 9: Delete only by source fields, not by names/notes
+    // 1. Delete agency base profit rows
+    db.execute(
+        "DELETE FROM partner_transactions WHERE source_type = 'agency' AND source_id = ?1",
+        [id.to_string()],
+    ).map_err(|e| e.to_string())?;
 
-    let tx_agency_note = format!("وكالة {} {}", old_agent_name.trim(), new_agent_name.trim())
-        .trim()
-        .replace("  ", " ");
-    // Phase 14: Delete by agency_id
-    delete_agency_profit_distributions(&db, id)?;
-
-    // حذف حركات القيد في دفتر الأستاذ للوكالة وحركاتها
+    // 2. Delete ledger entries for the agency itself
     delete_ledger_entries(&db, "agency", &id.to_string())?;
+
+    // 3. Get all agency transactions and delete their partner rows + ledger entries
     let mut stmt = db
         .prepare("SELECT id FROM agency_transactions WHERE agency_id = ?1")
         .map_err(|e| e.to_string())?;
@@ -5876,19 +5977,13 @@ fn delete_agency(state: State<AppState>, id: i64) -> Result<(), String> {
     drop(stmt);
     for tx_id in &tx_ids {
         delete_ledger_entries(&db, "agency_transaction", &tx_id.to_string())?;
-        // Phase 14: Delete transaction profits by source fields
         db.execute(
             "DELETE FROM partner_transactions WHERE source_type = 'agency_transaction' AND source_id = ?1",
             [tx_id.to_string()],
         ).map_err(|e| e.to_string())?;
     }
 
-    db.execute(
-        "DELETE FROM partner_transactions WHERE type IN ('ايداع وكالة', 'سحب وكالة') AND notes = ?1",
-        [&tx_agency_note],
-    )
-    .map_err(|e| e.to_string())?;
-
+    // 4. Delete agency transactions and agency record
     db.execute("DELETE FROM agency_transactions WHERE agency_id = ?1", [id])
         .map_err(|e| e.to_string())?;
     db.execute("DELETE FROM agencies WHERE id = ?1", [id])
@@ -6014,49 +6109,18 @@ fn add_agency_transaction(
 fn delete_agency_transaction(state: State<AppState>, id: i64) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    let (agency_id, _tx_date, _tx_type): (i64, String, String) = db
-        .query_row(
-            "SELECT agency_id, date, type_ FROM agency_transactions WHERE id = ?1",
-            [id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .map_err(|e| e.to_string())?;
-
-    // Phase 14: Delete by source fields instead of name/date/notes
-    // حذف حركات القيد في دفتر الأستاذ
+    // Issue 9: Delete only by source fields, not by names/notes
+    // 1. Delete ledger entries for this transaction
     delete_ledger_entries(&db, "agency_transaction", &id.to_string())?;
 
-    // Delete profit rows for this specific transaction
+    // 2. Delete profit rows for this specific transaction by source fields
     db.execute(
         "DELETE FROM partner_transactions WHERE source_type = 'agency_transaction' AND source_id = ?1",
         [id.to_string()],
     )
     .map_err(|e| e.to_string())?;
 
-    // Also delete legacy rows that might not have source fields
-    let (old_agent_name, new_agent_name): (String, String) = db
-        .query_row(
-            "SELECT old_agent_name, new_agent_name FROM agencies WHERE id = ?1",
-            [agency_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap_or_default();
-    let agency_note = format!("وكالة {} {}", old_agent_name.trim(), new_agent_name.trim())
-        .trim()
-        .replace("  ", " ");
-    let agency_profit_note_str = format!(
-        "ايداع ارباح وكالة {} {}",
-        old_agent_name.trim(),
-        new_agent_name.trim()
-    )
-    .trim()
-    .replace("  ", " ");
-    db.execute(
-        "DELETE FROM partner_transactions WHERE source_type IS NULL AND (notes = ?1 OR notes = ?2)",
-        params![&agency_note, &agency_profit_note_str],
-    )
-    .map_err(|e| e.to_string())?;
-
+    // 3. Delete the agency transaction record itself
     db.execute("DELETE FROM agency_transactions WHERE id = ?1", [id])
         .map_err(|e| e.to_string())?;
 
@@ -6472,8 +6536,17 @@ fn get_profit_distribution_summary(
 ) -> Result<ProfitDistributionSummary, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    let start = start_date.unwrap_or_else(|| "1970-01-01".to_string());
+    // Issue 8: Use current profit period start (with time) for consistency with Dashboard
+    let (current_date, current_time) = now_datetime();
+    let (period_start_date, period_start_time) =
+        current_profit_period_start(&db, &current_date, &current_time)?;
+
+    let start = start_date.unwrap_or_else(|| period_start_date.clone());
     let end = end_date.unwrap_or_else(|| "9999-12-31".to_string());
+
+    // Use time-aware filtering when start matches the period start
+    let use_time = start == period_start_date && !period_start_time.is_empty();
+    let effective_start_time = if use_time { period_start_time.as_str() } else { "00:00" };
 
     let mut stmt = db
         .prepare("SELECT partner_name FROM partners WHERE kind = 'شريك' ORDER BY partner_name")
@@ -6490,23 +6563,52 @@ fn get_profit_distribution_summary(
     let mut partners = Vec::new();
     for name in partners_list {
         // Phase 9: Use affects_profit = 1 instead of type names
-        let profit_iqd: f64 = db.query_row(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-             WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'IQD'
-               AND affects_profit = 1
-               AND date >= ?2 AND date <= ?3",
-            params![&name, &start, &end],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
+        // Issue 8: Use time-aware filtering
+        let profit_iqd: f64 = if use_time {
+            db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'IQD'
+                   AND affects_profit = 1
+                   AND (
+                     date > ?2
+                     OR (date = ?2 AND COALESCE(time, '00:00') >= ?3)
+                   )",
+                params![&name, &start, effective_start_time],
+                |row| row.get(0),
+            ).unwrap_or(0.0)
+        } else {
+            db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'IQD'
+                   AND affects_profit = 1
+                   AND date >= ?2 AND date <= ?3",
+                params![&name, &start, &end],
+                |row| row.get(0),
+            ).unwrap_or(0.0)
+        };
 
-        let profit_usd: f64 = db.query_row(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-             WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'USD'
-               AND affects_profit = 1
-               AND date >= ?2 AND date <= ?3",
-            params![&name, &start, &end],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
+        let profit_usd: f64 = if use_time {
+            db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'USD'
+                   AND affects_profit = 1
+                   AND (
+                     date > ?2
+                     OR (date = ?2 AND COALESCE(time, '00:00') >= ?3)
+                   )",
+                params![&name, &start, effective_start_time],
+                |row| row.get(0),
+            ).unwrap_or(0.0)
+        } else {
+            db.query_row(
+                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                 WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'USD'
+                   AND affects_profit = 1
+                   AND date >= ?2 AND date <= ?3",
+                params![&name, &start, &end],
+                |row| row.get(0),
+            ).unwrap_or(0.0)
+        };
 
         // Query IQD drawings (only type = 'سحب شريك', excluding expenses)
         let drawings_iqd: f64 = db.query_row(
@@ -6538,23 +6640,52 @@ fn get_profit_distribution_summary(
     }
 
     // Phase 9: Only general expenses (not linked to a car)
-    let expenses_iqd: f64 = db.query_row(
-        "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
-         WHERE COALESCE(currency, 'IQD') = 'IQD'
-           AND (car_number IS NULL OR car_number = '')
-           AND date >= ?1 AND date <= ?2",
-        params![&start, &end],
-        |row| row.get(0),
-    ).unwrap_or(0.0);
+    // Issue 8: Use time-aware filtering for consistency
+    let expenses_iqd: f64 = if use_time {
+        db.query_row(
+            "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
+             WHERE COALESCE(currency, 'IQD') = 'IQD'
+               AND (car_number IS NULL OR car_number = '')
+               AND (
+                 date > ?1
+                 OR (date = ?1 AND COALESCE(time, '00:00') >= ?2)
+               )",
+            params![&start, effective_start_time],
+            |row| row.get(0),
+        ).unwrap_or(0.0)
+    } else {
+        db.query_row(
+            "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
+             WHERE COALESCE(currency, 'IQD') = 'IQD'
+               AND (car_number IS NULL OR car_number = '')
+               AND date >= ?1 AND date <= ?2",
+            params![&start, &end],
+            |row| row.get(0),
+        ).unwrap_or(0.0)
+    };
 
-    let expenses_usd: f64 = db.query_row(
-        "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
-         WHERE COALESCE(currency, 'IQD') = 'USD'
-           AND (car_number IS NULL OR car_number = '')
-           AND date >= ?1 AND date <= ?2",
-        params![&start, &end],
-        |row| row.get(0),
-    ).unwrap_or(0.0);
+    let expenses_usd: f64 = if use_time {
+        db.query_row(
+            "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
+             WHERE COALESCE(currency, 'IQD') = 'USD'
+               AND (car_number IS NULL OR car_number = '')
+               AND (
+                 date > ?1
+                 OR (date = ?1 AND COALESCE(time, '00:00') >= ?2)
+               )",
+            params![&start, effective_start_time],
+            |row| row.get(0),
+        ).unwrap_or(0.0)
+    } else {
+        db.query_row(
+            "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
+             WHERE COALESCE(currency, 'IQD') = 'USD'
+               AND (car_number IS NULL OR car_number = '')
+               AND date >= ?1 AND date <= ?2",
+            params![&start, &end],
+            |row| row.get(0),
+        ).unwrap_or(0.0)
+    };
 
     let mut undistributed_iqd = 0.0;
     let mut undistributed_usd = 0.0;
@@ -7023,8 +7154,8 @@ fn settle_company_through_funder(
     let note = format!("تسديد {} من قبل {}", company_name.trim(), funder_name.trim());
     let company_note = note.clone();
     db.execute(
-        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
-         VALUES (?1, 'شركة', 'سحب', ?2, ?3, ?4, ?5, ?6, 'نقدا')",
+        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit)
+         VALUES (?1, 'شركة', 'سحب', ?2, ?3, ?4, ?5, ?6, 'نقدا', 'company_funder_settlement', ?7, 'company_account_movement', 0, 0, 0)",
         params![
             company_name.trim(),
             amount,
@@ -7032,6 +7163,7 @@ fn settle_company_through_funder(
             &time_str,
             &company_note,
             curr,
+            format!("settlement_{}", company_name.trim()),
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -7042,8 +7174,8 @@ fn settle_company_through_funder(
     // 2. Create funder deposit (funder pays out to cover the company)
     let funder_note = note.clone();
     db.execute(
-        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
-         VALUES (?1, 'ممول', 'ايداع', ?2, ?3, ?4, ?5, ?6, 'قاصه')",
+        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit)
+         VALUES (?1, 'ممول', 'ايداع', ?2, ?3, ?4, ?5, ?6, 'قاصه', 'company_funder_settlement', ?7, 'funder_account_movement', 0, 0, 0)",
         params![
             funder_name.trim(),
             amount,
@@ -7051,6 +7183,7 @@ fn settle_company_through_funder(
             &time_str,
             &funder_note,
             curr,
+            format!("settlement_{}", funder_name.trim()),
         ],
     )
     .map_err(|e| e.to_string())?;

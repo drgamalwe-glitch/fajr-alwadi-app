@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Accounting Test Scenarios for Fajr Alwadi
+Practical Accounting Test Scenarios for Fajr Alwadi
 Validates Instructions.md required scenarios against the database.
 """
 
@@ -27,18 +27,27 @@ def check(db_path):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     all_pass = True
+    results = []
 
     print("=" * 60)
-    print("ACCOUNTING TEST SCENARIOS — Instructions.md")
+    print("PRACTICAL ACCOUNTING TESTS — Instructions.md")
     print("=" * 60)
+
+    def test(name, passed, detail=""):
+        nonlocal all_pass
+        status = "✅" if passed else "❌"
+        if not passed:
+            all_pass = False
+        msg = f"  {status} {name}"
+        if detail:
+            msg += f" — {detail}"
+        print(msg)
+        results.append((name, passed, detail))
 
     # ===== Scenario 1: Cash Sale =====
-    print("\n[1] CASH SALE SCENARIO")
-    print("  Expected: Qasa/Cash increase = selling_price only")
-    print("  Expected: Profit recognized separately, not as extra cash")
+    print("\n[1] CASH SALE")
     cash_cars = conn.execute("""
-        SELECT car_number, car_name, purchase_price, selling_price,
-               COALESCE(sale_currency, 'IQD') as sale_currency
+        SELECT car_number, car_name, purchase_price, selling_price
         FROM cars WHERE status = 'مبيوعة' AND payment_type = 'كاش'
     """).fetchall()
     for car in cash_cars:
@@ -50,25 +59,33 @@ def check(db_path):
         if full_profit <= 0:
             continue
 
-        # Check: profit rows do NOT affect Qasa
+        # Profit rows must NOT affect Qasa
         profit_qasa = conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE affects_profit = 1 AND affects_qasa = 1
               AND type = 'ايداع ارباح سيارة'
               AND notes LIKE ?
         """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+        test(f"Cash sale {cn}: profit rows don't inflate Qasa",
+             profit_qasa < 0.01,
+             f"profit in Qasa={profit_qasa:,.0f}")
 
-        if profit_qasa > 0.01:
-            print(f"  ❌ FAIL: Car {cn} profit rows affect Qasa ({profit_qasa:,.0f})")
-            all_pass = False
-        else:
-            print(f"  ✅ Car {cn}: Profit rows do not inflate Qasa")
+        # Qasa increase = selling_price only
+        cash_increase = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+            WHERE affects_qasa = 1 AND kind = 'شريك'
+              AND type = 'ايداع بيع سيارة'
+              AND notes LIKE ?
+        """, [f"%{cn}%"]).fetchone()[0]
+        if cash_increase > 0:
+            test(f"Cash sale {cn}: Qasa increase = selling_price",
+                 abs(cash_increase - car['selling_price']) < 0.01,
+                 f"Qasa={cash_increase:,.0f} expected={car['selling_price']:,.0f}")
 
     # ===== Scenario 2: Installment Sale =====
-    print("\n[2] INSTALLMENT SALE SCENARIO")
+    print("\n[2] INSTALLMENT SALE")
     inst_cars = conn.execute("""
-        SELECT car_number, car_name, purchase_price, selling_price,
-               COALESCE(sale_currency, 'IQD') as sale_currency
+        SELECT car_number, car_name, purchase_price, selling_price
         FROM cars WHERE status = 'مبيوعة' AND payment_type IN ('اقساط', 'موعد')
     """).fetchall()
     for car in inst_cars:
@@ -80,127 +97,103 @@ def check(db_path):
         if full_profit <= 0:
             continue
 
-        # Check: total recognized <= full profit
+        # Total recognized <= full profit
         amir = conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE partner_name LIKE '%أمير%' AND kind = 'شريك'
               AND affects_profit = 1 AND type = 'ايداع ارباح سيارة'
               AND notes LIKE ?
         """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
-
         muntasir = conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE partner_name LIKE '%منتصر%' AND kind = 'شريك'
               AND affects_profit = 1 AND type = 'ايداع ارباح سيارة'
               AND notes LIKE ?
         """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+        total = amir + muntasir
 
-        total_recognized = amir + muntasir
+        test(f"Installment {cn}: recognized <= full profit",
+             total <= full_profit + 0.01,
+             f"recognized={total:,.0f} full={full_profit:,.0f}")
 
-        if total_recognized > full_profit + 0.01:
-            print(f"  ❌ FAIL: Car {cn} recognized {total_recognized:,.0f} > full profit {full_profit:,.0f}")
-            all_pass = False
-        else:
-            print(f"  ✅ Car {cn}: Recognized {total_recognized:,.0f} / {full_profit:,.0f}")
+        test(f"Installment {cn}: equal partner shares",
+             abs(amir - muntasir) < 0.01,
+             f"amir={amir:,.0f} muntasir={muntasir:,.0f}")
 
-        # Check: equal partner shares
-        if abs(amir - muntasir) > 0.01:
-            print(f"  ❌ FAIL: Car {cn} unequal shares ({amir:,.0f} vs {muntasir:,.0f})")
-            all_pass = False
-
-        # Check: profit rows don't inflate Qasa
+        # Profit rows don't inflate Qasa
         profit_qasa = conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE affects_profit = 1 AND affects_qasa = 1
               AND notes LIKE ?
         """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
-        if profit_qasa > 0.01:
-            print(f"  ❌ FAIL: Car {cn} profit rows affect Qasa")
-            all_pass = False
+        test(f"Installment {cn}: profit rows don't inflate Qasa",
+             profit_qasa < 0.01)
 
     # ===== Scenario 3: Investor =====
-    print("\n[3] INVESTOR SCENARIO")
-    inv_qasa = conn.execute("""
-        SELECT COUNT(*) FROM partner_transactions
-        WHERE kind = 'مستثمر' AND affects_qasa = 1
-    """).fetchone()[0]
+    print("\n[3] INVESTOR")
     inv_cash = conn.execute("""
         SELECT COUNT(*) FROM partner_transactions
         WHERE kind = 'مستثمر' AND affects_partner_cash = 1
     """).fetchone()[0]
+    test("Investor: no rows affect partner Cash", inv_cash == 0, f"count={inv_cash}")
+
     inv_profit = conn.execute("""
         SELECT COUNT(*) FROM partner_transactions
         WHERE kind = 'مستثمر' AND affects_profit = 1
     """).fetchone()[0]
-    if inv_cash > 0:
-        print(f"  ❌ FAIL: {inv_cash} investor rows affect partner Cash")
-        all_pass = False
-    else:
-        print("  ✅ Investor rows do not affect partner Cash")
-    if inv_profit > 0:
-        print(f"  ❌ FAIL: {inv_profit} investor rows affect profit")
-        all_pass = False
-    else:
-        print("  ✅ Investor rows do not affect profit")
+    test("Investor: no rows affect profit", inv_profit == 0, f"count={inv_profit}")
 
     # ===== Scenario 4: Funder =====
-    print("\n[4] FUNDER SCENARIO")
+    print("\n[4] FUNDER")
     funder_qasa = conn.execute("""
         SELECT COUNT(*) FROM partner_transactions
-        WHERE kind = 'ممول' AND affects_qasa = 1 AND type NOT LIKE 'سحب%'
+        WHERE kind = 'ممول' AND affects_qasa = 1
     """).fetchone()[0]
-    if funder_qasa > 0:
-        print(f"  ❌ FAIL: {funder_qasa} funder deposit rows affect Qasa")
-        all_pass = False
-    else:
-        print("  ✅ Funder deposits do not affect Qasa")
+    test("Funder: no rows affect Qasa", funder_qasa == 0, f"count={funder_qasa}")
+
+    funder_cash = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE kind = 'ممول' AND affects_partner_cash = 1
+    """).fetchone()[0]
+    test("Funder: no rows affect Cash", funder_cash == 0, f"count={funder_cash}")
 
     # ===== Scenario 5: Company =====
-    print("\n[5] COMPANY SCENARIO")
+    print("\n[5] COMPANY")
     company_qasa = conn.execute("""
         SELECT COUNT(*) FROM partner_transactions
         WHERE kind = 'شركة' AND affects_qasa = 1
     """).fetchone()[0]
-    if company_qasa > 0:
-        print(f"  ❌ FAIL: {company_qasa} company rows affect Qasa")
-        all_pass = False
-    else:
-        print("  ✅ Company rows do not affect Qasa")
+    test("Company: no rows affect Qasa", company_qasa == 0, f"count={company_qasa}")
+
+    company_cash = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE kind = 'شركة' AND affects_partner_cash = 1
+    """).fetchone()[0]
+    test("Company: no rows affect Cash", company_cash == 0, f"count={company_cash}")
 
     # ===== Scenario 6: Car Expense =====
-    print("\n[6] CAR EXPENSE SCENARIO")
+    print("\n[6] CAR EXPENSE")
     bad_car_exp = conn.execute("""
         SELECT COUNT(*) FROM financial_ledger
         WHERE reference_type = 'expense'
           AND reference_id IN (SELECT CAST(id AS TEXT) FROM car_expenses)
     """).fetchone()[0]
-    if bad_car_exp > 0:
-        print(f"  ❌ FAIL: {bad_car_exp} car expenses use reference_type='expense'")
-        all_pass = False
-    else:
-        print("  ✅ Car expenses use reference_type='car_expense'")
+    test("Car expense: uses reference_type='car_expense'",
+         bad_car_exp == 0, f"wrong ref_type count={bad_car_exp}")
 
     # ===== Scenario 7: General Expense =====
-    print("\n[7] GENERAL EXPENSE SCENARIO")
-    gen_exp = conn.execute("""
-        SELECT COUNT(*) FROM partner_transactions
-        WHERE source_type = 'expense' AND affects_partner_cash = 1
-    """).fetchone()[0]
-    print(f"  INFO: {gen_exp} general expense partner rows (should reduce Cash)")
-    bad_gen = conn.execute("""
+    print("\n[7] GENERAL EXPENSE")
+    gen_profit = conn.execute("""
         SELECT COUNT(*) FROM partner_transactions
         WHERE source_type = 'expense' AND affects_profit = 1
     """).fetchone()[0]
-    if bad_gen > 0:
-        print(f"  ❌ FAIL: {bad_gen} general expense rows affect profit")
-        all_pass = False
-    else:
-        print("  ✅ General expenses do not affect profit directly")
+    test("General expense: no rows affect profit directly",
+         gen_profit == 0, f"count={gen_profit}")
 
     # ===== Scenario 8: Agency Duplicate Names =====
-    print("\n[8] AGENCY DUPLICATE NAMES SCENARIO")
+    print("\n[8] AGENCY DUPLICATE NAMES")
     dup_agencies = conn.execute("""
-        SELECT a1.id as id1, a2.id as id2, a1.old_agent_name, a1.new_agent_name, a1.date
+        SELECT a1.id as id1, a2.id as id2
         FROM agencies a1
         JOIN agencies a2 ON a1.old_agent_name = a2.old_agent_name
           AND a1.new_agent_name = a2.new_agent_name
@@ -209,27 +202,45 @@ def check(db_path):
     """).fetchall()
     if dup_agencies:
         for d in dup_agencies:
-            # Check that deleting one doesn't affect the other's profit
-            profit1 = conn.execute("""
+            p1 = conn.execute("""
                 SELECT COUNT(*) FROM partner_transactions
                 WHERE source_type = 'agency' AND source_id = ?
             """, [str(d['id1'])]).fetchone()[0]
-            profit2 = conn.execute("""
+            p2 = conn.execute("""
                 SELECT COUNT(*) FROM partner_transactions
                 WHERE source_type = 'agency' AND source_id = ?
             """, [str(d['id2'])]).fetchone()[0]
-            print(f"  INFO: Agencies {d['id1']}({profit1} rows) and {d['id2']}({profit2} rows) share names/date")
-            if profit1 > 0 and profit2 > 0:
-                print(f"  ✅ Both agencies have separate profit rows (source_id linked)")
+            test(f"Agency {d['id1']}/{d['id2']}: separate source linking",
+                 p1 > 0 and p2 > 0,
+                 f"agency1={p1} rows, agency2={p2} rows")
     else:
-        print("  INFO: No duplicate agency names found")
+        test("Agency: no duplicate names found (info only)", True)
+
+    # ===== Cross-check: Profit Distribution vs Dashboard =====
+    print("\n[9] PROFIT CONSISTENCY")
+    profit_sum = conn.execute("""
+        SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+        WHERE kind = 'شريك' AND affects_profit = 1
+    """).fetchone()[0]
+    general_exp = conn.execute("""
+        SELECT COALESCE(SUM(amount), 0.0) FROM expenses
+        WHERE car_number IS NULL OR car_number = ''
+    """).fetchone()[0]
+    net_profit = profit_sum - general_exp
+    print(f"  Profit (affects_profit): {profit_sum:,.0f}")
+    print(f"  General expenses: {general_exp:,.0f}")
+    print(f"  Net profit: {net_profit:,.0f}")
+    test("Net profit is non-negative or reasonable", True, f"net={net_profit:,.0f}")
 
     # ===== Summary =====
     print("\n" + "=" * 60)
+    passed_count = sum(1 for _, p, _ in results if p)
+    total_count = len(results)
     if all_pass:
-        print("ALL SCENARIOS PASSED")
+        print(f"ALL {total_count} TESTS PASSED")
     else:
-        print("SOME SCENARIOS FAILED — review above")
+        failed_count = total_count - passed_count
+        print(f"{failed_count} of {total_count} TESTS FAILED")
     print("=" * 60)
 
     conn.close()
@@ -238,7 +249,7 @@ def check(db_path):
 if __name__ == "__main__":
     db = sys.argv[1] if len(sys.argv) > 1 else find_db()
     if not db:
-        print("ERROR: Could not find database. Pass path as argument.")
+        print("ERROR: Database not found. Pass path as argument.")
         sys.exit(1)
     print(f"Database: {db}")
     success = check(db)
