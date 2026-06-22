@@ -3601,8 +3601,10 @@ fn add_car(
     );
     let should_rebuild_purchase = should_create_purchase_transactions || purchase_changed;
 
+    let skip_sale = skip_sale_accounting.unwrap_or(false);
+
     if !old_num.is_empty() {
-        // نقوم بحذف قيود دفتر الأستاذ القديمة للسيارة لتجنب التكرار والعكس في القاصة وسجل المعاملات
+        // Car number changed — delete old car number's ledger entirely (old number will be removed)
         db.execute(
             "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = ?1",
             [old_num],
@@ -3624,14 +3626,16 @@ fn add_car(
             db.execute("DELETE FROM car_partners WHERE car_number = ?1", [old_num])
                 .map_err(|e| e.to_string())?;
         }
-    } else {
-        // حذف القيود القديمة للسيارة لتحديثها بالجديدة دون تكرار وعكس في سجل القاصة وسجل المعاملات
-        db.execute(
-            "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = ?1",
-            [car_number.as_str()],
-        )
-        .map_err(|e| e.to_string())?;
+    } else if is_existing_car {
+        // Existing car, same number — delete ledger precisely based on what changed
+        if should_rebuild_purchase {
+            delete_car_purchase_ledger_entries(&db, car_number.as_str())?;
+        }
+        if should_create_sale_transactions && !skip_sale {
+            delete_car_sale_ledger_entries(&db, car_number.as_str())?;
+        }
     }
+    // New car: no existing ledger to delete
 
     // INSERT with main fields
     db.execute(
@@ -3809,8 +3813,6 @@ fn add_car(
         }
     }
 
-    let skip_sale = skip_sale_accounting.unwrap_or(false);
-
     // حذف وإعادة توزيع الأرباح والكاش عند البيع
     let sale_note = format!("ايداع بيع سيارة {} {}", name.trim(), chassis.trim())
         .trim()
@@ -3948,7 +3950,9 @@ fn add_car(
     )
     .map_err(|e| e.to_string())?;
 
-    record_car_purchase_ledger_entries(&db, car_number.as_str())?;
+    if should_rebuild_purchase {
+        record_car_purchase_ledger_entries(&db, car_number.as_str())?;
+    }
     if should_create_sale_transactions && !skip_sale {
         record_car_sale_ledger_entries(&db, car_number.as_str())?;
     }
@@ -4139,17 +4143,19 @@ fn sell_car_with_accounting(
 
         let dp_id = db.last_insert_rowid();
 
-        // Classify the down payment
-        let classification = classify_partner_transaction("زبون", dp_type, dp_id);
+        // Classify the down payment as a sale-generated customer payment
         db.execute(
-            "UPDATE partner_transactions SET source_type = ?1, source_id = ?2, source_role = ?3, affects_qasa = ?4, affects_partner_cash = ?5, affects_profit = ?6 WHERE id = ?7",
-            params![classification.source_type, classification.source_id, classification.source_role, classification.affects_qasa, classification.affects_partner_cash, classification.affects_profit, dp_id],
-        ).map_err(|e| e.to_string())?;
-
-        // Set related_source fields for car linkage
-        db.execute(
-            "UPDATE partner_transactions SET related_source_type = 'car', related_source_id = ?1 WHERE id = ?2",
-            params![car_number, dp_id],
+            "UPDATE partner_transactions SET
+             source_type = 'customer_sale_payment',
+             source_id = ?1,
+             source_role = 'sale_down_payment',
+             affects_qasa = 1,
+             affects_partner_cash = 1,
+             affects_profit = 0,
+             related_source_type = 'car',
+             related_source_id = ?2
+             WHERE id = ?3",
+            params![format!("{}:down_payment", car_number), car_number, dp_id],
         ).map_err(|e| e.to_string())?;
 
         // Record ledger entries for the down payment
@@ -4903,6 +4909,16 @@ fn recalculate_all_partners(db: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn ledger_account_type_for_kind(kind: &str) -> Option<&'static str> {
+    match kind {
+        "زبون" => Some("receivable"),
+        "ممول" => Some("funder"),
+        "شركة" => Some("payable"),
+        "مستثمر" => Some("investor"),
+        _ => None, // شريك does not map to a single ledger account type
+    }
+}
+
 #[tauri::command]
 fn update_partner(
     state: State<AppState>,
@@ -4912,7 +4928,6 @@ fn update_partner(
     phone: String,
     kind: String,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
     let name = name.trim().to_string();
     let old_name = old_name.trim().to_string();
     let old_kind = old_kind.trim().to_string();
@@ -4930,16 +4945,37 @@ fn update_partner(
         return Err("لا يمكن تغيير نوع الحساب إلى شريك".to_string());
     }
 
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let tx = db_guard.transaction().map_err(|e| e.to_string())?;
+
+    // Block kind change if ledger history exists
+    if old_kind != kind {
+        let old_account_type = ledger_account_type_for_kind(&old_kind);
+        if let Some(acc_type) = old_account_type {
+            let ledger_count: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM financial_ledger WHERE account_id = ?1 AND account_type = ?2",
+                    params![&old_name, acc_type],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0);
+            if ledger_count > 0 {
+                return Err("لا يمكن تغيير نوع حساب لديه قيود مالية".to_string());
+            }
+        }
+    }
+
     if old_name == name && old_kind == kind {
-        db.execute(
+        tx.execute(
             "UPDATE partners SET phone = ?1 WHERE partner_name = ?2 AND kind = ?3",
             (phone.trim(), &old_name, &old_kind),
         )
         .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
         return Ok(());
     }
 
-    let target_exists: bool = db
+    let target_exists: bool = tx
         .query_row(
             "SELECT COUNT(*) FROM partners WHERE partner_name = ?1 AND kind = ?2",
             (&name, &kind),
@@ -4952,23 +4988,33 @@ fn update_partner(
         return Err(format!("يوجد حساب بالفعل باسم '{}' ونوع '{}'", name, kind));
     }
 
-    db.execute(
+    tx.execute(
         "UPDATE partners SET partner_name = ?1, phone = ?2, kind = ?3 WHERE partner_name = ?4 AND kind = ?5",
         (&name, phone.trim(), &kind, &old_name, &old_kind),
     )
     .map_err(|e| e.to_string())?;
-    db.execute(
+    tx.execute(
         "UPDATE partner_transactions SET partner_name = ?1, kind = ?2 WHERE partner_name = ?3 AND kind = ?4",
         (&name, &kind, &old_name, &old_kind),
     )
     .map_err(|e| e.to_string())?;
     if old_name != name {
-        db.execute(
-            "UPDATE financial_ledger SET account_id = ?1 WHERE account_id = ?2",
-            (&name, &old_name),
-        )
-        .map_err(|e| e.to_string())?;
+        // Scope the ledger rename by mapped account_type
+        if let Some(acc_type) = ledger_account_type_for_kind(&kind) {
+            tx.execute(
+                "UPDATE financial_ledger SET account_id = ?1 WHERE account_id = ?2 AND account_type = ?3",
+                params![&name, &old_name, acc_type],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        // For legacy rows without mapped account_type, also update by partner_name match
+        // This handles any rows that may have been created without account_type filtering
+        tx.execute(
+            "UPDATE financial_ledger SET account_id = ?1 WHERE account_id = ?2 AND account_type NOT IN ('receivable', 'funder', 'payable', 'investor')",
+            params![&name, &old_name],
+        ).map_err(|e| e.to_string())?;
     }
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -5217,6 +5263,31 @@ fn delete_generated_car_sale_partner_transactions(db: &Connection, car_number: &
         db.execute("DELETE FROM partner_transactions WHERE id = ?1", [tx_id])
             .map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+fn delete_car_purchase_ledger_entries(db: &Connection, car_number: &str) -> Result<(), String> {
+    db.execute(
+        "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = ?1
+         AND (type_ IN ('شراء سيارة', 'شراء سيارة كاش', 'تمويل شراء سيارة', 'شراء سيارة عن طريق شركة')
+              OR (type_ NOT LIKE '%بيع%' AND type_ NOT LIKE '%مدينون%' AND type_ NOT LIKE '%إيراد%'
+                  AND type_ NOT LIKE '%تكلفة%' AND type_ NOT LIKE '%تخفيض%'
+                  AND type_ NOT LIKE '%مخزون%' AND type_ NOT LIKE '%ارباح%'))",
+        [car_number],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn delete_car_sale_ledger_entries(db: &Connection, car_number: &str) -> Result<(), String> {
+    db.execute(
+        "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = ?1
+         AND (type_ IN ('بيع سيارة', 'بيع سيارة كاش', 'مدينون بيع سيارة', 'إيراد مؤجل بيع سيارة',
+                         'تكلفة المبيعات', 'تخفيض المخزون بيع سيارة')
+              OR (type_ LIKE '%بيع%' OR type_ LIKE '%مدينون%' OR type_ LIKE '%إيراد%'
+                  OR type_ LIKE '%تكلفة%' OR type_ LIKE '%تخفيض%'
+                  OR type_ LIKE '%ارباح%'))",
+        [car_number],
+    ).map_err(|e| e.to_string())?;
     Ok(())
 }
 

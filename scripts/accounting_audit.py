@@ -824,6 +824,90 @@ def audit_db(db_path):
     else:
         print("  PASS")
 
+    # 46. No orphan sale ledger after non-financial edit (ISSUE 1)
+    print("\n[46] Sold cars have sale ledger entries...")
+    sold_cars = conn.execute("""
+        SELECT car_number FROM cars WHERE status = 'مبيوعة'
+    """).fetchall()
+    missing_sale_ledger = 0
+    for car in sold_cars:
+        cn = car['car_number']
+        sale_entries = conn.execute("""
+            SELECT COUNT(*) FROM financial_ledger
+            WHERE reference_type = 'car' AND reference_id = ?
+              AND (type_ LIKE '%بيع%' OR type_ LIKE '%مدينون%' OR type_ LIKE '%إيراد%'
+                   OR type_ LIKE '%تكلفة%' OR type_ LIKE '%تخفيض%')
+        """, [cn]).fetchone()[0]
+        if sale_entries == 0:
+            missing_sale_ledger += 1
+            errors.append(f"FAIL: Sold car {cn} missing sale ledger entries (may have been broadly deleted)")
+    if missing_sale_ledger == 0 and sold_cars:
+        print("  PASS")
+    elif not sold_cars:
+        print("  SKIP (no sold cars)")
+
+    # 47. Down payment classified as customer_sale_payment (ISSUE 2)
+    print("\n[47] Down payment classification...")
+    sale_down_payments = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE source_type = 'customer_sale_payment'
+          AND source_role = 'sale_down_payment'
+    """).fetchone()[0]
+    generic_dp_with_car = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE source_type = 'customer_transaction'
+          AND source_role LIKE '%down%'
+          AND related_source_type = 'car'
+    """).fetchone()[0]
+    if sale_down_payments > 0:
+        print("  PASS")
+    elif generic_dp_with_car > 0:
+        errors.append(f"FAIL: {generic_dp_with_car} down payments still use generic classification")
+    else:
+        print("  SKIP (no down payments found)")
+
+    # 48. No orphan ledger account_ids (ISSUE 3)
+    print("\n[48] No orphan account_ids in financial_ledger...")
+    partial_renames = conn.execute("""
+        SELECT COUNT(*) FROM financial_ledger fl
+        WHERE fl.account_id NOT IN (
+            SELECT partner_name FROM partners
+        )
+    """).fetchone()[0]
+    if partial_renames > 0:
+        errors.append(f"FAIL: {partial_renames} ledger entries reference non-existing partner names")
+    else:
+        print("  PASS")
+
+    # 49. Same-name different-kind account isolation (ISSUE 3)
+    print("\n[49] Same-name different-kind account isolation...")
+    dup_name_kinds = conn.execute("""
+        SELECT p1.partner_name, p1.kind as kind1, p2.kind as kind2
+        FROM partners p1
+        JOIN partners p2 ON p1.partner_name = p2.partner_name AND p1.kind < p2.kind
+    """).fetchall()
+    dup_name_errors = 0
+    for d in dup_name_kinds:
+        name = d['partner_name']
+        kind1 = d['kind1']
+        kind2 = d['kind2']
+        acc1 = conn.execute("""
+            SELECT fl.account_type FROM financial_ledger fl
+            WHERE fl.account_id = ? AND fl.account_type NOT IN (
+                'receivable', 'funder', 'payable', 'investor'
+            )
+            LIMIT 1
+        """, [name]).fetchone()
+        if acc1:
+            errors.append(f"FAIL: Partner '{name}' ({kind1}/{kind2}) has ledger with account_type='{acc1['account_type']}'")
+            dup_name_errors += 1
+    if not dup_name_kinds:
+        print("  PASS (no same-name different-kind partners)")
+    elif dup_name_errors == 0:
+        print("  PASS")
+    else:
+        print("  FAIL")
+
     # Summary
     print("\n" + "=" * 60)
     if errors:
@@ -1604,6 +1688,90 @@ def audit_source(lib_path):
             errors.append("FAIL: skipSaleAccounting flag not found in CarsTab.tsx")
     else:
         print("  SKIP (CarsTab.tsx not found)")
+
+    # 46. add_car must not broadly delete all car ledger (ISSUE 1 regression)
+    print("\n[S46] add_car no broad car ledger deletion...")
+    in_add_car = False
+    bad_delete = False
+    for i, line in enumerate(lines, 1):
+        if 'fn add_car' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_add_car = True
+        if in_add_car:
+            stripped = line.split('//')[0] if '//' in line else line
+            # Look for DELETE FROM financial_ledger WHERE reference_type = 'car' without type_/account_type/reference_id filter
+            if 'DELETE FROM financial_ledger' in stripped and "reference_type = 'car'" in stripped:
+                # Accept type_, account_type, or reference_id as sufficient scoping
+                if 'type_' not in stripped and 'account_type' not in stripped and 'reference_id' not in stripped:
+                    bad_delete = True
+                    break
+            if 'fn sell_car_with_accounting' in line:
+                in_add_car = False
+    if bad_delete:
+        errors.append("FAIL: add_car contains broad car ledger deletion without type_/account_type filter")
+    else:
+        print("  PASS")
+
+    # 47. add_car uses precise ledger deletion helpers (ISSUE 1)
+    print("\n[S47] add_car uses delete_car_purchase_ledger_entries / delete_car_sale_ledger_entries...")
+    if 'delete_car_purchase_ledger_entries' in content and 'delete_car_sale_ledger_entries' in content:
+        print("  PASS")
+    else:
+        errors.append("FAIL: delete_car_purchase_ledger_entries or delete_car_sale_ledger_entries not found")
+
+    # 48. sell_car_with_accounting down payment uses customer_sale_payment / sale_down_payment (ISSUE 2)
+    print("\n[S48] sell_car_with_accounting down payment classification...")
+    if 'customer_sale_payment' in content and 'sale_down_payment' in content:
+        print("  PASS")
+    else:
+        errors.append("FAIL: customer_sale_payment / sale_down_payment not found in sell_car_with_accounting")
+
+    # 49. update_partner must use transaction (ISSUE 3)
+    print("\n[S49] update_partner uses transaction...")
+    in_update_partner = False
+    has_tx = False
+    for i, line in enumerate(lines, 1):
+        if 'fn update_partner' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_update_partner = True
+        if in_update_partner:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'transaction()' in stripped:
+                has_tx = True
+                break
+            if 'fn add_partner_transaction' in line:
+                in_update_partner = False
+    if has_tx:
+        print("  PASS")
+    else:
+        errors.append("FAIL: update_partner does not use transaction")
+
+    # 50. update_partner ledger rename scoped by account_type (ISSUE 3)
+    print("\n[S50] update_partner ledger rename scoped by account_type...")
+    in_update_partner = False
+    has_scoped = False
+    for i, line in enumerate(lines, 1):
+        if 'fn update_partner' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_update_partner = True
+        if in_update_partner:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'UPDATE financial_ledger' in stripped and 'SET account_id' in stripped and 'account_type' in stripped:
+                has_scoped = True
+                # Check it's not the broad UPDATE
+                if 'account_type NOT IN' in stripped:
+                    continue  # This is the legacy fallback, not the scoped one
+                break
+            if 'fn add_partner_transaction' in line:
+                in_update_partner = False
+    if has_scoped:
+        print("  PASS")
+    else:
+        errors.append("FAIL: update_partner financial_ledger update not scoped by account_type")
+
+    # 51. update_partner blocks kind change with ledger history (ISSUE 3)
+    print("\n[S51] update_partner blocks kind change with ledger history...")
+    if 'لا يمكن تغيير نوع حساب لديه قيود مالية' in content:
+        print("  PASS")
+    else:
+        errors.append("FAIL: update_partner missing ledger history check on kind change")
 
     # Summary
     print("\n" + "=" * 60)

@@ -860,6 +860,99 @@ def check(db_path):
     else:
         test("No duplicate inventory ledger entries per car", True)
 
+    # ===== Scenario 41: Sold cars have sale ledger entries (ISSUE 1) =====
+    print("\n[41] SOLD CARS HAVE SALE LEDGER ENTRIES")
+    sold_cars = conn.execute("""
+        SELECT car_number FROM cars WHERE status = 'مبيوعة'
+    """).fetchall()
+    for car in sold_cars:
+        cn = car['car_number']
+        sale_entries = conn.execute("""
+            SELECT COUNT(*) FROM financial_ledger
+            WHERE reference_type = 'car' AND reference_id = ?
+              AND (type_ LIKE '%بيع%' OR type_ LIKE '%مدينون%' OR type_ LIKE '%إيراد%'
+                   OR type_ LIKE '%تكلفة%' OR type_ LIKE '%تخفيض%')
+        """, [cn]).fetchone()[0]
+        test(f"Car {cn}: sale ledger exists",
+             sale_entries > 0, f"count={sale_entries}")
+    if not sold_cars:
+        test("Sold cars have sale ledger (no sold cars)", True, "SKIP")
+
+    # ===== Scenario 42: Down payment source classification (ISSUE 2) =====
+    print("\n[42] DOWN PAYMENT SOURCE CLASSIFICATION")
+    sale_down_payments = conn.execute("""
+        SELECT id, related_source_id FROM partner_transactions
+        WHERE source_type = 'customer_sale_payment'
+          AND source_role = 'sale_down_payment'
+    """).fetchall()
+    if sale_down_payments:
+        for sp in sale_down_payments:
+            test(f"DP {sp['id']}: correct source classification",
+                 True, f"car={sp['related_source_id']}")
+    else:
+        generic_dp = conn.execute("""
+            SELECT COUNT(*) FROM partner_transactions
+            WHERE source_type = 'customer_transaction'
+              AND source_role LIKE '%down%'
+              AND related_source_type = 'car'
+        """).fetchone()[0]
+        if generic_dp > 0:
+            test("Down payments use customer_sale_payment classification",
+                 False, f"{generic_dp} rows still use generic classification")
+        else:
+            test("Down payment classification (no down payments)", True, "SKIP")
+
+    # ===== Scenario 43: Same-name different-kind isolation (ISSUE 3) =====
+    print("\n[43] SAME-NAME DIFFERENT-KIND ISOLATION")
+    dup_name_kinds = conn.execute("""
+        SELECT p1.partner_name, p1.kind as kind1, p2.kind as kind2
+        FROM partners p1
+        JOIN partners p2 ON p1.partner_name = p2.partner_name AND p1.kind < p2.kind
+    """).fetchall()
+    for d in dup_name_kinds:
+        name = d['partner_name']
+        kind1 = d['kind1']
+        kind2 = d['kind2']
+        acc_mismatch = conn.execute("""
+            SELECT fl.account_type FROM financial_ledger fl
+            WHERE fl.account_id = ? AND fl.account_type NOT IN
+                ('receivable', 'funder', 'payable', 'investor')
+            LIMIT 1
+        """, [name]).fetchone()
+        test(f"Partner '{name}' ({kind1}/{kind2}): ledger isolation",
+             acc_mismatch is None,
+             f"unexpected account_type={acc_mismatch['account_type'] if acc_mismatch else 'none'}")
+    if not dup_name_kinds:
+        test("Same-name different-kind isolation (no duplicates)", True)
+
+    # ===== Scenario 44: update_partner transaction integrity (ISSUE 3) =====
+    print("\n[44] UPDATE_PARTNER TRANSACTION INTEGRITY")
+    orphan_ids = conn.execute("""
+        SELECT COUNT(*) FROM financial_ledger fl
+        WHERE fl.account_id NOT IN (SELECT partner_name FROM partners)
+    """).fetchone()[0]
+    test("No orphan financial_ledger account_ids",
+         orphan_ids == 0, f"orphan count={orphan_ids}")
+
+    # ===== Scenario 45: No sale ledger deleted on non-financial edit (ISSUE 1) =====
+    print("\n[45] NO SALE LEDGER DELETED ON NON-FINANCIAL EDIT")
+    sold_cars_sale = conn.execute("""
+        SELECT car_number, selling_price FROM cars WHERE status = 'مبيوعة'
+    """).fetchall()
+    for car in sold_cars_sale:
+        cn = car['car_number']
+        selling = car['selling_price']
+        has_receivable = conn.execute("""
+            SELECT COUNT(*) > 0 FROM financial_ledger
+            WHERE reference_type = 'car' AND reference_id = ?
+              AND account_type IN ('receivable', 'revenue')
+        """, [cn]).fetchone()[0]
+        test(f"Car {cn}: sale ledger preserved",
+             has_receivable,
+             f"has_receivable={has_receivable}")
+    if not sold_cars_sale:
+        test("Sale ledger preserved on non-financial edit (no sold cars)", True, "SKIP")
+
     # ===== Summary =====
     print("\n" + "=" * 60)
     passed_count = sum(1 for _, p, _ in results if p)
