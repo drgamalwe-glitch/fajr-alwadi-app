@@ -1,165 +1,138 @@
 {
-  "timestamp": "2026-06-22T13:18:17.705Z",
+  "timestamp": "2026-06-22T13:50:28.223Z",
   "totalScenarios": 3,
   "passedScenarios": 3,
   "failedScenarios": 0,
-  "warnings": [],
-  "slowestScenarios": [
-    {
-      "id": "A",
-      "timeMs": 5
-    },
-    {
-      "id": "B",
-      "timeMs": 4
-    },
-    {
-      "id": "C",
-      "timeMs": 2
-    }
-  ],
-  "accountingMismatches": [],
-  "missingSelectors": [],
-  "missingBackendCommands": [],
-  "unexpectedRows": [],
-  "doubleCountingRisks": [],
   "finalVerdict": "PASS",
   "scenarios": [
     {
       "id": "A",
-      "name": "A: Cash Car Sale",
-      "layer": "BACKEND_DB",
-      "backendMode": "E2E_BRIDGE",
-      "databasePath": "e2e-bridge :memory:",
-      "executionTimeMs": 5,
-      "expected": {
-        "amirCashMovementRows": 1,
-        "amirProfitRows": 1,
-        "cashAffectsQasa": 1,
-        "cashAffectsPartnerCash": 1,
-        "cashAffectsProfit": 0,
-        "amirCashAmount": 10000,
-        "profitAffectsQasa": 0,
-        "profitAffectsPartnerCash": 0,
-        "profitAffectsProfit": 1,
-        "amirProfitAmount": 5000,
-        "amirProfitIqd": 5000,
-        "muntasirProfitIqd": 5000,
-        "qasaIqd": 10000,
-        "inventory": 0
-      },
-      "actual": {
-        "amirCashMovementRows": 1,
-        "amirProfitRows": 1,
-        "cashAffectsQasa": 1,
-        "cashAffectsPartnerCash": 1,
-        "cashAffectsProfit": 0,
-        "amirCashAmount": 10000,
-        "profitAffectsQasa": 0,
-        "profitAffectsPartnerCash": 0,
-        "profitAffectsProfit": 1,
-        "amirProfitAmount": 5000,
-        "amirProfitIqd": 5000,
-        "muntasirProfitIqd": 5000,
-        "qasaIqd": 10000,
-        "inventory": 0
-      },
-      "pass": true,
-      "failureReason": "",
-      "rows": [
+      "oracle": [
         {
-          "sourceType": "car_sale",
-          "sourceRole": "cash_movement",
-          "affectsQasa": true,
-          "affectsPartnerCash": true,
-          "affectsProfit": false,
-          "amount": 20000,
-          "description": "Cash car sale - cash movement"
-        },
-        {
-          "sourceType": "car_sale",
-          "sourceRole": "profit_recognition",
-          "affectsQasa": false,
-          "affectsPartnerCash": false,
-          "affectsProfit": true,
-          "amount": 10000,
-          "description": "Cash car sale - profit recognition"
+          "pass": true,
+          "failureReason": ""
         }
       ],
-      "notes": ""
+      "backend": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "backendMode": "E2E_BRIDGE"
+        }
+      ],
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "بطاقة القاصة (IQD)",
+              "expected": "10000",
+              "actual": "10000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "قيمة المخزون (IQD)",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "بطاقة الربح (IQD)",
+              "expected": "10000",
+              "actual": "10000",
+              "pass": true
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "B",
-      "name": "B1: Installment - After Down Payment",
-      "layer": "BACKEND_DB",
-      "backendMode": "E2E_BRIDGE",
-      "databasePath": "e2e-bridge :memory:",
-      "executionTimeMs": 4,
-      "expected": {
-        "amirDownPaymentProfit": 1250000,
-        "totalProfit": 2500000
-      },
-      "actual": {
-        "amirDownPaymentProfit": 1250000,
-        "totalProfit": 2500000
-      },
-      "pass": true,
-      "failureReason": "",
-      "rows": [
+      "oracle": [
         {
-          "sourceType": "customer_payment",
-          "sourceRole": "cash_movement",
-          "affectsQasa": true,
-          "affectsPartnerCash": true,
-          "affectsProfit": false,
-          "amount": 5000000,
-          "description": "Down payment - cash movement"
+          "pass": true,
+          "failureReason": ""
         },
         {
-          "sourceType": "customer_payment",
-          "sourceRole": "profit_recognition",
-          "affectsQasa": false,
-          "affectsPartnerCash": false,
-          "affectsProfit": true,
-          "amount": 2500000,
-          "description": "Down payment - profit recognition"
+          "pass": true,
+          "failureReason": ""
+        },
+        {
+          "pass": true,
+          "failureReason": ""
         }
       ],
-      "notes": ""
+      "backend": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "backendMode": "E2E_BRIDGE"
+        }
+      ],
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "بطاقة الربح (IQD)",
+              "expected": "2500000",
+              "actual": "2500000",
+              "pass": true
+            },
+            {
+              "tab": "توزيع الارباح",
+              "element": "اجمالي الارباح (IQD)",
+              "expected": "2500000",
+              "actual": "2500000",
+              "pass": true
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "C",
-      "name": "C: General Expense",
-      "layer": "BACKEND_DB",
-      "backendMode": "E2E_BRIDGE",
-      "databasePath": "e2e-bridge :memory:",
-      "executionTimeMs": 2,
-      "expected": {
-        "expenseCount": 1,
-        "totalExpenses": 1000000,
-        "netProfit": -1000000,
-        "inventory": 0
-      },
-      "actual": {
-        "expenseCount": 1,
-        "totalExpenses": 1000000,
-        "netProfit": -1000000,
-        "inventory": 0
-      },
-      "pass": true,
-      "failureReason": "",
-      "rows": [
+      "oracle": [
         {
-          "sourceType": "expense",
-          "sourceRole": "cash_movement",
-          "affectsQasa": true,
-          "affectsPartnerCash": true,
-          "affectsProfit": false,
-          "amount": -1000000,
-          "description": "General expense (rent) - cash movement"
+          "pass": true,
+          "failureReason": ""
         }
       ],
-      "notes": ""
+      "backend": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "backendMode": "E2E_BRIDGE"
+        }
+      ],
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "بطاقة القاصة (IQD)",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "بطاقة الربح (IQD)",
+              "expected": "-1000000",
+              "actual": "1000000",
+              "pass": true
+            }
+          ]
+        }
+      ]
     }
   ]
 }

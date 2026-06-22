@@ -1418,7 +1418,7 @@ async function e2eInvoke<T>(
   });
   const json = await res.json();
   if (json.error) throw new Error(json.error);
-  return json.result as T;
+  return (json.data ?? json.result) as T;
 }
 
 export async function callTauri<T>(

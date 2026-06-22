@@ -8,6 +8,7 @@ import {
 import { assertExact, assertNear, allPassed, type AssertionResult } from "../accounting-oracle/assertions";
 import { bridgeInvoke, bridgeReset, bridgeHealth } from "../e2e-bridge/e2e-commands";
 import { writeAllReports, type ScenarioResult } from "../accounting-oracle/result-writer";
+import { appendResult, type LayerResult } from "../shared/result-collector";
 
 const BACKEND_MODE = "E2E_BRIDGE" as const;
 const DB_PATH = "e2e-bridge :memory:";
@@ -445,5 +446,21 @@ describe("Report Generation", () => {
   it("writes reports after all scenarios", () => {
     writeAllReports(allResults);
     expect(allResults.length).toBeGreaterThan(0);
+
+    // Write to shared collector for consolidation
+    for (const r of allResults) {
+      appendResult({
+        scenarioId: r.id,
+        scenarioName: r.name,
+        layer: r.layer,
+        backendMode: r.backendMode,
+        executionTimeMs: r.executionTimeMs,
+        pass: r.pass,
+        failureReason: r.failureReason,
+        expected: r.expected as Record<string, number | string>,
+        actual: r.actual as Record<string, number | string>,
+        rows: r.rows,
+      });
+    }
   });
 });

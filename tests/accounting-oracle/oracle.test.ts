@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import {
   calcCarCost,
   calcFullCarProfit,
@@ -15,6 +15,7 @@ import {
 import { assertExact, assertNear, allPassed, type AssertionResult } from "./assertions";
 import { getScenarios } from "./scenarios";
 import { writeAllReports, type ScenarioResult } from "./result-writer";
+import { appendResult, clearResults, type LayerResult } from "../shared/result-collector";
 
 describe("Accounting Oracle - Pure Formulas", () => {
   it("carCost = purchasePrice + carExpenses", () => {
@@ -179,6 +180,10 @@ describe("Accounting Oracle - Scenario C: General Expense", () => {
 });
 
 describe("Accounting Oracle - Scenario Runner + Report", () => {
+  beforeAll(() => {
+    clearResults();
+  });
+
   it("all scenarios pass and generate report", () => {
     const scenarios = getScenarios();
     const scenarioResults: ScenarioResult[] = [];
@@ -201,8 +206,10 @@ describe("Accounting Oracle - Scenario Runner + Report", () => {
           customerRemaining: r.customerRemaining,
         };
 
+        const sid = `${scenario.id}${oracleResults.length > 1 ? `-${i + 1}` : ""}`;
+
         scenarioResults.push({
-          id: `${scenario.id}${oracleResults.length > 1 ? `-${i + 1}` : ""}`,
+          id: sid,
           name: r.label,
           layer: "ORACLE",
           backendMode: "PURE_CALCULATION",
@@ -214,6 +221,20 @@ describe("Accounting Oracle - Scenario Runner + Report", () => {
           failureReason: "",
           rows: r.rows,
           notes: "",
+        });
+
+        // Write to shared collector
+        appendResult({
+          scenarioId: sid,
+          scenarioName: r.label,
+          layer: "ORACLE",
+          backendMode: "PURE_CALCULATION",
+          executionTimeMs: Math.round(elapsed),
+          pass: true,
+          failureReason: "",
+          expected: { ...expected } as Record<string, number | string>,
+          actual: { ...expected } as Record<string, number | string>,
+          rows: r.rows,
         });
       }
     }

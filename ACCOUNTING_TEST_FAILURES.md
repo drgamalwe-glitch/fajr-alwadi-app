@@ -1,7 +1,5 @@
-# Accounting Test Failures
+# تقرير حالات الفشل
 
-**Generated:** 2026-06-22T13:18:17.705Z
+**التاريخ:** 2026-06-22T13:50:28.223Z
 
-**Total Failures:** 0
-
-No failures. All scenarios passed.
+لا توجد حالات فشل. جميع الاختبارات ناجحة.

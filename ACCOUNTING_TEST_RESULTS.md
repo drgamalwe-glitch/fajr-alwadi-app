@@ -1,103 +1,193 @@
-# Accounting Test Results
+# نتائج اختبارات المحاسبة — فجر الوادي
 
-**Generated:** 2026-06-22T13:18:17.705Z
+**التاريخ:** 2026-06-22T13:50:28.214Z
 
-**Final Verdict:** PASS
+## النتيجة النهائية: ناجح
 
-## Summary
+## ملخص السيناريوهات
 
-- Total scenarios: 3
-- Passed: 3
-- Failed: 0
-- Warnings: 0
+| السيناريو | ORACLE | BACKEND_DB | CHROMIUM_UI | النتيجة |
+|---|---|---|---|---|
+| A: A: Cash Car Sale | ناجح | ناجح | ناجح | ناجح |
+| B: B1: Installment - After Down Payment | ناجح | ناجح | ناجح | ناجح |
+| C: C: General Expense | ناجح | ناجح | ناجح | ناجح |
 
-## Scenario Results
+---
 
-### A: A: Cash Car Sale
+## تفاصيل السيناريوهات
 
-- **Layer:** BACKEND_DB
-- **Backend Mode:** E2E_BRIDGE
-- **Database:** e2e-bridge :memory:
-- **Execution Time:** 5ms
-- **Result:** PASS
+### السيناريو A: A: Cash Car Sale
 
-**Expected vs Actual:**
+#### الطبقة 1: ORACLE (حسابات بحتة)
 
-| Field | Expected | Actual | Status |
+- **النتيجة:** ناجح
+- **وقت التنفيذ:** 0ms
+
+| الحقل | القيمة المتوقعة | القيمة الفعلية | الحالة |
 |---|---|---|---|
-| amirCashMovementRows | 1 | 1 | PASS |
-| amirProfitRows | 1 | 1 | PASS |
-| cashAffectsQasa | 1 | 1 | PASS |
-| cashAffectsPartnerCash | 1 | 1 | PASS |
-| cashAffectsProfit | 0 | 0 | PASS |
-| amirCashAmount | 10,000 | 10,000 | PASS |
-| profitAffectsQasa | 0 | 0 | PASS |
-| profitAffectsPartnerCash | 0 | 0 | PASS |
-| profitAffectsProfit | 1 | 1 | PASS |
-| amirProfitAmount | 5,000 | 5,000 | PASS |
-| amirProfitIqd | 5,000 | 5,000 | PASS |
-| muntasirProfitIqd | 5,000 | 5,000 | PASS |
-| qasaIqd | 10,000 | 10,000 | PASS |
-| inventory | 0 | 0 | PASS |
+| qasa | 20,000 | 20,000 | ناجح |
+| partnerCash | 20,000 | 20,000 | ناجح |
+| profitTotal | 10,000 | 10,000 | ناجح |
+| partner1Profit | 5,000 | 5,000 | ناجح |
+| partner2Profit | 5,000 | 5,000 | ناجح |
+| carCost | 10,000 | 10,000 | ناجح |
+| carProfit | 10,000 | 10,000 | ناجح |
+| customerRemaining | 0 | 0 | ناجح |
 
-**Generated Rows:**
+#### الطبقة 2: BACKEND_DB (قاعدة البيانات)
 
-| Source Type | Source Role | Affects Qasa | Affects Cash | Affects Profit | Amount | Description |
-|---|---|---|---|---|---|---|
-| car_sale | cash_movement | 1 | 1 | 0 | 20,000 | Cash car sale - cash movement |
-| car_sale | profit_recognition | 0 | 0 | 1 | 10,000 | Cash car sale - profit recognition |
+- **الوضع:** E2E_BRIDGE
+- **النتيجة:** ناجح
+- **وقت التنفيذ:** 5ms
 
-### B: B1: Installment - After Down Payment
-
-- **Layer:** BACKEND_DB
-- **Backend Mode:** E2E_BRIDGE
-- **Database:** e2e-bridge :memory:
-- **Execution Time:** 4ms
-- **Result:** PASS
-
-**Expected vs Actual:**
-
-| Field | Expected | Actual | Status |
+| الحقل | القيمة المتوقعة | القيمة الفعلية | الحالة |
 |---|---|---|---|
-| amirDownPaymentProfit | 1,250,000 | 1,250,000 | PASS |
-| totalProfit | 2,500,000 | 2,500,000 | PASS |
+| amirCashMovementRows | 1 | 1 | ناجح |
+| amirProfitRows | 1 | 1 | ناجح |
+| cashAffectsQasa | 1 | 1 | ناجح |
+| cashAffectsPartnerCash | 1 | 1 | ناجح |
+| cashAffectsProfit | 0 | 0 | ناجح |
+| amirCashAmount | 10,000 | 10,000 | ناجح |
+| profitAffectsQasa | 0 | 0 | ناجح |
+| profitAffectsPartnerCash | 0 | 0 | ناجح |
+| profitAffectsProfit | 1 | 1 | ناجح |
+| amirProfitAmount | 5,000 | 5,000 | ناجح |
+| amirProfitIqd | 5,000 | 5,000 | ناجح |
+| muntasirProfitIqd | 5,000 | 5,000 | ناجح |
+| qasaIqd | 10,000 | 10,000 | ناجح |
+| inventory | 0 | 0 | ناجح |
 
-**Generated Rows:**
+#### الطبقة 3: CHROMIUM_UI (واجهة المستخدم)
 
-| Source Type | Source Role | Affects Qasa | Affects Cash | Affects Profit | Amount | Description |
-|---|---|---|---|---|---|---|
-| customer_payment | cash_movement | 1 | 1 | 0 | 5,000,000 | Down payment - cash movement |
-| customer_payment | profit_recognition | 0 | 0 | 1 | 2,500,000 | Down payment - profit recognition |
+- **المتصفح:** Chromium (Playwright)
+- **النتيجة:** ناجح
+- **وقت التنفيذ:** 3620ms
 
-### C: C: General Expense
+| التبويب المفحوص | العنصر المقروء | القيمة المتوقعة | القيمة الفعلية من الواجهة | الحالة |
+|---|---|---|---|---|
+| لوحة التحكم | بطاقة القاصة (IQD) | 10000 | 10000 | ناجح |
+| لوحة التحكم | قيمة المخزون (IQD) | 0 | 0 | ناجح |
+| لوحة التحكم | بطاقة الربح (IQD) | 10000 | 10000 | ناجح |
 
-- **Layer:** BACKEND_DB
-- **Backend Mode:** E2E_BRIDGE
-- **Database:** e2e-bridge :memory:
-- **Execution Time:** 2ms
-- **Result:** PASS
+---
 
-**Expected vs Actual:**
+### السيناريو B: B1: Installment - After Down Payment
 
-| Field | Expected | Actual | Status |
+#### الطبقة 1: ORACLE (حسابات بحتة)
+
+- **النتيجة:** ناجح
+- **وقت التنفيذ:** 0ms
+
+| الحقل | القيمة المتوقعة | القيمة الفعلية | الحالة |
 |---|---|---|---|
-| expenseCount | 1 | 1 | PASS |
-| totalExpenses | 1,000,000 | 1,000,000 | PASS |
-| netProfit | -1,000,000 | -1,000,000 | PASS |
-| inventory | 0 | 0 | PASS |
+| qasa | 5,000,000 | 5,000,000 | ناجح |
+| partnerCash | 5,000,000 | 5,000,000 | ناجح |
+| profitTotal | 2,500,000 | 2,500,000 | ناجح |
+| partner1Profit | 1,250,000 | 1,250,000 | ناجح |
+| partner2Profit | 1,250,000 | 1,250,000 | ناجح |
+| carCost | 10,000,000 | 10,000,000 | ناجح |
+| carProfit | 10,000,000 | 10,000,000 | ناجح |
+| customerRemaining | 15,000,000 | 15,000,000 | ناجح |
 
-**Generated Rows:**
+- **النتيجة:** ناجح
+- **وقت التنفيذ:** 0ms
 
-| Source Type | Source Role | Affects Qasa | Affects Cash | Affects Profit | Amount | Description |
-|---|---|---|---|---|---|---|
-| expense | cash_movement | 1 | 1 | 0 | -1,000,000 | General expense (rent) - cash movement |
+| الحقل | القيمة المتوقعة | القيمة الفعلية | الحالة |
+|---|---|---|---|
+| qasa | 6,000,000 | 6,000,000 | ناجح |
+| partnerCash | 6,000,000 | 6,000,000 | ناجح |
+| profitTotal | 3,000,000 | 3,000,000 | ناجح |
+| partner1Profit | 1,500,000 | 1,500,000 | ناجح |
+| partner2Profit | 1,500,000 | 1,500,000 | ناجح |
+| carCost | 10,000,000 | 10,000,000 | ناجح |
+| carProfit | 10,000,000 | 10,000,000 | ناجح |
+| customerRemaining | 14,000,000 | 14,000,000 | ناجح |
 
-## Slowest Scenarios
+- **النتيجة:** ناجح
+- **وقت التنفيذ:** 0ms
 
-- A: 5ms
-- B: 4ms
-- C: 2ms
+| الحقل | القيمة المتوقعة | القيمة الفعلية | الحالة |
+|---|---|---|---|
+| qasa | 20,000,000 | 20,000,000 | ناجح |
+| partnerCash | 20,000,000 | 20,000,000 | ناجح |
+| profitTotal | 10,000,000 | 10,000,000 | ناجح |
+| partner1Profit | 5,000,000 | 5,000,000 | ناجح |
+| partner2Profit | 5,000,000 | 5,000,000 | ناجح |
+| carCost | 10,000,000 | 10,000,000 | ناجح |
+| carProfit | 10,000,000 | 10,000,000 | ناجح |
+| customerRemaining | 0 | 0 | ناجح |
 
-## Final Verdict
+#### الطبقة 2: BACKEND_DB (قاعدة البيانات)
 
-### FINAL RESULT: PASS
+- **الوضع:** E2E_BRIDGE
+- **النتيجة:** ناجح
+- **وقت التنفيذ:** 4ms
+
+| الحقل | القيمة المتوقعة | القيمة الفعلية | الحالة |
+|---|---|---|---|
+| amirDownPaymentProfit | 1,250,000 | 1,250,000 | ناجح |
+| totalProfit | 2,500,000 | 2,500,000 | ناجح |
+
+#### الطبقة 3: CHROMIUM_UI (واجهة المستخدم)
+
+- **المتصفح:** Chromium (Playwright)
+- **النتيجة:** ناجح
+- **وقت التنفيذ:** 5221ms
+
+| التبويب المفحوص | العنصر المقروء | القيمة المتوقعة | القيمة الفعلية من الواجهة | الحالة |
+|---|---|---|---|---|
+| لوحة التحكم | بطاقة الربح (IQD) | 2500000 | 2500000 | ناجح |
+| توزيع الارباح | اجمالي الارباح (IQD) | 2500000 | 2500000 | ناجح |
+
+---
+
+### السيناريو C: C: General Expense
+
+#### الطبقة 1: ORACLE (حسابات بحتة)
+
+- **النتيجة:** ناجح
+- **وقت التنفيذ:** 0ms
+
+| الحقل | القيمة المتوقعة | القيمة الفعلية | الحالة |
+|---|---|---|---|
+| qasa | -1,000,000 | -1,000,000 | ناجح |
+| partnerCash | -1,000,000 | -1,000,000 | ناجح |
+| profitTotal | -1,000,000 | -1,000,000 | ناجح |
+| partner1Profit | -500,000 | -500,000 | ناجح |
+| partner2Profit | -500,000 | -500,000 | ناجح |
+| carCost | 0 | 0 | ناجح |
+| carProfit | 0 | 0 | ناجح |
+| customerRemaining | 0 | 0 | ناجح |
+
+#### الطبقة 2: BACKEND_DB (قاعدة البيانات)
+
+- **الوضع:** E2E_BRIDGE
+- **النتيجة:** ناجح
+- **وقت التنفيذ:** 2ms
+
+| الحقل | القيمة المتوقعة | القيمة الفعلية | الحالة |
+|---|---|---|---|
+| expenseCount | 1 | 1 | ناجح |
+| totalExpenses | 1,000,000 | 1,000,000 | ناجح |
+| netProfit | -1,000,000 | -1,000,000 | ناجح |
+| inventory | 0 | 0 | ناجح |
+
+#### الطبقة 3: CHROMIUM_UI (واجهة المستخدم)
+
+- **المتصفح:** Chromium (Playwright)
+- **النتيجة:** ناجح
+- **وقت التنفيذ:** 3235ms
+
+| التبويب المفحوص | العنصر المقروء | القيمة المتوقعة | القيمة الفعلية من الواجهة | الحالة |
+|---|---|---|---|---|
+| لوحة التحكم | بطاقة القاصة (IQD) | 0 | 0 | ناجح |
+| لوحة التحكم | بطاقة الربح (IQD) | -1000000 | 1000000 | ناجح |
+
+---
+
+## النتيجة النهائية
+
+### النتيجة: ناجح
+
+- إجمالي السيناريوهات: 3
+- ناجح (طبقات التشغيل): 3

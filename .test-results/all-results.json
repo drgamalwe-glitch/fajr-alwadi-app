@@ -1,0 +1,458 @@
+[
+  {
+    "scenarioId": "A",
+    "scenarioName": "A: Cash Car Sale",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": 20000,
+      "partnerCash": 20000,
+      "profitTotal": 10000,
+      "partner1Profit": 5000,
+      "partner2Profit": 5000,
+      "carCost": 10000,
+      "carProfit": 10000,
+      "customerRemaining": 0
+    },
+    "actual": {
+      "qasa": 20000,
+      "partnerCash": 20000,
+      "profitTotal": 10000,
+      "partner1Profit": 5000,
+      "partner2Profit": 5000,
+      "carCost": 10000,
+      "carProfit": 10000,
+      "customerRemaining": 0
+    },
+    "rows": [
+      {
+        "sourceType": "car_sale",
+        "sourceRole": "cash_movement",
+        "affectsQasa": true,
+        "affectsPartnerCash": true,
+        "affectsProfit": false,
+        "amount": 20000,
+        "description": "Cash car sale - cash movement"
+      },
+      {
+        "sourceType": "car_sale",
+        "sourceRole": "profit_recognition",
+        "affectsQasa": false,
+        "affectsPartnerCash": false,
+        "affectsProfit": true,
+        "amount": 10000,
+        "description": "Cash car sale - profit recognition"
+      }
+    ]
+  },
+  {
+    "scenarioId": "B-1",
+    "scenarioName": "B1: Installment - After Down Payment",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": 5000000,
+      "partnerCash": 5000000,
+      "profitTotal": 2500000,
+      "partner1Profit": 1250000,
+      "partner2Profit": 1250000,
+      "carCost": 10000000,
+      "carProfit": 10000000,
+      "customerRemaining": 15000000
+    },
+    "actual": {
+      "qasa": 5000000,
+      "partnerCash": 5000000,
+      "profitTotal": 2500000,
+      "partner1Profit": 1250000,
+      "partner2Profit": 1250000,
+      "carCost": 10000000,
+      "carProfit": 10000000,
+      "customerRemaining": 15000000
+    },
+    "rows": [
+      {
+        "sourceType": "customer_payment",
+        "sourceRole": "cash_movement",
+        "affectsQasa": true,
+        "affectsPartnerCash": true,
+        "affectsProfit": false,
+        "amount": 5000000,
+        "description": "Down payment - cash movement"
+      },
+      {
+        "sourceType": "customer_payment",
+        "sourceRole": "profit_recognition",
+        "affectsQasa": false,
+        "affectsPartnerCash": false,
+        "affectsProfit": true,
+        "amount": 2500000,
+        "description": "Down payment - profit recognition"
+      }
+    ]
+  },
+  {
+    "scenarioId": "B-2",
+    "scenarioName": "B2: Installment - After One Installment",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": 6000000,
+      "partnerCash": 6000000,
+      "profitTotal": 3000000,
+      "partner1Profit": 1500000,
+      "partner2Profit": 1500000,
+      "carCost": 10000000,
+      "carProfit": 10000000,
+      "customerRemaining": 14000000
+    },
+    "actual": {
+      "qasa": 6000000,
+      "partnerCash": 6000000,
+      "profitTotal": 3000000,
+      "partner1Profit": 1500000,
+      "partner2Profit": 1500000,
+      "carCost": 10000000,
+      "carProfit": 10000000,
+      "customerRemaining": 14000000
+    },
+    "rows": [
+      {
+        "sourceType": "customer_payment",
+        "sourceRole": "cash_movement",
+        "affectsQasa": true,
+        "affectsPartnerCash": true,
+        "affectsProfit": false,
+        "amount": 1000000,
+        "description": "Installment 1 - cash movement"
+      },
+      {
+        "sourceType": "customer_payment",
+        "sourceRole": "profit_recognition",
+        "affectsQasa": false,
+        "affectsPartnerCash": false,
+        "affectsProfit": true,
+        "amount": 500000,
+        "description": "Installment 1 - profit recognition"
+      }
+    ]
+  },
+  {
+    "scenarioId": "B-3",
+    "scenarioName": "B3: Installment - After All Payments",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": 20000000,
+      "partnerCash": 20000000,
+      "profitTotal": 10000000,
+      "partner1Profit": 5000000,
+      "partner2Profit": 5000000,
+      "carCost": 10000000,
+      "carProfit": 10000000,
+      "customerRemaining": 0
+    },
+    "actual": {
+      "qasa": 20000000,
+      "partnerCash": 20000000,
+      "profitTotal": 10000000,
+      "partner1Profit": 5000000,
+      "partner2Profit": 5000000,
+      "carCost": 10000000,
+      "carProfit": 10000000,
+      "customerRemaining": 0
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "C",
+    "scenarioName": "C: General Expense",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": -1000000,
+      "partnerCash": -1000000,
+      "profitTotal": -1000000,
+      "partner1Profit": -500000,
+      "partner2Profit": -500000,
+      "carCost": 0,
+      "carProfit": 0,
+      "customerRemaining": 0
+    },
+    "actual": {
+      "qasa": -1000000,
+      "partnerCash": -1000000,
+      "profitTotal": -1000000,
+      "partner1Profit": -500000,
+      "partner2Profit": -500000,
+      "carCost": 0,
+      "carProfit": 0,
+      "customerRemaining": 0
+    },
+    "rows": [
+      {
+        "sourceType": "expense",
+        "sourceRole": "cash_movement",
+        "affectsQasa": true,
+        "affectsPartnerCash": true,
+        "affectsProfit": false,
+        "amount": -1000000,
+        "description": "General expense (rent) - cash movement"
+      }
+    ]
+  },
+  {
+    "scenarioId": "A",
+    "scenarioName": "A: Cash Car Sale",
+    "layer": "BACKEND_DB",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 5,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "amirCashMovementRows": 1,
+      "amirProfitRows": 1,
+      "cashAffectsQasa": 1,
+      "cashAffectsPartnerCash": 1,
+      "cashAffectsProfit": 0,
+      "amirCashAmount": 10000,
+      "profitAffectsQasa": 0,
+      "profitAffectsPartnerCash": 0,
+      "profitAffectsProfit": 1,
+      "amirProfitAmount": 5000,
+      "amirProfitIqd": 5000,
+      "muntasirProfitIqd": 5000,
+      "qasaIqd": 10000,
+      "inventory": 0
+    },
+    "actual": {
+      "amirCashMovementRows": 1,
+      "amirProfitRows": 1,
+      "cashAffectsQasa": 1,
+      "cashAffectsPartnerCash": 1,
+      "cashAffectsProfit": 0,
+      "amirCashAmount": 10000,
+      "profitAffectsQasa": 0,
+      "profitAffectsPartnerCash": 0,
+      "profitAffectsProfit": 1,
+      "amirProfitAmount": 5000,
+      "amirProfitIqd": 5000,
+      "muntasirProfitIqd": 5000,
+      "qasaIqd": 10000,
+      "inventory": 0
+    },
+    "rows": [
+      {
+        "sourceType": "car_sale",
+        "sourceRole": "cash_movement",
+        "affectsQasa": true,
+        "affectsPartnerCash": true,
+        "affectsProfit": false,
+        "amount": 20000,
+        "description": "Cash car sale - cash movement"
+      },
+      {
+        "sourceType": "car_sale",
+        "sourceRole": "profit_recognition",
+        "affectsQasa": false,
+        "affectsPartnerCash": false,
+        "affectsProfit": true,
+        "amount": 10000,
+        "description": "Cash car sale - profit recognition"
+      }
+    ]
+  },
+  {
+    "scenarioId": "B",
+    "scenarioName": "B1: Installment - After Down Payment",
+    "layer": "BACKEND_DB",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 4,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "amirDownPaymentProfit": 1250000,
+      "totalProfit": 2500000
+    },
+    "actual": {
+      "amirDownPaymentProfit": 1250000,
+      "totalProfit": 2500000
+    },
+    "rows": [
+      {
+        "sourceType": "customer_payment",
+        "sourceRole": "cash_movement",
+        "affectsQasa": true,
+        "affectsPartnerCash": true,
+        "affectsProfit": false,
+        "amount": 5000000,
+        "description": "Down payment - cash movement"
+      },
+      {
+        "sourceType": "customer_payment",
+        "sourceRole": "profit_recognition",
+        "affectsQasa": false,
+        "affectsPartnerCash": false,
+        "affectsProfit": true,
+        "amount": 2500000,
+        "description": "Down payment - profit recognition"
+      }
+    ]
+  },
+  {
+    "scenarioId": "C",
+    "scenarioName": "C: General Expense",
+    "layer": "BACKEND_DB",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 2,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "expenseCount": 1,
+      "totalExpenses": 1000000,
+      "netProfit": -1000000,
+      "inventory": 0
+    },
+    "actual": {
+      "expenseCount": 1,
+      "totalExpenses": 1000000,
+      "netProfit": -1000000,
+      "inventory": 0
+    },
+    "rows": [
+      {
+        "sourceType": "expense",
+        "sourceRole": "cash_movement",
+        "affectsQasa": true,
+        "affectsPartnerCash": true,
+        "affectsProfit": false,
+        "amount": -1000000,
+        "description": "General expense (rent) - cash movement"
+      }
+    ]
+  },
+  {
+    "scenarioId": "A",
+    "scenarioName": "بيع سيارة كاش",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 3620,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "لوحة التحكم",
+        "element": "بطاقة القاصة (IQD)",
+        "expected": "10000",
+        "actual": "10000",
+        "pass": true
+      },
+      {
+        "tab": "لوحة التحكم",
+        "element": "قيمة المخزون (IQD)",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      },
+      {
+        "tab": "لوحة التحكم",
+        "element": "بطاقة الربح (IQD)",
+        "expected": "10000",
+        "actual": "10000",
+        "pass": true
+      }
+    ],
+    "expected": {
+      "qasa": 10000,
+      "inventory": 0,
+      "profit": 10000
+    },
+    "actual": {
+      "qasa": 10000,
+      "inventory": 0,
+      "profit": 10000
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "B",
+    "scenarioName": "بيع بالاقساط — مقدمة وقسط واحد",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 5221,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "لوحة التحكم",
+        "element": "بطاقة الربح (IQD)",
+        "expected": "2500000",
+        "actual": "2500000",
+        "pass": true
+      },
+      {
+        "tab": "توزيع الارباح",
+        "element": "اجمالي الارباح (IQD)",
+        "expected": "2500000",
+        "actual": "2500000",
+        "pass": true
+      }
+    ],
+    "expected": {
+      "profitTotal": 2500000
+    },
+    "actual": {
+      "profitTotal": 2500000
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "C",
+    "scenarioName": "مصروف عام — ايجار",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 3235,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "لوحة التحكم",
+        "element": "بطاقة القاصة (IQD)",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      },
+      {
+        "tab": "لوحة التحكم",
+        "element": "بطاقة الربح (IQD)",
+        "expected": "-1000000",
+        "actual": "1000000",
+        "pass": true
+      }
+    ],
+    "expected": {
+      "qasa": 0,
+      "profit": -1000000
+    },
+    "actual": {
+      "qasa": 0,
+      "profit": 1000000
+    },
+    "rows": []
+  }
+]
