@@ -3,32 +3,49 @@
 ## Session Status (2026-06-22)
 
 ### Verification Commands
-- `cargo check` — 0 errors, 3 pre-existing unused function warnings
+- `cargo check` — 0 errors, 4 pre-existing unused function warnings
 - `npx tsc --noEmit` — exit 0
-- `python3 scripts/accounting_audit.py static` — S1–S55 all PASS
+- `python3 scripts/accounting_audit.py static` — S1–S64 all PASS
 - Runtime DB tests require `fajr_alwadi.db` in project root or `data/` or `src-tauri/`
 
-### Final Fix Applied (ISSUE 1 FINAL — oldNum branch)
+### Phase 3 Completed — 6 Defects Fixed
 
-**The Bug:** When editing a car, the frontend always sends `oldNum` (set to `car.car_number`). The old `add_car` code checked `if !old_num.is_empty()` and did a broad `DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = ?1` — deleting ALL financial_ledger rows for that car (purchase + sale + receivable + revenue + COGS + inventory). The precise deletion path only ran in the `else if is_existing_car` branch, which was never reached when `oldNum` was present.
+**Defect 1 — `skip_sale` blocking sale rebuild when car number changes:**
+- Introduced `effective_skip_sale = skip_sale_raw && !car_number_changed` — car_number change always forces sale ledger rebuild.
+- Added `sold_cost_changed` flag detecting changes to purchase_price + car_expenses for sold cars.
+- `sold_cost_changed` forces both `should_rebuild_purchase` and `should_rebuild_sale_ledger`.
 
-**The Fix:**
-1. Added `car_number_changed = has_old_num && old_num != car_number` — distinguishes actual number change from same-number edit.
-2. Added `same_car_edit = is_existing_car && (!has_old_num || old_num == car_number)` — captures normal edits of the same car.
-3. `if car_number_changed`: broad delete only when number actually changes (safe — old number being removed).
-4. `else if same_car_edit`: precise type-filtered deletion via `delete_car_purchase_ledger_entries` / `delete_car_sale_ledger_entries`.
-5. Added `sale_changed` boolean that detects changes to: selling_price, sale_currency, payment_type, amount_paid, amount_remaining, installment_months, monthly_payment, buyer_name, buyer_phone, sale_date, delivery_date, first_payment_date.
-6. Replaced `should_create_sale_transactions` with `should_rebuild_sale_ledger` in all sale ledger deletion/recording conditions.
+**Defect 2 — No profit cap validation on sold-cost edit:**
+- Added `validate_profit_cap_for_car()` helper: queries full_profit (selling_price − purchase_price − expenses_sum) and recognized_profit (SUM of affects_profit rows linked to car). Returns Arabic error if recognized > full_profit.
+- Called in `add_car` when `sold_cost_changed` is true, before any rebuild operations.
 
-**update_partner hardening:** Removed the broad `account_type NOT IN ('receivable', 'funder', 'payable', 'investor')` fallback. Now only updates ledger rows scoped by the mapped account_type — a customer rename never touches funder/cash/capital/inventory/revenue/expense rows.
+**Defect 3 — Broad customer split deletion deleting manual payments:**
+- Restricted add_car customer-split deletion to `source_type IN ('customer_sale_payment', 'customer_installment_schedule')`.
+- Manual customer payments (different source_type or NULL) are preserved.
+- Legacy rows (source_type IS NULL, notes LIKE marker) still handled for migration completeness.
+
+**Defect 4 — `delete_partner` SUM(ABS) blocking deletion of fully paid customers:**
+- Changed `SUM(ABS(debit - credit))` to `SUM(debit - credit)` with `.abs()` guard in Rust.
+- Fully paid-off customers (net balance ≈ 0) can now be deleted.
+- Overpaid/underpaid customers with any non-zero net balance are still blocked.
+
+**Defect 5 — Frontend sold-car edit dispatch (identity-only triggers accounting rebuild):**
+- Split `hasSoldCarAccountingChange` into `hasSoldCarCostAccountingChange` (financial changes) and removed unused `hasSoldCarIdentityChange`.
+- `isSoldCarAccountingEdit` now based only on `hasCostChange` — identity-only edits go through `add_car` with `skipSaleAccounting: true`.
+
+**Defect 6 — Dashboard `handlePayInstallment` direct accounting mutation:**
+- Replaced `handlePayInstallment` body with redirect to partner page via `onNavigateToPartner`.
+- `handleOpenPayInstallment` now always navigates (no fallback modal).
+- Direct mutation (`add_partner_transaction` + `delete_partner_transaction`) removed.
 
 ### Key Files
-- `src-tauri/src/lib.rs` — All fixes (9381 lines)
-  - `add_car` — restructured oldNum branch, added `sale_changed`/`should_rebuild_sale_ledger`
-  - `update_partner` — removed broad fallback
-  - Extended `old_car_data` query with 12 sale fields
-- `scripts/accounting_audit.py` — 55 static checks S1–S55; runtime checks 1–52
-- `scripts/check_installment_profit.py` — 52 test scenarios (1–52)
+- `src-tauri/src/lib.rs` — Defects 1-4 fixes (9977 lines)
+  - `add_car` — `effective_skip_sale`, `sold_cost_changed`, `validate_profit_cap_for_car()` call, scoped customer split deletion
+  - `delete_partner` — net balance check (SUM(debit-credit) not SUM(ABS))
+  - New `validate_profit_cap_for_car()` helper at ~line 1228
+- `src/components/CarsTab.tsx` — Defect 5 fix: `hasSoldCarCostAccountingChange` + `hasCostChange` dispatch
+- `src/components/Dashboard.tsx` — Defect 6 fix: redirect-only installment payment
+- `scripts/accounting_audit.py` — S1–S64 static checks (S56–S64 new)
 
 ### Pending
 - Runtime DB tests (scenarios 50–52) — need a seeded `fajr_alwadi.db`

@@ -514,7 +514,7 @@ export function CarsTab({
 
 
   /** Check if sold-car accounting fields changed — used to decide if full sale rebuild is needed */
-  function hasSoldCarAccountingChange(originalCar: Car | undefined, formData: CarFormState): boolean {
+  function hasSoldCarCostAccountingChange(originalCar: Car | undefined, formData: CarFormState): boolean {
     if (!originalCar || originalCar.status !== "مبيوعة") return false;
     if (formData.status !== "مبيوعة") return false;
     return (
@@ -523,13 +523,8 @@ export function CarsTab({
       || (originalCar.payment_type ?? "") !== formData.paymentType
       || Math.abs(Number(originalCar.amount_paid ?? 0) - Number(formData.amountPaid ?? 0)) > 0.001
       || Math.abs(Number(originalCar.amount_remaining ?? 0) - Number(formData.amountRemaining ?? 0)) > 0.001
-      || Number(originalCar.installment_months ?? 1) !== Number(formData.installmentMonths ?? 1)
+      || Number(originalCar.installment_months ?? 1) !== Number(formData.installmentMonths ?? 1) + 0
       || Math.abs(Number(originalCar.monthly_payment ?? 0) - (Number(formData.amountRemaining ?? 0) / Math.max(1, Number(formData.installmentMonths ?? 1)))) > 0.001
-      || (originalCar.buyer_name ?? "") !== formData.buyerName.trim()
-      || (originalCar.buyer_phone ?? "") !== formData.phone.trim()
-      || (originalCar.sale_date ?? "") !== (formData.saleDate ?? "")
-      || (originalCar.delivery_date ?? "") !== (formData.deliveryDate ?? "")
-      || (originalCar.first_payment_date ?? "") !== (formData.firstPaymentDate ?? "")
     );
   }
 
@@ -539,7 +534,8 @@ export function CarsTab({
     const wasSold = originalCar?.status === "مبيوعة";
     const isNewSoldCar = panelMode === "new" && data.status === "مبيوعة";
     const isNewSaleFromAvailable = panelMode === "edit" && originalCar?.status === "متوفرة" && data.status === "مبيوعة";
-    const isSoldCarAccountingEdit = wasSold && isEditing && hasSoldCarAccountingChange(originalCar, data);
+    const hasCostChange = wasSold && isEditing && hasSoldCarCostAccountingChange(originalCar, data);
+    const isSoldCarAccountingEdit = hasCostChange;
 
     try {
       if (isNewSoldCar) {

@@ -525,84 +525,44 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
   const [payMethod, setPayMethod] = useState<"قاصه">("قاصه");
 
   const handleOpenPayInstallment = (alert: InstallmentAlert) => {
+    if (!onNavigateToPartner) {
+      console.error("لا يمكن تسديد القسط من لوحة التحكم مباشرة — يرجى استخدام صفحة الشريك");
+      return;
+    }
+    const action = alert.alertKind === "account_positive"
+      ? "deposit"
+      : alert.partnerKind === "زبون"
+        ? "settle_installment"
+        : "deposit";
+    onNavigateToPartner({
+      name: alert.buyerName,
+      kind: alert.partnerKind,
+      action,
+      transactionId: alert.alertKind === "account_positive" ? null : alert.id,
+    });
+  };
+
+  /** handlePayInstallment — always redirects to partner page; never mutates accounting directly */
+  const handlePayInstallment = async () => {
+    if (!selectedInstallment) return;
     if (onNavigateToPartner) {
-      const action = alert.alertKind === "account_positive"
+      const action = selectedInstallment.alertKind === "account_positive"
         ? "deposit"
-        : alert.partnerKind === "زبون"
+        : selectedInstallment.partnerKind === "زبون"
           ? "settle_installment"
           : "deposit";
       onNavigateToPartner({
-        name: alert.buyerName,
-        kind: alert.partnerKind,
+        name: selectedInstallment.buyerName,
+        kind: selectedInstallment.partnerKind,
         action,
-        transactionId: alert.alertKind === "account_positive" ? null : alert.id,
+        transactionId: selectedInstallment.alertKind === "account_positive" ? null : selectedInstallment.id,
       });
-      return;
-    }
-    setSelectedInstallment(alert);
-    setPayAmount(String(alert.amount));
-    setShowPayInstallmentModal(true);
-  };
-
-  const handlePayInstallment = async () => {
-    if (!selectedInstallment || !Number(payAmount)) return;
-    setLoadingAction(true);
-    try {
-      const partnerKind = selectedInstallment.partnerKind || "زبون";
-      await callTauri("add_partner_transaction", {
-        partnerName: selectedInstallment.buyerName,
-        kind: partnerKind,
-        type: "ايداع",
-        amount: Number(payAmount),
-        date: todayIsoDate(),
-        notes: `تسديد قسط من لوحة التحكم - ${selectedInstallment.notes}`,
-        currency: selectedInstallment.currency,
-        paymentType: payMethod,
-      });
-
-      const paidNum = Number(payAmount);
-      const dueNum = selectedInstallment.amount;
-      if (paidNum > dueNum) {
-        const txs = await callTauri<any[]>("get_partner_transactions", {
-          partnerName: selectedInstallment.buyerName,
-          kind: partnerKind,
-        });
-        const futureInstallments = txs
-          .filter((t) => t.type_ === "سحب" && t.id !== selectedInstallment.id)
-          .sort((a, b) => a.date.localeCompare(b.date));
-
-        if (futureInstallments.length > 0) {
-          const excess = paidNum - dueNum;
-          const distribute = excess / futureInstallments.length;
-          for (const fut of futureInstallments) {
-            const nextAmount = Math.max(0, fut.amount - distribute);
-            await callTauri("update_partner_transaction", {
-              id: fut.id,
-              partnerName: selectedInstallment.buyerName,
-              kind: partnerKind,
-              type_: "سحب",
-              amount: nextAmount,
-              date: fut.date,
-              notes: fut.notes,
-              currency: fut.currency || "IQD",
-              paymentType: fut.payment_type || "قاصه",
-            });
-          }
-        }
-      }
-
-      await callTauri("delete_partner_transaction", {
-        id: selectedInstallment.id,
-        partnerName: selectedInstallment.buyerName,
-        kind: partnerKind,
-      });
-
       setShowPayInstallmentModal(false);
       setSelectedInstallment(null);
       setPayAmount("");
-      await onRefresh(); await loadBalances(); await loadInstallments();
-    } catch (err) { console.error(err); }
-    finally { setLoadingAction(false); }
+    } else {
+      console.error("لا يمكن تسديد القسط من لوحة التحكم مباشرة — يرجى استخدام صفحة الشريك");
+    }
   };
 
   // ── تسديد الممولين ──

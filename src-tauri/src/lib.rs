@@ -1225,6 +1225,53 @@ fn validate_sale_amounts(
     Ok(())
 }
 
+/// validate_profit_cap_for_car: Ensure recognized profit does not exceed new full profit
+/// when sold-car costs are edited (purchase_price, car_expenses).
+fn validate_profit_cap_for_car(db: &Connection, car_number: &str) -> Result<(), String> {
+    let car_info: Result<(String, f64, f64), rusqlite::Error> = db.query_row(
+        "SELECT status, COALESCE(purchase_price, 0.0), COALESCE(selling_price, 0.0)
+         FROM cars WHERE car_number = ?1",
+        [car_number],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    );
+    let (status, purchase_price, selling_price) = match car_info {
+        Ok(info) => info,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+        Err(e) => return Err(e.to_string()),
+    };
+
+    if status != "مبيوعة" {
+        return Ok(());
+    }
+
+    let expenses_sum: f64 = db.query_row(
+        "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+        [car_number],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
+
+    let full_profit = selling_price - purchase_price - expenses_sum;
+    if full_profit <= 0.0 {
+        return Ok(());
+    }
+
+    let recognized_profit: f64 = db.query_row(
+        "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+         WHERE affects_profit = 1 AND related_source_type = 'car' AND related_source_id = ?1",
+        [car_number],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
+
+    if recognized_profit > full_profit + 0.001 {
+        return Err(format!(
+            "لا يمكن تعديل تكلفة السيارة لأن الأرباح المعترف بها سابقاً ({:.0}) تتجاوز الربح الجديد ({:.0})",
+            recognized_profit, full_profit
+        ));
+    }
+
+    Ok(())
+}
+
 /// Record a non-financial administrative event (deletions, etc.) into audit_log.
 fn record_audit_event(
     conn: &Connection,
@@ -3436,10 +3483,13 @@ fn add_car(
     let should_create_purchase_transactions = !is_existing_car;
     let _should_create_sale_transactions = status == "مبيوعة" && old_status.as_deref() != Some("مبيوعة");
 
-    let skip_sale = skip_sale_accounting.unwrap_or(false);
+    let skip_sale_raw = skip_sale_accounting.unwrap_or(false);
     let has_old_num = !old_num.is_empty();
     let car_number_changed = has_old_num && old_num != car_number;
     let same_car_edit = is_existing_car && (!has_old_num || old_num == car_number);
+
+    // effective_skip_sale: when car_number changes for a sold car, force sale ledger rebuild
+    let effective_skip_sale = skip_sale_raw && !car_number_changed;
 
     let purchase_changed = is_existing_car && (
         old_purchase_price.map_or(true, |v| (v - purchase).abs() > 0.001)
@@ -3448,6 +3498,10 @@ fn add_car(
         || old_currency.as_deref() != currency.as_deref()
     );
     let force_rebuild_due_to_number_change = car_number_changed;
+
+    // sold_cost_changed: detecting purchase/cost changes for sold cars that also affect COGS/sale ledger
+    let sold_cost_changed = is_existing_car && status == "مبيوعة" && purchase_changed;
+
     let should_rebuild_purchase = should_create_purchase_transactions || purchase_changed || force_rebuild_due_to_number_change;
 
     let sale_changed = is_existing_car && status == "مبيوعة" && (
@@ -3465,7 +3519,7 @@ fn add_car(
         || _old_delivery_date.as_deref() != delivery_date.as_deref()
         || _old_first_payment_date.as_deref() != first_payment_date.as_deref()
     );
-    let should_rebuild_sale_ledger = sale_changed || (force_rebuild_due_to_number_change && status == "مبيوعة");
+    let should_rebuild_sale_ledger = sale_changed || sold_cost_changed || (force_rebuild_due_to_number_change && status == "مبيوعة");
 
     if car_number_changed {
         // Car number actually changed — old number is being replaced entirely.
@@ -3483,7 +3537,7 @@ fn add_car(
         if should_rebuild_purchase {
             delete_car_purchase_ledger_entries(&db, car_number.as_str())?;
         }
-        if should_rebuild_sale_ledger && !skip_sale {
+        if should_rebuild_sale_ledger && !effective_skip_sale {
             delete_car_sale_ledger_entries(&db, car_number.as_str())?;
         }
     }
@@ -3536,7 +3590,10 @@ fn add_car(
     )
     .map_err(|e| e.to_string())?;
 
-
+    // Profit cap validation: block sold-cost changes that would make recognized profit exceed full profit
+    if sold_cost_changed {
+        validate_profit_cap_for_car(&db, &car_number)?;
+    }
 
     let clean_name = name.trim();
     let clean_chassis = chassis.trim();
@@ -3673,26 +3730,47 @@ fn add_car(
         .trim()
         .replace("  ", " ");
 
-    if should_rebuild_sale_ledger && !skip_sale {
+    if should_rebuild_sale_ledger && !effective_skip_sale {
         // Delete only car sale generated rows (not purchase rows)
         delete_generated_car_sale_partner_transactions(&db, &car_number)?;
 
-        // Also delete customer payment splits for payments linked to this car
-        // Use related_source_id first, fallback to notes LIKE for legacy rows
-        let car_payment_ids: Vec<i64> = db
-            .prepare("SELECT id FROM partner_transactions WHERE kind = 'زبون' AND ((related_source_type = 'car' AND related_source_id = ?1) OR (related_source_type IS NULL AND notes LIKE ?2))")
+        // Delete only sale-generated customer payment splits (preserve manual customer payments)
+        // Scoped by source_type to avoid deleting manual customer payment splits (Defect 3 fix)
+        let sale_gen_customer_ids: Vec<(i64, String)> = db
+            .prepare("SELECT id, partner_name FROM partner_transactions WHERE kind = 'زبون' AND related_source_type = 'car' AND related_source_id = ?1 AND (source_type = 'customer_sale_payment' OR source_type = 'customer_installment_schedule')")
             .map_err(|e| e.to_string())?
-            .query_map(params![car_number, format!("%#بيع_سيارة_{}%", car_number)], |row| row.get(0))
+            .query_map(params![car_number], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-        for pid in car_payment_ids {
+        let mut buyers_to_recalc_for_splits: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (pid, buyer_name_str) in &sale_gen_customer_ids {
+            delete_customer_payment_partner_splits(&db, *pid)?;
+            delete_customer_payment_profit_splits(&db, *pid)?;
+            delete_ledger_entries(&db, "partner_transaction", &pid.to_string())?;
+            db.execute("DELETE FROM partner_transactions WHERE id = ?1", [pid])
+                .map_err(|e| e.to_string())?;
+            buyers_to_recalc_for_splits.insert(buyer_name_str.clone());
+        }
+        for buyer_name_recalc in buyers_to_recalc_for_splits {
+            recalculate_partner_total(&db, &buyer_name_recalc, "زبون")?;
+        }
+
+        // Legacy rows (source_type IS NULL) with notes LIKE — scope is narrow, only for migration completeness
+        let legacy_ids: Vec<i64> = db
+            .prepare("SELECT id FROM partner_transactions WHERE kind = 'زبون' AND related_source_type IS NULL AND source_type IS NULL AND notes LIKE ?1")
+            .map_err(|e| e.to_string())?
+            .query_map(params![format!("%#بيع_سيارة_{}%", car_number)], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        for pid in legacy_ids {
             delete_customer_payment_partner_splits(&db, pid)?;
             delete_customer_payment_profit_splits(&db, pid)?;
         }
     }
 
-    if should_rebuild_sale_ledger && !skip_sale {
+    if should_rebuild_sale_ledger && !effective_skip_sale {
         // Currency policy: block mixed-currency sales without explicit fx_rate
         let purchase_curr = currency.as_deref().unwrap_or("IQD");
         let sale_curr = sale_currency.as_deref().unwrap_or("IQD");
@@ -3805,7 +3883,7 @@ fn add_car(
     if should_rebuild_purchase {
         record_car_purchase_ledger_entries(&db, car_number.as_str())?;
     }
-    if should_rebuild_sale_ledger && !skip_sale {
+    if should_rebuild_sale_ledger && !effective_skip_sale {
         record_car_sale_ledger_entries(&db, car_number.as_str())?;
     }
 
@@ -5121,29 +5199,29 @@ fn delete_partner(state: State<AppState>, name: String, kind: String) -> Result<
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
 
-    // Bug Q: Block deleting customer with active receivable
+    // Bug Q: Block deleting customer with active receivable (net balance, not SUM(ABS))
     if kind == "زبون" {
         let receivable: f64 = db.query_row(
-            "SELECT COALESCE(SUM(ABS(debit - credit)), 0.0) FROM financial_ledger
+            "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
              WHERE account_type = 'receivable' AND account_id = ?1",
             [&name],
             |row| row.get(0),
         ).unwrap_or(0.0);
-        if receivable > 0.001 {
+        if receivable.abs() > 0.001 {
             return Err("لا يمكن حذف حساب زبون لديه رصيد مستحق في دفتر الأستاذ".to_string());
         }
     }
 
-    // Bug R: Block deleting funder/company with active payable
+    // Bug R: Block deleting funder/company with active payable (net balance)
     if kind == "ممول" || kind == "شركة" {
         let account_type = if kind == "ممول" { "funder" } else { "payable" };
         let balance: f64 = db.query_row(
-            "SELECT COALESCE(SUM(ABS(debit - credit)), 0.0) FROM financial_ledger
+            "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
              WHERE account_type = ?1 AND account_id = ?2",
             params![account_type, &name],
             |row| row.get(0),
         ).unwrap_or(0.0);
-        if balance > 0.001 {
+        if balance.abs() > 0.001 {
             let msg = if kind == "ممول" {
                 "لا يمكن حذف حساب ممول لديه رصيد مستحق في دفتر الأستاذ"
             } else {

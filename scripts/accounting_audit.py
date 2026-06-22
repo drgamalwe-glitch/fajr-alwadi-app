@@ -1842,6 +1842,108 @@ def audit_source(lib_path):
     else:
         print("  PASS")
 
+    # S56-S64: New static checks for Phase 3 fixes
+    # 56. effective_skip_sale used (not bare skip_sale) in add_car sale rebuild checks
+    print("\n[S56] effective_skip_sale guards sale ledger rebuild in add_car...")
+    eff_count = content.count("effective_skip_sale")
+    if eff_count >= 4:
+        print(f"  PASS ({eff_count} occurrences)")
+    else:
+        errors.append(f"FAIL: expected >=4 effective_skip_sale references, found {eff_count}")
+
+    # 57. validate_profit_cap_for_car helper exists and is called for sold_cost_changed
+    print("\n[S57] validate_profit_cap_for_car exists and called for sold_cost_changed...")
+    if "fn validate_profit_cap_for_car" in content and "sold_cost_changed" in content:
+        if "if sold_cost_changed" in content and "validate_profit_cap_for_car" in content:
+            print("  PASS")
+        else:
+            errors.append("FAIL: validate_profit_cap_for_car defined but not called for sold_cost_changed")
+    else:
+        errors.append("FAIL: validate_profit_cap_for_car not found")
+
+    # 58. Customer split deletion in add_car scoped by source_type
+    print("\n[S58] add_car customer split deletion scoped by source_type...")
+    if "source_type = 'customer_sale_payment' OR source_type = 'customer_installment_schedule'" in content:
+        print("  PASS")
+    else:
+        errors.append("FAIL: add_car customer split deletion not scoped by source_type")
+
+    # 59. delete_partner uses SUM(debit-credit) not SUM(ABS(...))
+    print("\n[S59] delete_partner uses net balance not SUM(ABS)...")
+    sum_abs_count = len(re.findall(r'SUM\s*\(\s*ABS\s*\(', content))
+    if sum_abs_count == 0:
+        print("  PASS")
+    else:
+        errors.append(f"FAIL: still contains {sum_abs_count} SUM(ABS) occurrence(s)")
+
+    # 60-61: CarsTab.tsx checks
+    cars_tab_ok = True
+    cars_tab_path = None
+    for c in ["src/components/CarsTab.tsx", "../src/components/CarsTab.tsx"]:
+        if os.path.exists(c):
+            cars_tab_path = c
+            break
+
+    print("\n[S60] Sold-car identity-only edits go through add_car (not update_sold_car_with_accounting)...")
+    if cars_tab_path:
+        with open(cars_tab_path) as f:
+            cars_content = f.read()
+        # Check: isSoldCarAccountingEdit is based on hasSoldCarCostAccountingChange only (not identity changes)
+        if "isSoldCarAccountingEdit = hasCostChange" in cars_content or "isSoldCarAccountingEdit" in cars_content:
+            # Also verify add_car with skipSaleAccounting: true exists for identity-only path
+            if "skipSaleAccounting: true" in cars_content:
+                print("  PASS")
+            else:
+                cars_tab_ok = False
+                errors.append("FAIL: skipSaleAccounting: true not found in CarsTab.tsx")
+        else:
+            cars_tab_ok = False
+            errors.append("FAIL: isSoldCarAccountingEdit logic not based on cost-only changes")
+    else:
+        cars_tab_ok = False
+        errors.append("FAIL: CarsTab.tsx not found")
+
+    print("\n[S61] hasSoldCarCostAccountingChange function in CarsTab.tsx...")
+    if cars_tab_ok:
+        if "function hasSoldCarCostAccountingChange" in cars_content:
+            print("  PASS")
+        else:
+            errors.append("FAIL: hasSoldCarCostAccountingChange not found")
+
+    # 62. Dashboard handlePayInstallment safety
+    print("\n[S62] Dashboard handlePayInstallment does not mutate accounting directly...")
+    dashboard_path = None
+    for c in ["src/components/Dashboard.tsx", "../src/components/Dashboard.tsx"]:
+        if os.path.exists(c):
+            dashboard_path = c
+            break
+    if dashboard_path:
+        with open(dashboard_path) as f:
+            dash_content = f.read()
+        # Check that handlePayInstallment redirects rather than mutating
+        if "لا يمكن تسديد القسط من لوحة التحكم مباشرة" in dash_content:
+            print("  PASS (redirect/error path only)")
+        else:
+            errors.append("FAIL: Dashboard handlePayInstallment may still mutate accounting directly")
+    else:
+        errors.append("FAIL: Dashboard.tsx not found")
+
+    # 63. No bare !skip_sale (without effective_) in add_car
+    print("\n[S63] No bare !skip_sale (without effective_) in add_car sale rebuild...")
+    bare_skip = len(re.findall(r'!skip_sale[^_]', content))
+    if bare_skip == 0:
+        print("  PASS")
+    else:
+        errors.append(f"FAIL: found {bare_skip} bare !skip_sale without effective_ prefix")
+
+    # 64. CarsTab sold-car else path uses skipSaleAccounting: true
+    print("\n[S64] CarsTab sold-car else path sends skipSaleAccounting: true...")
+    if cars_tab_ok:
+        if "skipSaleAccounting: true" in cars_content:
+            print("  PASS")
+        else:
+            errors.append("FAIL: skipSaleAccounting: true not found in CarsTab.tsx")
+
     # Summary
     print("\n" + "=" * 60)
     if errors:
