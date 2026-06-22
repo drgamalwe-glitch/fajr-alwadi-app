@@ -231,6 +231,59 @@ async function mockInvoke<T>(
     return undefined as T;
   }
 
+  if (command === "sell_car_with_accounting") {
+    const carNumber = String(args.carNumber ?? args.car_number ?? "").trim();
+    const buyerName = String(args.buyerName ?? args.buyer_name ?? "").trim();
+    const sellingPrice = Number(args.sellingPrice ?? args.selling_price) || 0;
+    const saleCurrency = String(args.saleCurrency ?? args.sale_currency ?? "IQD");
+    const saleDate = String(args.saleDate ?? args.sale_date ?? "");
+    const paymentType = String(args.paymentType ?? args.payment_type ?? "كاش");
+    const amountPaid = Number(args.amountPaid ?? args.amount_paid) || 0;
+    const amountRemaining = Number(args.amountRemaining ?? args.amount_remaining) || 0;
+    const installmentMonths = Number(args.installmentMonths ?? args.installment_months) || 1;
+
+    // Update car sale fields
+    const existing: Car[] = JSON.parse(localStorage.getItem(key) ?? "[]");
+    const carIdx = existing.findIndex((c) => c.car_number === carNumber);
+    if (carIdx >= 0) {
+      existing[carIdx] = {
+        ...existing[carIdx],
+        status: "مبيوعة",
+        selling_price: sellingPrice,
+        sale_currency: saleCurrency,
+        payment_type: paymentType as Car["payment_type"],
+        amount_paid: amountPaid,
+        amount_remaining: amountRemaining,
+        installment_months: installmentMonths,
+        buyer_name: buyerName,
+        buyer_phone: String(args.buyerPhone ?? args.buyer_phone ?? ""),
+        sale_date: saleDate,
+        sale_time: new Date().toTimeString().slice(0, 5),
+        delivery_date: String(args.deliveryDate ?? args.delivery_date ?? "") || null,
+        first_payment_date: String(args.firstPaymentDate ?? args.first_payment_date ?? "") || null,
+      };
+      localStorage.setItem(key, JSON.stringify(existing));
+    }
+
+    // Create customer account if not exists
+    const partnersKey = "mock_partners";
+    const partners: Partner[] = JSON.parse(localStorage.getItem(partnersKey) ?? "[]");
+    if (!partners.some(p => p.partner_name === buyerName && p.kind === "زبون")) {
+      partners.push({
+        partner_name: buyerName,
+        phone: String(args.buyerPhone ?? args.buyer_phone ?? ""),
+        total_amount: amountRemaining,
+        iqd_balance: amountRemaining,
+        usd_balance: 0,
+        total_withdrawals: 0,
+        kind: "زبون",
+      });
+      localStorage.setItem(partnersKey, JSON.stringify(partners));
+    }
+
+    return undefined as T;
+  }
+
   if (command === "get_partners") {
     const raw = localStorage.getItem(key);
     const partners: Partner[] = raw ? JSON.parse(raw) : [];

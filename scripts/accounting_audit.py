@@ -670,6 +670,78 @@ def audit_db(db_path):
     else:
         print("  PASS")
 
+    # 35. No 0/0 financial_ledger entries
+    print("\n[35] No 0/0 financial_ledger entries...")
+    zero_zero = conn.execute("""
+        SELECT COUNT(*) FROM financial_ledger
+        WHERE debit = 0.0 AND credit = 0.0
+    """).fetchone()[0]
+    if zero_zero > 0:
+        errors.append(f"FAIL: {zero_zero} ledger entries with debit=0 AND credit=0")
+    else:
+        print("  PASS")
+
+    # 36. Installment schedule rows have related_source fields
+    print("\n[36] Installment schedule rows source-linked...")
+    if has_related_col:
+        bad_schedule = conn.execute("""
+            SELECT COUNT(*) FROM partner_transactions
+            WHERE source_type = 'customer_installment_schedule'
+              AND (related_source_type IS NULL OR related_source_id IS NULL)
+        """).fetchone()[0]
+        if bad_schedule > 0:
+            errors.append(f"FAIL: {bad_schedule} installment schedule rows missing related_source fields")
+        else:
+            print("  PASS")
+    else:
+        print("  SKIP (no related_source_type column)")
+
+    # 37. Funder repayment type is correct Arabic
+    print("\n[37] Funder repayment type check...")
+    bad_type = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE source_role = 'repayment_account_movement'
+          AND type NOT IN ('سحب')
+    """).fetchone()[0]
+    if bad_type > 0:
+        errors.append(f"FAIL: {bad_type} funder repayment rows have wrong type")
+    else:
+        print("  PASS")
+
+    # 38. Car purchase rows not duplicated by frontend
+    print("\n[38] No duplicate car purchase rows...")
+    dup_purchase = conn.execute("""
+        SELECT source_id, COUNT(*) as cnt
+        FROM partner_transactions
+        WHERE source_type = 'car_purchase'
+        GROUP BY source_id, partner_name, kind
+        HAVING cnt > 1
+    """).fetchall()
+    if dup_purchase:
+        for r in dup_purchase:
+            errors.append(f"FAIL: Car {r['source_id']} has {r['cnt']} purchase rows for same partner")
+    else:
+        print("  PASS")
+
+    # 39. Car sale ledger balance (detailed)
+    print("\n[39] Car sale ledger balance (detailed)...")
+    sold_cars_detail = conn.execute("""
+        SELECT car_number FROM cars WHERE status = 'مبيوعة'
+    """).fetchall()
+    for car in sold_cars_detail:
+        cn = car['car_number']
+        bal = conn.execute("""
+            SELECT COALESCE(SUM(debit), 0.0), COALESCE(SUM(credit), 0.0)
+            FROM financial_ledger
+            WHERE reference_type = 'car' AND reference_id = ?
+        """, [cn]).fetchone()
+        if bal and abs(bal[0] - bal[1]) > 0.01:
+            errors.append(f"FAIL: Car {cn} ledger unbalanced: debit={bal[0]:,.0f} credit={bal[1]:,.0f}")
+    if not sold_cars_detail:
+        print("  SKIP (no sold cars)")
+    else:
+        print("  PASS" if not any('FAIL' in e and 'ledger unbalanced' in e for e in errors[len(errors)-len(sold_cars_detail):]) else "  FAIL")
+
     # Summary
     print("\n" + "=" * 60)
     if errors:
@@ -1180,6 +1252,143 @@ def audit_source(lib_path):
             print("  PASS")
         else:
             errors.append("FAIL: Frontend does not call sell_car_with_accounting")
+    else:
+        print("  SKIP (CarsTab.tsx not found)")
+
+    # 31. delete_car does NOT write 0/0 financial_ledger entry
+    print("\n[S31] delete_car no 0/0 ledger entry...")
+    in_delete_car = False
+    has_zero_entry = False
+    for i, line in enumerate(lines, 1):
+        if 'fn delete_car' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_delete_car = True
+        if in_delete_car:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'record_ledger_entry' in stripped:
+                has_zero_entry = True
+                break
+            if 'fn add_partner' in line:
+                in_delete_car = False
+    if not has_zero_entry:
+        print("  PASS")
+    else:
+        errors.append("FAIL: delete_car still calls record_ledger_entry (should use audit_log)")
+
+    # 32. No record_ledger_entry with debit=0 AND credit=0
+    print("\n[S32] No 0/0 ledger entries anywhere...")
+    has_zero_zero = False
+    for i, line in enumerate(lines, 1):
+        stripped = line.split('//')[0] if '//' in line else line
+        if 'record_ledger_entry' in stripped:
+            context = '\n'.join(lines[max(0,i-1):i+15])
+            if '0.0,' in context and '0.0,' in context:
+                # Check if both debit and credit are 0.0 in the same call
+                zero_count = context.count('0.0,')
+                if zero_count >= 2 and 'system' in context.lower():
+                    has_zero_zero = True
+                    break
+    if not has_zero_zero:
+        print("  PASS")
+    else:
+        errors.append("FAIL: Found record_ledger_entry call with debit=0.0 and credit=0.0")
+
+    # 33. pay_financier_from_partners has correct Arabic type (not corrupted)
+    print("\n[S33] pay_financier_from_partners type not corrupted...")
+    in_func = False
+    has_corrupted = False
+    for i, line in enumerate(lines, 1):
+        if 'fn pay_financier_from_partners' in line:
+            in_func = True
+        if in_func:
+            stripped = line.split('//')[0] if '//' in line else line
+            if '挓' in stripped:
+                has_corrupted = True
+                break
+            if line.strip().startswith('}') and i > 5150:
+                in_func = False
+    if not has_corrupted:
+        print("  PASS")
+    else:
+        errors.append("FAIL: pay_financier_from_partners has corrupted type '挓'")
+
+    # 34. sell_car_with_accounting updates car sale fields
+    print("\n[S34] sell_car_with_accounting updates car fields...")
+    in_func = False
+    has_update = False
+    for i, line in enumerate(lines, 1):
+        if 'fn sell_car_with_accounting' in line:
+            in_func = True
+        if in_func:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'UPDATE cars SET' in stripped:
+                # Check next few lines for status field
+                context = '\n'.join(lines[i-1:i+5])
+                if 'status' in context:
+                    has_update = True
+                    break
+            if line.strip().startswith('}') and i > 3900:
+                in_func = False
+    if has_update:
+        print("  PASS")
+    else:
+        errors.append("FAIL: sell_car_with_accounting does not update car sale fields")
+
+    # 35. sell_car_with_accounting validates sale amounts
+    print("\n[S35] sell_car_with_accounting validates sale amounts...")
+    in_func = False
+    has_validation = False
+    for i, line in enumerate(lines, 1):
+        if 'fn sell_car_with_accounting' in line:
+            in_func = True
+        if in_func:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'validate_sale_amounts' in stripped:
+                has_validation = True
+                break
+            if line.strip().startswith('}') and i > 3900:
+                in_func = False
+    if has_validation:
+        print("  PASS")
+    else:
+        errors.append("FAIL: sell_car_with_accounting does not validate sale amounts")
+
+    # 36. Installment schedule rows have related_source fields
+    print("\n[S36] Installment schedule rows have related_source...")
+    has_schedule_source = False
+    for i, line in enumerate(lines, 1):
+        stripped = line.split('//')[0] if '//' in line else line
+        if 'customer_installment_schedule' in stripped:
+            # Check context for related_source_type
+            context = '\n'.join(lines[max(0,i-5):i+3])
+            if 'related_source_type' in context:
+                has_schedule_source = True
+                break
+    if has_schedule_source:
+        print("  PASS")
+    else:
+        errors.append("FAIL: Installment schedule rows missing related_source fields")
+
+    # 37. Frontend does NOT create funder/company purchase transactions
+    print("\n[S37] Frontend no duplicate purchase automation...")
+    if fe_file:
+        with open(fe_file, 'r', encoding='utf-8') as f:
+            fe_content = f.read()
+        # Check if handlePurchaseAutomation still calls add_partner_transaction for ممول/شركة
+        in_handle_purchase = False
+        bad_line = None
+        for i, line in enumerate(fe_content.split('\n'), 1):
+            if 'handlePurchaseAutomation' in line and 'const' in line and '=>' in line:
+                in_handle_purchase = True
+            if in_handle_purchase:
+                if ('add_partner_transaction' in line or 'update_partner_transaction' in line) and ('ممول' in line or 'شركة' in line):
+                    bad_line = i
+                    break
+                if line.strip().startswith('};'):
+                    in_handle_purchase = False
+        if not bad_line:
+            print("  PASS")
+        else:
+            errors.append(f"FAIL: handlePurchaseAutomation still creates purchase transactions at line {bad_line}")
     else:
         print("  SKIP (CarsTab.tsx not found)")
 

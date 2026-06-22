@@ -1102,6 +1102,22 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         [],
     );
 
+    // audit_log: non-financial administrative events (deletions, etc.)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            time TEXT NOT NULL,
+            actor TEXT,
+            action TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            description TEXT,
+            notes TEXT
+        )",
+        [],
+    )?;
+
     Ok(())
 }
 
@@ -1179,6 +1195,62 @@ fn validate_ledger_amounts(debit: f64, credit: f64) -> Result<(), String> {
     if debit > 0.0 && credit > 0.0 {
         return Err("المدين والدائن لا يمكن أن يكونا موجبين معاً في نفس القيد".to_string());
     }
+    Ok(())
+}
+
+fn validate_sale_amounts(
+    selling_price: f64,
+    amount_paid: f64,
+    amount_remaining: f64,
+    payment_type: &str,
+) -> Result<(), String> {
+    validate_positive_amount(selling_price, "سعر البيع")?;
+    validate_non_negative_amount(amount_paid, "المبلغ المدفوع")?;
+    validate_non_negative_amount(amount_remaining, "المبلغ المتبقي")?;
+
+    if payment_type == "كاش" {
+        if (amount_paid - selling_price).abs() > 0.01 {
+            return Err("في البيع النقدي: المبلغ المدفوع يجب أن يساوي سعر البيع".to_string());
+        }
+        if amount_remaining > 0.01 {
+            return Err("في البيع النقدي: المبلغ المتبقي يجب أن يكون صفر".to_string());
+        }
+    } else {
+        // Installment / term sale
+        let diff = ((amount_paid + amount_remaining) - selling_price).abs();
+        if diff > 0.01 {
+            return Err("المقدمة + الباقي يجب أن يساوي سعر البيع".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Record a non-financial administrative event (deletions, etc.) into audit_log.
+fn record_audit_event(
+    conn: &Connection,
+    actor: Option<&str>,
+    action: &str,
+    entity_type: &str,
+    entity_id: &str,
+    description: &str,
+    notes: Option<&str>,
+) -> Result<(), String> {
+    let (date, time) = now_datetime();
+    conn.execute(
+        "INSERT INTO audit_log (date, time, actor, action, entity_type, entity_id, description, notes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            date,
+            time,
+            actor.unwrap_or("النظام"),
+            action.trim(),
+            entity_type.trim(),
+            entity_id.trim(),
+            description.trim(),
+            notes.map(|s| s.trim()),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -3665,15 +3737,15 @@ fn sell_car_with_accounting(
     chassis_number: Option<String>,
 ) -> Result<(), String> {
     // ============================================================
-    // VALIDATION
+    // VALIDATION (before any write)
     // ============================================================
     validate_required_text(&car_number, "رقم السيارة")?;
     validate_required_text(&buyer_name, "اسم المشتري")?;
-    validate_positive_amount(selling_price, "سعر البيع")?;
     validate_currency(&sale_currency)?;
     validate_required_text(&sale_date, "تاريخ البيع")?;
-    validate_non_negative_amount(amount_paid, "المبلغ المدفوع")?;
-    validate_non_negative_amount(amount_remaining, "المبلغ المتبقي")?;
+
+    // Sale amounts validation (Issue 6)
+    validate_sale_amounts(selling_price, amount_paid, amount_remaining, &payment_type)?;
 
     if payment_type == "اقساط" {
         if let Some(months) = installment_months {
@@ -3695,22 +3767,108 @@ fn sell_car_with_accounting(
         |row| row.get::<_, String>(0),
     ).unwrap_or_else(|_| "سيارة".to_string());
 
-    let chassis_label = chassis_number.unwrap_or_default();
+    let chassis_label = chassis_number.clone().unwrap_or_default();
     let clean_chassis = chassis_label.trim();
 
-    // 1. Create customer account if not exists
+    // Mixed currency check
+    let purchase_currency: String = db.query_row(
+        "SELECT COALESCE(currency, 'IQD') FROM cars WHERE car_number = ?1",
+        [&car_number],
+        |row| row.get(0),
+    ).unwrap_or_else(|_| "IQD".to_string());
+
+    if purchase_currency != sale_currency {
+        return Err("لا يمكن بيع السيارة بعملة مختلفة عن عملة الشراء بدون سعر صرف مثبت".to_string());
+    }
+
+    // ============================================================
+    // STEP 1: Update car sale fields in cars table
+    // ============================================================
+    let now_time = db
+        .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .unwrap_or_else(|_| "00:00".to_string());
+
+    db.execute(
+        "UPDATE cars SET
+            status = 'مبيوعة',
+            selling_price = ?1,
+            sale_currency = ?2,
+            payment_type = ?3,
+            amount_paid = ?4,
+            amount_remaining = ?5,
+            installment_months = ?6,
+            buyer_name = ?7,
+            buyer_phone = ?8,
+            sale_date = ?9,
+            sale_time = ?10,
+            delivery_date = ?11,
+            first_payment_date = ?12
+         WHERE car_number = ?13",
+        params![
+            selling_price,
+            sale_currency,
+            payment_type,
+            amount_paid,
+            amount_remaining,
+            installment_months.unwrap_or(1),
+            buyer_name.trim(),
+            buyer_phone.trim(),
+            sale_date,
+            now_time,
+            delivery_date,
+            first_payment_date,
+            car_number,
+        ],
+    ).map_err(|e| e.to_string())?;
+
+    // ============================================================
+    // STEP 2: Delete existing sale-related ledger and partner rows (safe rebuild)
+    // ============================================================
+    // Delete sale partner rows (not purchase rows)
+    delete_generated_car_sale_partner_transactions(&db, &car_number)?;
+
+    // Delete customer payment splits linked to this car
+    let car_payment_ids: Vec<i64> = db
+        .prepare("SELECT id FROM partner_transactions WHERE kind = 'زبون' AND ((related_source_type = 'car' AND related_source_id = ?1) OR (related_source_type IS NULL AND notes LIKE ?2))")
+        .map_err(|e| e.to_string())?
+        .query_map(params![car_number, format!("%#بيع_سيارة_{}%", car_number)], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    for pid in car_payment_ids {
+        delete_customer_payment_partner_splits(&db, pid)?;
+        delete_customer_payment_profit_splits(&db, pid)?;
+    }
+
+    // Delete sale-related car ledger entries (receivable, deferred_revenue, revenue, COGS, inventory credit)
+    // But keep purchase entries
+    db.execute(
+        "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = ?1
+         AND account_type IN ('receivable', 'deferred_revenue', 'revenue', 'expense', 'cash')
+         AND (type_ LIKE '%بيع%' OR type_ LIKE '%مدينون%' OR type_ LIKE '%إيراد%' OR type_ LIKE '%تكلفة%' OR type_ LIKE '%تخفيض%')",
+        [&car_number],
+    ).map_err(|e| e.to_string())?;
+
+    // Also delete inventory credit entries for sale (the COGS offset)
+    db.execute(
+        "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = ?1
+         AND account_type = 'inventory' AND credit > 0 AND type_ LIKE '%تخفيض%'",
+        [&car_number],
+    ).map_err(|e| e.to_string())?;
+
+    // ============================================================
+    // STEP 3: Create customer account if not exists
+    // ============================================================
     ensure_partner_exists(&db, &buyer_name, &buyer_phone, "زبون")?;
 
     let is_installments_or_due = payment_type == "اقساط" || payment_type == "موعد";
 
-    // 2. Create down payment transaction if amount_paid > 0
+    // ============================================================
+    // STEP 4: Create down payment transaction if amount_paid > 0
+    // ============================================================
     if amount_paid > 0.0 {
-        let time_str = db
-            .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
-                row.get::<_, String>(0)
-            })
-            .unwrap_or_else(|_| "00:00".to_string());
-
         let dp_type = if is_installments_or_due { "مقدمة بيع سيارة" } else { "ايداع" };
         let dp_notes = if is_installments_or_due {
             format!("استلام مقدمة سيارة من {} رقم الشاصي {} #بيع_سيارة_{}", buyer_name, clean_chassis, car_number)
@@ -3721,7 +3879,7 @@ fn sell_car_with_accounting(
         db.execute(
             "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
              VALUES (?1, 'زبون', ?2, ?3, ?4, ?5, ?6, ?7, 'قاصه')",
-            params![buyer_name.trim(), dp_type, amount_paid, sale_date, &time_str, &dp_notes, sale_currency],
+            params![buyer_name.trim(), dp_type, amount_paid, sale_date, &now_time, &dp_notes, sale_currency],
         ).map_err(|e| e.to_string())?;
 
         let dp_id = db.last_insert_rowid();
@@ -3748,14 +3906,10 @@ fn sell_car_with_accounting(
         recalculate_partner_total(&db, buyer_name.trim(), "زبون")?;
     }
 
-    // 3. Create remaining installment rows if needed
+    // ============================================================
+    // STEP 5: Create remaining installment rows if needed (with source fields — Issue 3)
+    // ============================================================
     if amount_remaining > 0.0 {
-        let time_str = db
-            .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
-                row.get::<_, String>(0)
-            })
-            .unwrap_or_else(|_| "00:00".to_string());
-
         if payment_type == "اقساط" {
             let base_date = first_payment_date.as_deref().unwrap_or(&sale_date);
             let months = installment_months.unwrap_or(1);
@@ -3774,9 +3928,13 @@ fn sell_car_with_accounting(
                 };
 
                 db.execute(
-                    "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
-                     VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه')",
-                    params![buyer_name.trim(), installment_amount, inst_date, &time_str, &inst_notes, sale_currency],
+                    "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type,
+                        source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit,
+                        related_source_type, related_source_id)
+                     VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه',
+                        'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
+                    params![buyer_name.trim(), installment_amount, inst_date, &now_time, &inst_notes, sale_currency,
+                        format!("{}:installment:{}", car_number, i + 1), car_number],
                 ).map_err(|e| e.to_string())?;
             }
         } else if payment_type == "موعد" {
@@ -3784,17 +3942,28 @@ fn sell_car_with_accounting(
             let due_notes = format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name, clean_chassis);
 
             db.execute(
-                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
-                 VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه')",
-                params![buyer_name.trim(), amount_remaining, due_date, &time_str, &due_notes, sale_currency],
+                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type,
+                    source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit,
+                    related_source_type, related_source_id)
+                 VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه',
+                    'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
+                params![buyer_name.trim(), amount_remaining, due_date, &now_time, &due_notes, sale_currency,
+                    format!("{}:due:1", car_number), car_number],
             ).map_err(|e| e.to_string())?;
         }
 
         recalculate_partner_total(&db, buyer_name.trim(), "زبون")?;
     }
 
-    // 4. Record car ledger entries
+    // ============================================================
+    // STEP 6: Record car sale ledger entries (now safe — old sale entries deleted)
+    // ============================================================
     record_car_ledger_entries(&db, &car_number)?;
+
+    // ============================================================
+    // STEP 7: Recalculate and commit
+    // ============================================================
+    recalculate_all_partners(&db)?;
 
     db.commit().map_err(|e| e.to_string())?;
     Ok(())
@@ -3975,24 +4144,17 @@ fn delete_car(state: State<AppState>, num: String, admin_name: Option<String>) -
     let clean_name = car_name.trim();
     let clean_chassis = chassis_str.trim();
 
-    // تسجيل عملية الحذف في سجل المعاملات المالية
-    let (today, now_time) = now_datetime();
+    // تسجيل عملية الحذف في سجل التدقيق (ليس في دفتر الأستاذ المالي)
     let deletion_desc = format!("حذف سيارة {} {} بواسطة {}", clean_name, clean_chassis, admin);
-    record_ledger_entry(
+    record_audit_event(
         &db,
-        &today,
-        &now_time,
-        "system",
-        Some("deletion"),
-        0.0,
-        0.0,
-        "IQD",
-        "car_deletion",
-        car_number,
+        Some(&admin),
         "حذف سيارة",
+        "car",
+        car_number,
         &deletion_desc,
-        Some(&format!("تم حذف السيارة {} ({}) من قبل {}", clean_name, car_number, admin)),
-    ).map_err(|e| e.to_string())?;
+        Some(&format!("تم حذف السيارة {} ({})", clean_name, car_number)),
+    )?;
 
     // حذف جميع القيود المالية المرتبطة بالسيارة من دفتر الأستاذ (بدون عكس)
     db.execute(
@@ -5169,7 +5331,7 @@ fn pay_financier_from_partners(
     let financier_kind = financier_kind.trim();
     let date = date.trim();
 
-    let financier_tx_type = "挓";
+    let financier_tx_type = "سحب";
 
     let time_str = db
         .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {

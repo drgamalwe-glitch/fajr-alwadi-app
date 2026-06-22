@@ -537,39 +537,61 @@ export function CarsTab({
         carArgs.purchaseDate = originalCar.purchase_date ?? carArgs.purchaseDate;
       }
 
-      await callTauri("add_car", carArgs);
+      if (isNewSale) {
+        // For new sale: call sell_car_with_accounting only (it updates car + does accounting atomically)
+        const phone = data.phone.trim();
+        await callTauri("sell_car_with_accounting", {
+          carNumber: data.num,
+          buyerName: data.buyerName.trim(),
+          buyerPhone: phone,
+          sellingPrice: Number(data.selling),
+          saleCurrency: data.saleCurrency || "IQD",
+          saleDate: data.saleDate || todayIsoDate(),
+          paymentType: data.paymentType,
+          amountPaid: Number(data.amountPaid) || 0,
+          amountRemaining: Number(data.amountRemaining) || 0,
+          installmentMonths: data.paymentType === "اقساط" ? Number(data.installmentMonths) || 1 : null,
+          firstPaymentDate: data.firstPaymentDate || null,
+          deliveryDate: data.deliveryDate || null,
+          chassisNumber: data.chassis || null,
+        });
+      } else {
+        // For non-sale updates: use add_car
+        await callTauri("add_car", carArgs);
 
-      await handlePurchaseAutomation(data, originalCar);
+        // Only handle financer/company purchase automation for non-sale car updates
+        await handlePurchaseAutomation(data, originalCar);
 
-      if (isBuyerChange) {
-        await deleteCustomerAccountCompletely(oldBuyerName);
-        await executeSaleAutomation(data);
-      } else if (data.status === "مبيوعة" && data.paymentType !== "كاش" && (isNewSale || isPaymentChange)) {
-        if (isPaymentChange && originalCar?.buyer_name?.trim()) {
-          const oldBuyer = originalCar.buyer_name.trim();
-          const chassis = originalCar.chassis_number?.trim();
-          const carLabel = (data.name || data.model || "سيارة").trim();
-          const saleLabel = `${oldBuyer} ${carLabel} ${chassis || ""}`.trim();
-          try {
-            const existingTxns = await callTauri<PartnerTransaction[]>(
-              "get_partner_transactions",
-              { partnerName: oldBuyer, kind: "زبون" },
-            );
-            const relatedTxs = existingTxns?.filter(
-              (tx) => tx.notes?.includes(saleLabel) && (tx.type_ === "باقي قسط" || tx.type_ === "باقي" || tx.type_?.includes("باقي"))
-            ) || [];
-            for (const tx of relatedTxs) {
-              await callTauri("delete_partner_transaction", {
-                id: tx.id,
-                partnerName: oldBuyer,
-                kind: "زبون",
-              });
+        if (isBuyerChange) {
+          await deleteCustomerAccountCompletely(oldBuyerName);
+          await executeSaleAutomation(data);
+        } else if (data.status === "مبيوعة" && data.paymentType !== "كاش" && isPaymentChange) {
+          if (isPaymentChange && originalCar?.buyer_name?.trim()) {
+            const oldBuyer = originalCar.buyer_name.trim();
+            const chassis = originalCar.chassis_number?.trim();
+            const carLabel = (data.name || data.model || "سيارة").trim();
+            const saleLabel = `${oldBuyer} ${carLabel} ${chassis || ""}`.trim();
+            try {
+              const existingTxns = await callTauri<PartnerTransaction[]>(
+                "get_partner_transactions",
+                { partnerName: oldBuyer, kind: "زبون" },
+              );
+              const relatedTxs = existingTxns?.filter(
+                (tx) => tx.notes?.includes(saleLabel) && (tx.type_ === "باقي قسط" || tx.type_ === "باقي" || tx.type_?.includes("باقي"))
+              ) || [];
+              for (const tx of relatedTxs) {
+                await callTauri("delete_partner_transaction", {
+                  id: tx.id,
+                  partnerName: oldBuyer,
+                  kind: "زبون",
+                });
+              }
+            } catch (delErr) {
+              console.error("Failed to delete old borrower transactions on payment change:", delErr);
             }
-          } catch (delErr) {
-            console.error("Failed to delete old borrower transactions on payment change:", delErr);
           }
+          await handleSaleAutomation(data);
         }
-        await handleSaleAutomation(data);
       }
 
       await onRefresh();
@@ -668,13 +690,13 @@ export function CarsTab({
   };
 
   const handlePurchaseAutomation = async (formData: CarFormState, originalCar?: Car) => {
+    // Backend add_car now owns all car_purchase accounting (funder, company, cash).
+    // This function only handles cleanup when purchase type changes.
     try {
       const currentFinancer = formData.purchaseType === "تمويل" ? formData.financerName.trim() : "";
       const oldFinancer = (originalCar?.purchase_type === "تمويل" || originalCar?.purchase_type === "دين") ? originalCar.financer_name?.trim() : "";
-      const currentChassis = formData.chassis.trim();
       const oldChassis = originalCar?.chassis_number?.trim();
 
-      // Task 4: حذف معاملة الشركة القديمة إذا تغيرت طريقة الشراء
       const currentCompany = formData.purchaseType === "شركة" ? formData.financerName.trim() : "";
       const oldCompany = originalCar?.purchase_type === "شركة" ? originalCar.financer_name?.trim() : "";
 
@@ -697,7 +719,7 @@ export function CarsTab({
         }
       }
 
-      // Task 4: حذف معاملة الشركة القديمة إذا تغيرت طريقة الشراء
+      // 2. If old company transaction exists and we changed company or purchase type, delete the old transaction
       if (oldCompany && oldChassis) {
         const oldTxs = await callTauri<PartnerTransaction[]>(
           "get_partner_transactions",
@@ -716,90 +738,8 @@ export function CarsTab({
         }
       }
 
-      // 2. If purchaseType is "تمويل" and currentFinancer is not empty:
-      if (formData.purchaseType === "تمويل" && currentFinancer) {
-        // Ensure partner/funder exists in ممول list
-        await callTauri("add_partner", { name: currentFinancer, phone: "", kind: "ممول" });
-
-        const amountNum = Number(formData.purchase) || 0;
-        const noteText = `استلام تمويل لشراء سيارة ${[formData.model.trim(), formData.year.trim(), currentChassis].filter(Boolean).join(" ")}`;
-
-        // Look for existing transaction under current financer
-        const searchChassis = oldChassis || currentChassis;
-        const currentTxs = await callTauri<PartnerTransaction[]>(
-          "get_partner_transactions",
-          { partnerName: currentFinancer, kind: "ممول" }
-        );
-        const existingTx = searchChassis ? currentTxs?.find(tx => tx.notes?.includes(searchChassis)) : null;
-
-        if (existingTx) {
-          // Update existing transaction
-          await callTauri("update_partner_transaction", {
-            id: existingTx.id,
-            partnerName: currentFinancer,
-            kind: "ممول",
-            type: "ايداع",
-            amount: amountNum,
-            date: formData.purchaseDate || todayIsoDate(),
-            notes: noteText,
-            currency: formData.currency,
-            paymentType: "قاصه",
-          });
-        } else {
-          // Add new transaction
-          await callTauri("add_partner_transaction", {
-            partnerName: currentFinancer,
-            kind: "ممول",
-            type: "ايداع",
-            amount: amountNum,
-            date: formData.purchaseDate || todayIsoDate(),
-            notes: noteText,
-            currency: formData.currency,
-            paymentType: "قاصه",
-          });
-        }
-      }
-
-      // 3. If purchaseType is "شركة" — register in ممول transactions
-      if (formData.purchaseType === "شركة" && formData.financerName.trim()) {
-        const companyName = formData.financerName.trim();
-        await callTauri("add_partner", { name: companyName, phone: "", kind: "شركة" });
-
-        const amountNum = Number(formData.purchase) || 0;
-        const noteText = `شراء سيارة عبر شركة ${companyName} - ${[formData.model.trim(), formData.year.trim(), currentChassis].filter(Boolean).join(" ")}`;
-
-        const searchChassis = oldChassis || currentChassis;
-        const currentTxs = await callTauri<PartnerTransaction[]>(
-          "get_partner_transactions",
-          { partnerName: companyName, kind: "شركة" }
-        );
-        const existingTx = searchChassis ? currentTxs?.find(tx => tx.notes?.includes(searchChassis)) : null;
-
-        if (existingTx) {
-          await callTauri("update_partner_transaction", {
-            id: existingTx.id,
-            partnerName: companyName,
-            kind: "شركة",
-            type: "ايداع",
-            amount: amountNum,
-            date: formData.purchaseDate || todayIsoDate(),
-            notes: noteText,
-            currency: formData.currency,
-            paymentType: "قاصه",
-          });
-        } else {
-          await callTauri("add_partner_transaction", {
-            partnerName: companyName,
-            kind: "شركة",
-            type: "ايداع",
-            amount: amountNum,
-            date: formData.purchaseDate || todayIsoDate(),
-            notes: noteText,
-            currency: formData.currency,
-            paymentType: "قاصه",
-          });
-        }
-      }
+      // Note: Backend add_car handles creation of new funder/company purchase rows.
+      // No duplicate frontend creation needed.
 
     } catch (err) {
       console.error("فشل إكمال أتمتة تمويل الشراء:", err);

@@ -715,6 +715,61 @@ def check(db_path):
                  abs(bal[0] - bal[1]) < 0.01,
                  f"debit={bal[0]:,.0f} credit={bal[1]:,.0f}")
 
+    # ===== Scenario 31: No 0/0 ledger entries =====
+    print("\n[31] NO 0/0 LEDGER ENTRIES")
+    zero_zero = conn.execute("""
+        SELECT COUNT(*) FROM financial_ledger
+        WHERE debit = 0.0 AND credit = 0.0
+    """).fetchone()[0]
+    test("No 0/0 financial_ledger entries",
+         zero_zero == 0, f"count={zero_zero}")
+
+    # ===== Scenario 32: Installment schedule source linking =====
+    print("\n[32] INSTALLMENT SCHEDULE SOURCE LINKING")
+    has_related = False
+    try:
+        conn.execute("SELECT related_source_type FROM partner_transactions LIMIT 1")
+        has_related = True
+    except:
+        pass
+    if has_related:
+        bad_schedule = conn.execute("""
+            SELECT COUNT(*) FROM partner_transactions
+            WHERE source_type = 'customer_installment_schedule'
+              AND (related_source_type IS NULL OR related_source_id IS NULL)
+        """).fetchone()[0]
+        test("Installment schedule rows have related_source fields",
+             bad_schedule == 0, f"bad count={bad_schedule}")
+    else:
+        test("Installment schedule rows have related_source (column not found)", True, "SKIP")
+
+    # ===== Scenario 33: No duplicate car sale ledger =====
+    print("\n[33] NO DUPLICATE CAR SALE LEDGER")
+    dup_sale = conn.execute("""
+        SELECT reference_id, account_type, COUNT(*) as cnt
+        FROM financial_ledger
+        WHERE reference_type = 'car'
+          AND account_type IN ('receivable', 'deferred_revenue', 'revenue')
+        GROUP BY reference_id, account_type
+        HAVING cnt > 1
+    """).fetchall()
+    if dup_sale:
+        for r in dup_sale:
+            test(f"Car {r['reference_id']}: no duplicate {r['account_type']}",
+                 False, f"count={r['cnt']}")
+    else:
+        test("No duplicate car sale ledger entries", True)
+
+    # ===== Scenario 34: Funder repayment type =====
+    print("\n[34] FUNDER REPAYMENT TYPE")
+    bad_type = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE source_role = 'repayment_account_movement'
+          AND type NOT IN ('سحب')
+    """).fetchone()[0]
+    test("Funder repayment type is 'سحب'",
+         bad_type == 0, f"bad count={bad_type}")
+
     # ===== Summary =====
     print("\n" + "=" * 60)
     passed_count = sum(1 for _, p, _ in results if p)
