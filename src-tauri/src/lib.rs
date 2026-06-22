@@ -3154,179 +3154,11 @@ fn record_car_sale_ledger_entries(db: &Connection, car_number: &str) -> Result<(
     Ok(())
 }
 
+/// Safe coordinator: delegates to purchase-only and sale-only ledger recorders.
+/// Do NOT add direct record_ledger_entry calls here — they belong in the specific functions.
 fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), String> {
-    let car_number = car_number.trim();
-
-    let car_info: Result<(String, f64, String, String, Option<String>, String, String, String, f64, String, Option<String>, Option<f64>, Option<f64>, String, String, Option<String>), rusqlite::Error> = db.query_row(
-        "SELECT car_name, purchase_price, COALESCE(currency, 'IQD'), COALESCE(purchase_type, 'كاش'), financer_name,
-                COALESCE(purchase_date, ''), COALESCE(purchase_time, '00:00'), status, selling_price, COALESCE(sale_currency, 'IQD'),
-                payment_type, amount_paid, amount_remaining, COALESCE(sale_date, ''), COALESCE(sale_time, '00:00'), buyer_name
-         FROM cars WHERE car_number = ?1",
-        [car_number],
-        |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-                row.get(6)?,
-                row.get(7)?,
-                row.get(8)?,
-                row.get(9)?,
-                row.get(10)?,
-                row.get(11)?,
-                row.get(12)?,
-                row.get(13)?,
-                row.get(14)?,
-                row.get(15)?,
-            ))
-        }
-    );
-
-    let (
-        car_name,
-        purchase_price,
-        currency,
-        purchase_type,
-        financer_name_opt,
-        purchase_date,
-        purchase_time,
-        status,
-        selling_price,
-        sale_currency,
-        payment_type_opt,
-        amount_paid_opt,
-        amount_remaining_opt,
-        sale_date,
-        sale_time,
-        buyer_name_opt,
-    ) = match car_info {
-        Ok(info) => info,
-        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
-        Err(e) => return Err(e.to_string()),
-    };
-
-    let p_date = if purchase_date.is_empty() {
-        "2026-06-12".to_string()
-    } else {
-        purchase_date
-    };
-    let p_time = purchase_time;
-
-    if purchase_price > 0.0 {
-        record_ledger_entry(
-            db,
-            &p_date,
-            &p_time,
-            "inventory",
-            Some(car_number),
-            purchase_price,
-            0.0,
-            &currency,
-            "car",
-            car_number,
-            "شراء سيارة",
-            &format!("شراء سيارة: {} ({})", car_name, car_number),
-            None,
-        )
-        .map_err(|e| e.to_string())?;
-
-        if purchase_type == "تمويل" || purchase_type == "دين" {
-            let f_name = financer_name_opt.unwrap_or_default().trim().to_string();
-            let acc_id = if f_name.is_empty() {
-                "ممول عام".to_string()
-            } else {
-                f_name
-            };
-            record_ledger_entry(
-                db,
-                &p_date,
-                &p_time,
-                "funder",
-                Some(&acc_id),
-                0.0,
-                purchase_price,
-                &currency,
-                "car",
-                car_number,
-                "تمويل شراء سيارة",
-                &format!(
-                    "تمويل شراء سيارة: {} ({}) من قبل {}",
-                    car_name, car_number, acc_id
-                ),
-                None,
-            )
-            .map_err(|e| e.to_string())?;
-        } else if purchase_type == "شركة" {
-            let f_name = financer_name_opt.unwrap_or_default().trim().to_string();
-            let acc_id = if f_name.is_empty() {
-                "شركة عامة".to_string()
-            } else {
-                f_name
-            };
-            record_ledger_entry(
-                db,
-                &p_date,
-                &p_time,
-                "payable",
-                Some(&acc_id),
-                0.0,
-                purchase_price,
-                &currency,
-                "car",
-                car_number,
-                "شراء سيارة عن طريق شركة",
-                &format!(
-                    "شراء سيارة: {} ({}) عن طريق شركة {}",
-                    car_name, car_number, acc_id
-                ),
-                None,
-            )
-            .map_err(|e| e.to_string())?;
-        } else {
-            let mut p_stmt = db.prepare("SELECT COALESCE(purchase_payment_type, 'قاصه') FROM cars WHERE car_number = ?1").map_err(|e| e.to_string())?;
-            let register: String = p_stmt
-                .query_row([car_number], |row| row.get(0))
-                .unwrap_or_else(|_| "قاصه".to_string());
-            let register = if register.trim().is_empty() {
-                "قاصه".to_string()
-            } else {
-                register
-            };
-
-            record_ledger_entry(
-                db,
-                &p_date,
-                &p_time,
-                "cash",
-                Some(&register),
-                0.0,
-                purchase_price,
-                &currency,
-                "car",
-                car_number,
-                "شراء سيارة كاش",
-                &format!(
-                    "سحب نقدي لشراء سيارة: {} ({}) من {}",
-                    car_name, car_number, register
-                ),
-                None,
-            )
-            .map_err(|e| e.to_string())?;
-        }
-    }
-
-    if status == "مبيوعة" {
-        record_car_sale_ledger_entries_from_vars(
-            db, car_number, &car_name, purchase_price, &currency,
-            &selling_price, &sale_currency, &sale_date, &sale_time,
-            &payment_type_opt, &amount_paid_opt, &amount_remaining_opt,
-            &buyer_name_opt,
-        )?;
-    }
-
+    record_car_purchase_ledger_entries(db, car_number)?;
+    record_car_sale_ledger_entries(db, car_number)?;
     Ok(())
 }
 
@@ -3604,13 +3436,19 @@ fn add_car(
     let should_create_purchase_transactions = !is_existing_car;
     let _should_create_sale_transactions = status == "مبيوعة" && old_status.as_deref() != Some("مبيوعة");
 
+    let skip_sale = skip_sale_accounting.unwrap_or(false);
+    let has_old_num = !old_num.is_empty();
+    let car_number_changed = has_old_num && old_num != car_number;
+    let same_car_edit = is_existing_car && (!has_old_num || old_num == car_number);
+
     let purchase_changed = is_existing_car && (
         old_purchase_price.map_or(true, |v| (v - purchase).abs() > 0.001)
         || old_purchase_type.as_deref() != purchase_type.as_deref()
         || old_financer_name.as_deref() != financer_name.as_deref()
         || old_currency.as_deref() != currency.as_deref()
     );
-    let should_rebuild_purchase = should_create_purchase_transactions || purchase_changed;
+    let force_rebuild_due_to_number_change = car_number_changed;
+    let should_rebuild_purchase = should_create_purchase_transactions || purchase_changed || force_rebuild_due_to_number_change;
 
     let sale_changed = is_existing_car && status == "مبيوعة" && (
         old_status.as_deref() != Some("مبيوعة")
@@ -3627,36 +3465,19 @@ fn add_car(
         || _old_delivery_date.as_deref() != delivery_date.as_deref()
         || _old_first_payment_date.as_deref() != first_payment_date.as_deref()
     );
-    let should_rebuild_sale_ledger = sale_changed;
-
-    let skip_sale = skip_sale_accounting.unwrap_or(false);
-    let has_old_num = !old_num.is_empty();
-    let car_number_changed = has_old_num && old_num != car_number;
-    let same_car_edit = is_existing_car && (!has_old_num || old_num == car_number);
+    let should_rebuild_sale_ledger = sale_changed || (force_rebuild_due_to_number_change && status == "مبيوعة");
 
     if car_number_changed {
         // Car number actually changed — old number is being replaced entirely.
-        // It is safe to delete all ledger for the old number since the old car_number will be removed.
+        // Delete all ledger for the old number (safe since old number will be removed).
         db.execute(
             "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = ?1",
             [old_num],
         )
         .map_err(|e| e.to_string())?;
 
-        // Update linked tables from old_num to car_number
-        db.execute(
-            "UPDATE car_expenses SET car_number = ?1 WHERE car_number = ?2",
-            params![car_number.as_str(), old_num],
-        )
-        .map_err(|e| e.to_string())?;
-        db.execute(
-            "UPDATE financial_ledger SET account_id = ?1 WHERE account_type = 'inventory' AND account_id = ?2 AND reference_type = 'expense'",
-            params![car_number.as_str(), old_num]
-        ).map_err(|e| e.to_string())?;
-        db.execute("DELETE FROM cars WHERE car_number = ?1", [old_num])
-            .map_err(|e| e.to_string())?;
-        db.execute("DELETE FROM car_partners WHERE car_number = ?1", [old_num])
-            .map_err(|e| e.to_string())?;
+        // Migrate all source references to new number
+        migrate_car_number_references(&db, old_num, &car_number)?;
     } else if same_car_edit {
         // Normal edit of same car — use precise type-filtered deletion only
         if should_rebuild_purchase {
@@ -4533,6 +4354,567 @@ fn delete_car(state: State<AppState>, num: String, admin_name: Option<String>) -
     Ok(())
 }
 
+/// update_sold_car_with_accounting: Atomic sold-car financial field edit.
+/// Preserves manual customer payments, rebuilds only sale-generated rows.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn update_sold_car_with_accounting(
+    state: State<AppState>,
+    car_number: String,
+    buyer_name: String,
+    buyer_phone: String,
+    selling_price: f64,
+    sale_currency: String,
+    sale_date: String,
+    payment_type: String,
+    amount_paid: f64,
+    amount_remaining: f64,
+    installment_months: Option<i32>,
+    first_payment_date: Option<String>,
+    delivery_date: Option<String>,
+    _monthly_payment: Option<f64>,
+) -> Result<(), String> {
+    // ============================================================
+    // VALIDATION
+    // ============================================================
+    validate_required_text(&car_number, "رقم السيارة")?;
+    validate_required_text(&buyer_name, "اسم المشتري")?;
+    validate_currency(&sale_currency)?;
+    validate_required_text(&sale_date, "تاريخ البيع")?;
+    validate_sale_amounts(selling_price, amount_paid, amount_remaining, &payment_type)?;
+
+    if payment_type == "اقساط" {
+        if let Some(months) = installment_months {
+            if months <= 0 {
+                return Err("عدد أشهر التقسيط يجب أن يكون أكبر من صفر".to_string());
+            }
+        }
+    }
+
+    // ============================================================
+    // ATOMIC TRANSACTION
+    // ============================================================
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
+
+    // Load existing car data
+    let old_car: Result<(String, f64, String, String, f64, String, Option<String>, Option<f64>, Option<f64>, Option<i32>, Option<String>, Option<String>, Option<String>, Option<String>), rusqlite::Error> = db.query_row(
+        "SELECT car_name, purchase_price, COALESCE(currency, 'IQD'), COALESCE(sale_currency, 'IQD'),
+                selling_price, status, payment_type, amount_paid, amount_remaining,
+                installment_months, buyer_name, buyer_phone, sale_date, delivery_date
+         FROM cars WHERE car_number = ?1",
+        [&car_number],
+        |row| Ok((
+            row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
+            row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
+            row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?,
+            row.get(12)?, row.get(13)?,
+        )),
+    );
+    let (car_name, purchase_price, currency, _old_sale_currency,
+         _old_selling_price, status, _old_payment_type,
+         _old_amount_paid, _old_amount_remaining, _old_installment_months,
+         _old_buyer_name, _old_buyer_phone, _old_sale_date, _old_delivery_date) = match old_car {
+        Ok(info) => info,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Err(format!("السيارة رقم {} غير موجودة", car_number)),
+        Err(e) => return Err(e.to_string()),
+    };
+
+    if status != "مبيوعة" {
+        return Err("السيارة غير مباعة، استخدم sell_car_with_accounting".to_string());
+    }
+
+    // Mixed currency check
+    if currency != sale_currency {
+        return Err("لا يمكن تعديل البيع بعملة مختلفة عن عملة الشراء بدون سعر صرف مثبت".to_string());
+    }
+
+    // Calculate already-collected manual payments (non-sale-generated customer payments)
+    let collected_manual: f64 = db.query_row(
+        "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+         WHERE kind = 'زبون'
+           AND related_source_type = 'car' AND related_source_id = ?1
+           AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
+           AND source_type IS DISTINCT FROM 'customer_sale_payment'
+           AND source_type IS DISTINCT FROM 'customer_installment_schedule'",
+        [&car_number],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
+
+    // Validate that new selling_price >= already collected
+    if selling_price < collected_manual {
+        return Err(format!(
+            "لا يمكن تعديل سعر البيع إلى مبلغ أقل من المبالغ المستلمة (تم استلام {:.0})",
+            collected_manual
+        ));
+    }
+
+    // Calculate recognized profit so far
+    let recognized_profit: f64 = db.query_row(
+        "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+         WHERE affects_profit = 1 AND related_source_type = 'car' AND related_source_id = ?1",
+        [&car_number],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
+
+    // Calculate new full profit
+    let expenses_sum: f64 = db.query_row(
+        "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+        [&car_number],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
+    let new_full_profit = selling_price - purchase_price - expenses_sum;
+
+    // Profit cap validation
+    if recognized_profit > 0.0 && new_full_profit < recognized_profit {
+        return Err(format!(
+            "لا يمكن تعديل البيع لأن الأرباح المعترف بها سابقاً ({:.0}) تتجاوز الربح الجديد ({:.0})",
+            recognized_profit, new_full_profit
+        ));
+    }
+
+    let chassis_label: String = db.query_row(
+        "SELECT COALESCE(chassis_number, '') FROM cars WHERE car_number = ?1",
+        [&car_number],
+        |row| row.get(0),
+    ).unwrap_or_default();
+    let clean_chassis = chassis_label.trim();
+    let now_time = db.query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
+        row.get::<_, String>(0)
+    }).unwrap_or_else(|_| "00:00".to_string());
+
+    // ============================================================
+    // STEP 1: Update sale fields
+    // ============================================================
+    db.execute(
+        "UPDATE cars SET
+            selling_price = ?1, sale_currency = ?2, payment_type = ?3,
+            amount_paid = ?4, amount_remaining = ?5,
+            installment_months = ?6, buyer_name = ?7, buyer_phone = ?8,
+            sale_date = ?9, delivery_date = ?11, first_payment_date = ?12,
+            sale_time = ?10
+         WHERE car_number = ?13",
+        params![
+            selling_price, sale_currency, payment_type,
+            amount_paid, amount_remaining,
+            installment_months.unwrap_or(1),
+            buyer_name.trim(), buyer_phone.trim(),
+            sale_date, now_time, delivery_date, first_payment_date,
+            car_number,
+        ],
+    ).map_err(|e| e.to_string())?;
+
+    // ============================================================
+    // STEP 2: Delete only sale-generated customer rows (preserve manual payments)
+    // ============================================================
+    // Delete sale-generated down payment and installment schedule rows
+    let sale_gen_ids: Vec<(i64, String)> = {
+        let mut stmt = db.prepare(
+            "SELECT id, partner_name FROM partner_transactions
+             WHERE kind = 'زبون'
+               AND related_source_type = 'car' AND related_source_id = ?1
+               AND (source_type = 'customer_sale_payment' OR source_type = 'customer_installment_schedule')"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([&car_number], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        rows
+    };
+
+    let mut buyers_to_recalc: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (cust_id, buyer_name_str) in &sale_gen_ids {
+        delete_customer_payment_partner_splits(&db, *cust_id)?;
+        delete_customer_payment_profit_splits(&db, *cust_id)?;
+        delete_ledger_entries(&db, "partner_transaction", &cust_id.to_string())?;
+        db.execute("DELETE FROM partner_transactions WHERE id = ?1", [cust_id])
+            .map_err(|e| e.to_string())?;
+        buyers_to_recalc.insert(buyer_name_str.clone());
+    }
+
+    // Delete sale partner rows (source_type = 'car_sale')
+    delete_generated_car_sale_partner_transactions(&db, &car_number)?;
+
+    // Delete sale ledger entries (but preserve purchase entries)
+    delete_car_sale_ledger_entries(&db, &car_number)?;
+
+    // ============================================================
+    // STEP 3: Recreate down payment row if amount_paid > 0
+    // ============================================================
+    let is_installments_or_due = payment_type == "اقساط" || payment_type == "موعد";
+
+    if amount_paid > 0.0 {
+        let dp_type = if is_installments_or_due { "مقدمة بيع سيارة" } else { "ايداع" };
+        let dp_notes = if is_installments_or_due {
+            format!("استلام مقدمة سيارة من {} رقم الشاصي {} #بيع_سيارة_{}", buyer_name.trim(), clean_chassis, car_number)
+        } else {
+            format!("دفعة أولى مستلمة - بيع {} #بيع_سيارة_{}", car_name, car_number)
+        };
+
+        db.execute(
+            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+             VALUES (?1, 'زبون', ?2, ?3, ?4, ?5, ?6, ?7, 'قاصه')",
+            params![buyer_name.trim(), dp_type, amount_paid, sale_date, &now_time, &dp_notes, sale_currency],
+        ).map_err(|e| e.to_string())?;
+
+        let dp_id = db.last_insert_rowid();
+
+        db.execute(
+            "UPDATE partner_transactions SET
+             source_type = 'customer_sale_payment',
+             source_id = ?1,
+             source_role = 'sale_down_payment',
+             affects_qasa = 1,
+             affects_partner_cash = 1,
+             affects_profit = 0,
+             related_source_type = 'car',
+             related_source_id = ?2
+             WHERE id = ?3",
+            params![format!("{}:down_payment", car_number), car_number, dp_id],
+        ).map_err(|e| e.to_string())?;
+
+        record_partner_ledger_entries(&db, dp_id)?;
+        apply_partner_transaction_splits(&db, dp_id, buyer_name.trim(), "زبون", dp_type, amount_paid, &sale_date, Some(&dp_notes), &sale_currency)?;
+
+        buyers_to_recalc.insert(buyer_name.trim().to_string());
+    }
+
+    // ============================================================
+    // STEP 4: Recreate installment rows if amount_remaining > 0
+    // ============================================================
+    if amount_remaining > 0.0 {
+        if payment_type == "اقساط" {
+            let base_date = first_payment_date.as_deref().unwrap_or(&sale_date);
+            let months = installment_months.unwrap_or(1);
+            let monthly_amount = (amount_remaining / months as f64).floor();
+            let last_amount = amount_remaining - (monthly_amount * (months - 1) as f64);
+
+            for i in 0..months {
+                let inst_amount = if i == months - 1 { last_amount } else { monthly_amount };
+                if inst_amount <= 0.0 { continue; }
+
+                let inst_date = add_months_to_date(base_date, i);
+                let inst_notes = if months > 1 {
+                    format!("باقي قسط شهر {} من {} على {} رقم الشاصي {}", i + 1, months, buyer_name.trim(), clean_chassis)
+                } else {
+                    format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name.trim(), clean_chassis)
+                };
+
+                db.execute(
+                    "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type,
+                        source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit,
+                        related_source_type, related_source_id)
+                     VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه',
+                        'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
+                    params![buyer_name.trim(), inst_amount, inst_date, &now_time, &inst_notes, sale_currency,
+                        format!("{}:installment:{}", car_number, i + 1), car_number],
+                ).map_err(|e| e.to_string())?;
+            }
+        } else if payment_type == "موعد" {
+            let due_date = delivery_date.as_deref().unwrap_or(&sale_date);
+            let due_notes = format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name.trim(), clean_chassis);
+
+            db.execute(
+                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type,
+                    source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit,
+                    related_source_type, related_source_id)
+                 VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه',
+                    'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
+                params![buyer_name.trim(), amount_remaining, due_date, &now_time, &due_notes, sale_currency,
+                    format!("{}:due:1", car_number), car_number],
+            ).map_err(|e| e.to_string())?;
+        }
+
+        buyers_to_recalc.insert(buyer_name.trim().to_string());
+    }
+
+    // ============================================================
+    // STEP 5: Rebuild sale ledger entries
+    // ============================================================
+    record_car_sale_ledger_entries(&db, &car_number)?;
+
+    // ============================================================
+    // STEP 6: Recalculate all affected partners
+    // ============================================================
+    for buyer in &buyers_to_recalc {
+        recalculate_partner_total(&db, buyer, "زبون")?;
+    }
+    recalculate_all_partners(&db)?;
+
+    db.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// save_and_sell_car_with_accounting: Atomic new-car-direct-sold creation.
+/// Inserts car, records purchase accounting, sells it, all in one transaction.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn save_and_sell_car_with_accounting(
+    state: State<AppState>,
+    num: String,
+    chassis: String,
+    model: String,
+    year: String,
+    name: String,
+    color: String,
+    details: String,
+    purchase: f64,
+    currency: Option<String>,
+    sale_currency: Option<String>,
+    selling: f64,
+    payment_type: String,
+    amount_paid: f64,
+    amount_remaining: f64,
+    installment_months: Option<i32>,
+    monthly_payment: Option<f64>,
+    buyer_name: String,
+    buyer_phone: String,
+    purchase_date: Option<String>,
+    sale_date: Option<String>,
+    delivery_date: Option<String>,
+    first_payment_date: Option<String>,
+    purchase_payment_type: Option<String>,
+    purchase_type: Option<String>,
+    financer_name: Option<String>,
+    commission_type: Option<String>,
+    commission_value: Option<f64>,
+) -> Result<(), String> {
+    // ============================================================
+    // VALIDATION (before any write)
+    // ============================================================
+    validate_required_text(&num, "رقم السيارة")?;
+    validate_required_text(&name, "اسم السيارة")?;
+    validate_non_negative_amount(purchase, "سعر الشراء")?;
+    validate_non_negative_amount(selling, "سعر البيع")?;
+    validate_non_negative_amount(amount_paid, "المبلغ المدفوع")?;
+    validate_non_negative_amount(amount_remaining, "المبلغ المتبقي")?;
+    if let Some(ref mp) = monthly_payment {
+        validate_non_negative_amount(*mp, "القسط الشهري")?;
+    }
+    if let Some(ref cv) = commission_value {
+        validate_non_negative_amount(*cv, "قيمة العمولة")?;
+    }
+    validate_required_text(&buyer_name, "اسم المشتري")?;
+    validate_required_text(&sale_date.as_deref().unwrap_or(""), "تاريخ البيع")?;
+
+    let curr = currency.as_deref().unwrap_or("IQD");
+    validate_currency(curr)?;
+    let sale_curr = sale_currency.as_deref().unwrap_or("IQD");
+    validate_currency(sale_curr)?;
+    if curr != sale_curr {
+        return Err("لا يمكن بيع السيارة بعملة مختلفة عن عملة الشراء بدون سعر صرف مثبت".to_string());
+    }
+
+    validate_sale_amounts(selling, amount_paid, amount_remaining, &payment_type)?;
+
+    if payment_type == "اقساط" {
+        if let Some(months) = installment_months {
+            if months <= 0 {
+                return Err("عدد أشهر التقسيط يجب أن يكون أكبر من صفر".to_string());
+            }
+        }
+    }
+
+    // ============================================================
+    // ATOMIC TRANSACTION
+    // ============================================================
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
+
+    let car_number = num.trim().to_string();
+    let clean_name = name.trim();
+    let clean_chassis = chassis.trim();
+    let now_time = db.query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
+        row.get::<_, String>(0)
+    }).unwrap_or_else(|_| "00:00".to_string());
+    let purchase_time = if purchase_date.as_deref().unwrap_or("").is_empty() { "00:00".to_string() } else { now_time.clone() };
+
+    // ============================================================
+    // STEP 1: Insert car
+    // ============================================================
+    db.execute(
+        "INSERT INTO cars (
+            car_number, car_plate_num, chassis_number,
+            car_model, car_year, car_name, color, details,
+            purchase_price, currency, sale_currency,
+            selling_price, status,
+            payment_type, cash_price, amount_paid, amount_remaining,
+            installment_months, monthly_payment, purchase_payment_type,
+            purchase_type, financer_name, commission_type, commission_value,
+            buyer_name, buyer_phone, purchase_date, sale_date, delivery_date,
+            first_payment_date, purchase_time, sale_time
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'مبيوعة',
+            ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24,
+            ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32)",
+        params![
+            car_number, car_number, clean_chassis,
+            model.trim(), year.trim(), clean_name, color.trim(), details.trim(),
+            purchase, curr, sale_curr,
+            selling,
+            payment_type,
+            amount_paid,
+            amount_paid,
+            amount_remaining,
+            installment_months,
+            monthly_payment,
+            purchase_payment_type.as_deref().unwrap_or("قاصه"),
+            purchase_type.as_deref().unwrap_or("كاش"),
+            financer_name,
+            commission_type,
+            commission_value,
+            buyer_name.trim(), buyer_phone.trim(),
+            purchase_date.as_deref().unwrap_or(""),
+            sale_date.as_deref().unwrap_or(""),
+            delivery_date.as_deref().unwrap_or(""),
+            first_payment_date.as_deref().unwrap_or(""),
+            purchase_time,
+            now_time,
+        ],
+    ).map_err(|e| e.to_string())?;
+
+    // ============================================================
+    // STEP 2: Record purchase accounting (partner rows)
+    // ============================================================
+    let purchase_note = format!("سحب شراء سيارة {} (شاصي: {})", clean_name, clean_chassis)
+        .trim().replace("  ", " ");
+    let p_date = purchase_date.as_deref().unwrap_or("");
+
+    if purchase_type.as_deref() == Some("كاش") || purchase_type.is_none() || purchase_type.as_deref() == Some("") {
+        distribute_to_partners_50_with_effects(
+            &db, purchase, curr, p_date,
+            purchase_payment_type.as_deref().unwrap_or("قاصه"),
+            "سحب شراء سيارة", &purchase_note,
+            "car_purchase", &car_number, "cash_payment",
+            true, true, false,
+        )?;
+    } else if purchase_type.as_deref() == Some("تمويل") || purchase_type.as_deref() == Some("دين") || purchase_type.as_deref() == Some("شركة") {
+        let p_kind = if purchase_type.as_deref() == Some("تمويل") || purchase_type.as_deref() == Some("دين") { "ممول" } else { "شركة" };
+        if let Some(f_name) = &financer_name {
+            let f_name = f_name.trim();
+            if !f_name.is_empty() {
+                db.execute(
+                    "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit)
+                     VALUES (?1, ?2, 'سحب شراء سيارة', ?3, ?4, ?5, ?6, ?7, ?8, 'car_purchase', ?9, 'funder_or_company_account_movement', 0, 0, 0)",
+                    params![f_name, p_kind, purchase, p_date, &purchase_time, &purchase_note, curr,
+                        purchase_payment_type.as_deref().unwrap_or("قاصه"), car_number],
+                ).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
+    // ============================================================
+    // STEP 3: Record purchase ledger entries
+    // ============================================================
+    record_car_purchase_ledger_entries(&db, &car_number)?;
+
+    // ============================================================
+    // STEP 4: Create customer account
+    // ============================================================
+    ensure_partner_exists(&db, &buyer_name, &buyer_phone, "زبون")?;
+
+    // ============================================================
+    // STEP 5: Create down payment row
+    // ============================================================
+    let is_installments_or_due = payment_type == "اقساط" || payment_type == "موعد";
+    let sale_date_str = sale_date.as_deref().unwrap_or("");
+
+    if amount_paid > 0.0 {
+        let dp_type = if is_installments_or_due { "مقدمة بيع سيارة" } else { "ايداع" };
+        let dp_notes = if is_installments_or_due {
+            format!("استلام مقدمة سيارة من {} رقم الشاصي {} #بيع_سيارة_{}", buyer_name.trim(), clean_chassis, car_number)
+        } else {
+            format!("دفعة أولى مستلمة - بيع {} #بيع_سيارة_{}", clean_name, car_number)
+        };
+
+        db.execute(
+            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+             VALUES (?1, 'زبون', ?2, ?3, ?4, ?5, ?6, ?7, 'قاصه')",
+            params![buyer_name.trim(), dp_type, amount_paid, sale_date_str, &now_time, &dp_notes, sale_curr],
+        ).map_err(|e| e.to_string())?;
+
+        let dp_id = db.last_insert_rowid();
+
+        db.execute(
+            "UPDATE partner_transactions SET
+             source_type = 'customer_sale_payment',
+             source_id = ?1,
+             source_role = 'sale_down_payment',
+             affects_qasa = 1,
+             affects_partner_cash = 1,
+             affects_profit = 0,
+             related_source_type = 'car',
+             related_source_id = ?2
+             WHERE id = ?3",
+            params![format!("{}:down_payment", car_number), car_number, dp_id],
+        ).map_err(|e| e.to_string())?;
+
+        record_partner_ledger_entries(&db, dp_id)?;
+        apply_partner_transaction_splits(&db, dp_id, buyer_name.trim(), "زبون", dp_type, amount_paid, sale_date_str, Some(&dp_notes), sale_curr)?;
+    }
+
+    // ============================================================
+    // STEP 6: Create installment rows
+    // ============================================================
+    if amount_remaining > 0.0 {
+        if payment_type == "اقساط" {
+            let base_date = first_payment_date.as_deref().unwrap_or(sale_date_str);
+            let months = installment_months.unwrap_or(1);
+            let monthly_amount = (amount_remaining / months as f64).floor();
+            let last_amount = amount_remaining - (monthly_amount * (months - 1) as f64);
+
+            for i in 0..months {
+                let inst_amount = if i == months - 1 { last_amount } else { monthly_amount };
+                if inst_amount <= 0.0 { continue; }
+
+                let inst_date = add_months_to_date(base_date, i);
+                let inst_notes = if months > 1 {
+                    format!("باقي قسط شهر {} من {} على {} رقم الشاصي {}", i + 1, months, buyer_name.trim(), clean_chassis)
+                } else {
+                    format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name.trim(), clean_chassis)
+                };
+
+                db.execute(
+                    "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type,
+                        source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit,
+                        related_source_type, related_source_id)
+                     VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه',
+                        'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
+                    params![buyer_name.trim(), inst_amount, inst_date, &now_time, &inst_notes, sale_curr,
+                        format!("{}:installment:{}", car_number, i + 1), car_number],
+                ).map_err(|e| e.to_string())?;
+            }
+        } else if payment_type == "موعد" {
+            let due_date = delivery_date.as_deref().unwrap_or(sale_date_str);
+            let due_notes = format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name.trim(), clean_chassis);
+
+            db.execute(
+                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type,
+                    source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit,
+                    related_source_type, related_source_id)
+                 VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه',
+                    'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
+                params![buyer_name.trim(), amount_remaining, due_date, &now_time, &due_notes, sale_curr,
+                    format!("{}:due:1", car_number), car_number],
+            ).map_err(|e| e.to_string())?;
+        }
+    }
+
+    // ============================================================
+    // STEP 7: Record sale ledger entries
+    // ============================================================
+    record_car_sale_ledger_entries(&db, &car_number)?;
+
+    // ============================================================
+    // STEP 8: Recalculate and commit
+    // ============================================================
+    recalculate_partner_total(&db, buyer_name.trim(), "زبون")?;
+    recalculate_all_partners(&db)?;
+
+    db.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn add_partner(
     state: State<AppState>,
@@ -4731,27 +5113,60 @@ fn get_unified_accounts(state: State<AppState>) -> Result<Vec<UnifiedAccount>, S
 
 #[tauri::command]
 fn delete_partner(state: State<AppState>, name: String, kind: String) -> Result<(), String> {
-    if kind.trim() == "شريك" {
+    let kind = kind.trim().to_string();
+    let name = name.trim().to_string();
+    if kind == "شريك" {
         return Err("لا يمكن حذف حساب شريك".to_string());
     }
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
-    let db = &mut *db_guard;
-    let tx = db.transaction().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
+
+    // Bug Q: Block deleting customer with active receivable
+    if kind == "زبون" {
+        let receivable: f64 = db.query_row(
+            "SELECT COALESCE(SUM(ABS(debit - credit)), 0.0) FROM financial_ledger
+             WHERE account_type = 'receivable' AND account_id = ?1",
+            [&name],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+        if receivable > 0.001 {
+            return Err("لا يمكن حذف حساب زبون لديه رصيد مستحق في دفتر الأستاذ".to_string());
+        }
+    }
+
+    // Bug R: Block deleting funder/company with active payable
+    if kind == "ممول" || kind == "شركة" {
+        let account_type = if kind == "ممول" { "funder" } else { "payable" };
+        let balance: f64 = db.query_row(
+            "SELECT COALESCE(SUM(ABS(debit - credit)), 0.0) FROM financial_ledger
+             WHERE account_type = ?1 AND account_id = ?2",
+            params![account_type, &name],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+        if balance > 0.001 {
+            let msg = if kind == "ممول" {
+                "لا يمكن حذف حساب ممول لديه رصيد مستحق في دفتر الأستاذ"
+            } else {
+                "لا يمكن حذف حساب شركة لديه رصيد مستحق في دفتر الأستاذ"
+            };
+            return Err(msg.to_string());
+        }
+    }
 
     // Find all transaction IDs for this partner to delete corresponding ledger entries
-    let mut stmt = tx.prepare("SELECT id FROM partner_transactions WHERE partner_name = ?1 AND kind = ?2").map_err(|e| e.to_string())?;
-    let tx_ids: Vec<i64> = stmt.query_map([name.trim(), kind.trim()], |row| row.get(0)).map_err(|e| e.to_string())?
+    let mut stmt = db.prepare("SELECT id FROM partner_transactions WHERE partner_name = ?1 AND kind = ?2").map_err(|e| e.to_string())?;
+    let tx_ids: Vec<i64> = stmt.query_map([&name, &kind], |row| row.get(0)).map_err(|e| e.to_string())?
         .collect::<Result<Vec<i64>, _>>().map_err(|e| e.to_string())?;
     drop(stmt);
 
     for tx_id in tx_ids {
-        tx.execute("DELETE FROM financial_ledger WHERE reference_type = 'partner_transaction' AND reference_id = ?1", [tx_id.to_string()]).map_err(|e| e.to_string())?;
+        db.execute("DELETE FROM financial_ledger WHERE reference_type = 'partner_transaction' AND reference_id = ?1", [tx_id.to_string()]).map_err(|e| e.to_string())?;
     }
 
-    tx.execute("DELETE FROM partner_transactions WHERE partner_name = ?1 AND kind = ?2", (name.trim(), kind.trim())).map_err(|e| e.to_string())?;
-    tx.execute("DELETE FROM partners WHERE partner_name = ?1 AND kind = ?2", (name.trim(), kind.trim())).map_err(|e| e.to_string())?;
+    db.execute("DELETE FROM partner_transactions WHERE partner_name = ?1 AND kind = ?2", (&name, &kind)).map_err(|e| e.to_string())?;
+    db.execute("DELETE FROM partners WHERE partner_name = ?1 AND kind = ?2", (&name, &kind)).map_err(|e| e.to_string())?;
 
-    tx.commit().map_err(|e| e.to_string())?;
+    db.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -5038,6 +5453,14 @@ fn update_partner(
             )
             .map_err(|e| e.to_string())?;
         }
+        // Bug P: Update cars.buyer_name for sold cars linked to renamed customer
+        if kind == "زبون" {
+            tx.execute(
+                "UPDATE cars SET buyer_name = ?1 WHERE buyer_name = ?2 AND status = 'مبيوعة'",
+                params![&name, &old_name],
+            )
+            .map_err(|e| e.to_string())?;
+        }
     }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
@@ -5313,6 +5736,107 @@ fn delete_car_sale_ledger_entries(db: &Connection, car_number: &str) -> Result<(
                   OR type_ LIKE '%ارباح%'))",
         [car_number],
     ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Migrate all database references from old car number to new car number.
+/// This ensures no stale source_id, related_source_id, car_number, or account_id
+/// references remain after a car number change.
+///
+/// IMPORTANT:
+/// - Does NOT overwrite source_id for customer_payment split rows (source_id = payment transaction id)
+/// - For split rows, only related_source_id is updated
+/// - Can be called repeatedly (idempotent for the target range)
+fn migrate_car_number_references(
+    db: &Connection,
+    old_car_number: &str,
+    new_car_number: &str,
+) -> Result<(), String> {
+    let old = old_car_number.trim();
+    let new = new_car_number.trim();
+    if old == new || old.is_empty() || new.is_empty() {
+        return Ok(());
+    }
+
+    // 1. car_expenses.car_number
+    db.execute(
+        "UPDATE car_expenses SET car_number = ?1 WHERE car_number = ?2",
+        params![new, old],
+    ).map_err(|e| e.to_string())?;
+
+    // 2. expenses.car_number
+    db.execute(
+        "UPDATE expenses SET car_number = ?1 WHERE car_number = ?2",
+        params![new, old],
+    ).map_err(|e| e.to_string())?;
+
+    // 3. car_partners.car_number
+    db.execute(
+        "UPDATE car_partners SET car_number = ?1 WHERE car_number = ?2",
+        params![new, old],
+    ).map_err(|e| e.to_string())?;
+
+    // 4. partner_transactions.source_id for car_purchase / car_sale (source_id = car_number)
+    db.execute(
+        "UPDATE partner_transactions SET source_id = ?1 WHERE source_type IN ('car_purchase', 'car_sale') AND source_id = ?2",
+        params![new, old],
+    ).map_err(|e| e.to_string())?;
+
+    // 5. partner_transactions.related_source_id where related_source_type = 'car'
+    db.execute(
+        "UPDATE partner_transactions SET related_source_id = ?1 WHERE related_source_type = 'car' AND related_source_id = ?2",
+        params![new, old],
+    ).map_err(|e| e.to_string())?;
+
+    // 6. customer_sale_payment source_id: format "{old}:down_payment" -> "{new}:down_payment"
+    db.execute(
+        "UPDATE partner_transactions SET source_id = ?1 WHERE source_type = 'customer_sale_payment' AND source_role = 'sale_down_payment' AND source_id = ?2",
+        params![format!("{}:down_payment", new), format!("{}:down_payment", old)],
+    ).map_err(|e| e.to_string())?;
+
+    // 7. customer_installment_schedule source_id: "{old}:installment:N" -> "{new}:installment:N", "{old}:due:1" -> "{new}:due:1"
+    db.execute(
+        "UPDATE partner_transactions SET source_id = ?1 WHERE source_type = 'customer_installment_schedule' AND source_id = ?2",
+        params![
+            format!("{}:installment:", new),
+            format!("{}:installment:", old),
+        ],
+    ).map_err(|e| e.to_string())?;
+    // Also update the source_id prefix for installment schedule rows (starts-with match)
+    db.execute(
+        "UPDATE partner_transactions SET source_id = REPLACE(source_id, ?1, ?2) WHERE source_type = 'customer_installment_schedule' AND source_id LIKE ?3",
+        params![
+            format!("{}:installment:", old),
+            format!("{}:installment:", new),
+            format!("{}:installment:%", old),
+        ],
+    ).map_err(|e| e.to_string())?;
+    db.execute(
+        "UPDATE partner_transactions SET source_id = REPLACE(source_id, ?1, ?2) WHERE source_type = 'customer_installment_schedule' AND source_id LIKE ?3",
+        params![
+            format!("{}:due:", old),
+            format!("{}:due:", new),
+            format!("{}:due:%", old),
+        ],
+    ).map_err(|e| e.to_string())?;
+
+    // 8. financial_ledger account_id referencing old car number
+    //    - account_type = 'inventory' and reference_type IN ('expense', 'car_expense')
+    db.execute(
+        "UPDATE financial_ledger SET account_id = ?1 WHERE account_type = 'inventory' AND account_id = ?2 AND reference_type IN ('expense', 'car_expense')",
+        params![new, old],
+    ).map_err(|e| e.to_string())?;
+
+    // 9. financial_ledger reference_id = old car number
+    db.execute(
+        "UPDATE financial_ledger SET reference_id = ?1 WHERE reference_type = 'car' AND reference_id = ?2",
+        params![new, old],
+    ).map_err(|e| e.to_string())?;
+
+    // 10. Delete old car row (no longer needed — will be handled by caller or here)
+    db.execute("DELETE FROM cars WHERE car_number = ?1", [old])
+        .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -9325,6 +9849,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             add_car,
             sell_car_with_accounting,
+            update_sold_car_with_accounting,
+            save_and_sell_car_with_accounting,
             get_cars,
             delete_car,
             add_partner,

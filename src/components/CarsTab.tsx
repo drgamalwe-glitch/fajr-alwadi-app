@@ -513,40 +513,90 @@ export function CarsTab({
   );
 
 
+  /** Check if sold-car accounting fields changed — used to decide if full sale rebuild is needed */
+  function hasSoldCarAccountingChange(originalCar: Car | undefined, formData: CarFormState): boolean {
+    if (!originalCar || originalCar.status !== "مبيوعة") return false;
+    if (formData.status !== "مبيوعة") return false;
+    return (
+      Math.abs(Number(originalCar.selling_price) - Number(formData.selling)) > 0.001
+      || (originalCar.sale_currency ?? "IQD") !== (formData.saleCurrency || "IQD")
+      || (originalCar.payment_type ?? "") !== formData.paymentType
+      || Math.abs(Number(originalCar.amount_paid ?? 0) - Number(formData.amountPaid ?? 0)) > 0.001
+      || Math.abs(Number(originalCar.amount_remaining ?? 0) - Number(formData.amountRemaining ?? 0)) > 0.001
+      || Number(originalCar.installment_months ?? 1) !== Number(formData.installmentMonths ?? 1)
+      || Math.abs(Number(originalCar.monthly_payment ?? 0) - (Number(formData.amountRemaining ?? 0) / Math.max(1, Number(formData.installmentMonths ?? 1)))) > 0.001
+      || (originalCar.buyer_name ?? "") !== formData.buyerName.trim()
+      || (originalCar.buyer_phone ?? "") !== formData.phone.trim()
+      || (originalCar.sale_date ?? "") !== (formData.saleDate ?? "")
+      || (originalCar.delivery_date ?? "") !== (formData.deliveryDate ?? "")
+      || (originalCar.first_payment_date ?? "") !== (formData.firstPaymentDate ?? "")
+    );
+  }
+
   const handleAutoSave = async () => {
     const data = formRef.current;
     const originalCar = cars.find((c) => c.car_number === selectedId);
     const wasSold = originalCar?.status === "مبيوعة";
-    const isSaleOnly = isEditing && wasSold;
-    const oldBuyerName = originalCar?.buyer_name?.trim() || "";
-    const nextBuyerName = data.buyerName.trim();
-    const oldWasDeferredSale = wasSold && (originalCar?.payment_type === "موعد" || originalCar?.payment_type === "اقساط");
-    const nextIsDeferredSale = data.status === "مبيوعة" && (data.paymentType === "موعد" || data.paymentType === "اقساط");
-
-    const isNewSale = (() => {
-      if (panelMode === "new") return data.status === "مبيوعة";
-      return originalCar?.status === "متوفرة" && data.status === "مبيوعة";
-    })();
-
-    const isPaymentChange = isEditing && wasSold && originalCar?.payment_type !== data.paymentType;
-    const isBuyerChange = isEditing && oldWasDeferredSale && nextIsDeferredSale && !!oldBuyerName && !!nextBuyerName && oldBuyerName !== nextBuyerName;
+    const isNewSoldCar = panelMode === "new" && data.status === "مبيوعة";
+    const isNewSaleFromAvailable = panelMode === "edit" && originalCar?.status === "متوفرة" && data.status === "مبيوعة";
+    const isSoldCarAccountingEdit = wasSold && isEditing && hasSoldCarAccountingChange(originalCar, data);
 
     try {
-      const carArgs = buildCarInvokeArgs(data);
-      if (isSaleOnly && originalCar) {
-        carArgs.purchaseDate = originalCar.purchase_date ?? carArgs.purchaseDate;
-      }
-
-      const willCallSellAccounting = isBuyerChange || (data.status === "مبيوعة" && data.paymentType !== "كاش" && isPaymentChange);
-
-      if (isNewSale) {
-        // For new sale: call sell_car_with_accounting only (it updates car + does accounting atomically)
-        const phone = data.phone.trim();
+      if (isNewSoldCar) {
+        // Atomic: create car + sell in one command
+        await callTauri("save_and_sell_car_with_accounting", {
+          num: data.num.trim(),
+          chassis: data.chassis.trim(),
+          model: data.model.trim(),
+          year: data.year.trim(),
+          name: data.name.trim(),
+          color: data.color.trim(),
+          details: data.details.trim(),
+          purchase: Number(data.purchase) || 0,
+          currency: data.currency || "IQD",
+          saleCurrency: data.saleCurrency || "IQD",
+          selling: Number(data.selling) || 0,
+          paymentType: data.paymentType,
+          amountPaid: Number(data.amountPaid) || 0,
+          amountRemaining: Number(data.amountRemaining) || 0,
+          installmentMonths: data.paymentType === "اقساط" ? Number(data.installmentMonths) || 1 : null,
+          monthlyPayment: data.paymentType === "اقساط" ? (Number(data.amountRemaining) || 0) / Math.max(1, Number(data.installmentMonths) || 1) : null,
+          buyerName: data.buyerName.trim(),
+          buyerPhone: data.phone.trim(),
+          purchaseDate: data.purchaseDate || null,
+          saleDate: data.saleDate || null,
+          deliveryDate: data.deliveryDate || null,
+          firstPaymentDate: data.firstPaymentDate || null,
+          purchasePaymentType: data.purchasePaymentType,
+          purchaseType: data.purchaseType === "تمويل" ? "دين" : (data.purchaseType || "كاش"),
+          financerName: data.purchaseType === "تمويل" || data.purchaseType === "شركة" ? data.financerName || null : null,
+          commissionType: null,
+          commissionValue: null,
+        });
+      } else if (isSoldCarAccountingEdit) {
+        // Atomic: update sold car financial fields in one command
+        await callTauri("update_sold_car_with_accounting", {
+          carNumber: data.num,
+          buyerName: data.buyerName.trim(),
+          buyerPhone: data.phone.trim(),
+          sellingPrice: Number(data.selling) || 0,
+          saleCurrency: data.saleCurrency || "IQD",
+          saleDate: data.saleDate || todayIsoDate(),
+          paymentType: data.paymentType,
+          amountPaid: Number(data.amountPaid) || 0,
+          amountRemaining: Number(data.amountRemaining) || 0,
+          installmentMonths: data.paymentType === "اقساط" ? Number(data.installmentMonths) || 1 : null,
+          firstPaymentDate: data.firstPaymentDate || null,
+          deliveryDate: data.deliveryDate || null,
+          monthlyPayment: data.paymentType === "اقساط" ? (Number(data.amountRemaining) || 0) / Math.max(1, Number(data.installmentMonths) || 1) : null,
+        });
+      } else if (isNewSaleFromAvailable) {
+        // Selling an available car: use sell_car_with_accounting
         await callTauri("sell_car_with_accounting", {
           carNumber: data.num,
           buyerName: data.buyerName.trim(),
-          buyerPhone: phone,
-          sellingPrice: Number(data.selling),
+          buyerPhone: data.phone.trim(),
+          sellingPrice: Number(data.selling) || 0,
           saleCurrency: data.saleCurrency || "IQD",
           saleDate: data.saleDate || todayIsoDate(),
           paymentType: data.paymentType,
@@ -558,42 +608,12 @@ export function CarsTab({
           chassisNumber: data.chassis || null,
         });
       } else {
-        // For non-sale updates: use add_car (skip sale accounting if sell_car_with_accounting follows)
-        await callTauri("add_car", { ...carArgs, skipSaleAccounting: willCallSellAccounting });
-
-        // Only handle financer/company purchase automation for non-sale car updates
-        await handlePurchaseAutomation(data, originalCar);
-
-        if (isBuyerChange) {
-          await deleteCustomerAccountCompletely(oldBuyerName);
-          await executeSaleAutomation(data);
-        } else if (data.status === "مبيوعة" && data.paymentType !== "كاش" && isPaymentChange) {
-          if (isPaymentChange && originalCar?.buyer_name?.trim()) {
-            const oldBuyer = originalCar.buyer_name.trim();
-            const chassis = originalCar.chassis_number?.trim();
-            const carLabel = (data.name || data.model || "سيارة").trim();
-            const saleLabel = `${oldBuyer} ${carLabel} ${chassis || ""}`.trim();
-            try {
-              const existingTxns = await callTauri<PartnerTransaction[]>(
-                "get_partner_transactions",
-                { partnerName: oldBuyer, kind: "زبون" },
-              );
-              const relatedTxs = existingTxns?.filter(
-                (tx) => tx.notes?.includes(saleLabel) && (tx.type_ === "باقي قسط" || tx.type_ === "باقي" || tx.type_?.includes("باقي"))
-              ) || [];
-              for (const tx of relatedTxs) {
-                await callTauri("delete_partner_transaction", {
-                  id: tx.id,
-                  partnerName: oldBuyer,
-                  kind: "زبون",
-                });
-              }
-            } catch (delErr) {
-              console.error("Failed to delete old borrower transactions on payment change:", delErr);
-            }
-          }
-          await handleSaleAutomation(data);
+        // Non-sale edit or new available car: use add_car
+        const carArgs = buildCarInvokeArgs(data);
+        if (isEditing && wasSold && originalCar) {
+          carArgs.purchaseDate = originalCar.purchase_date ?? carArgs.purchaseDate;
         }
+        await callTauri("add_car", { ...carArgs, skipSaleAccounting: true });
       }
 
       await onRefresh();
@@ -601,51 +621,8 @@ export function CarsTab({
         setSelectedId(data.num);
       }
     } catch (err) {
-      console.error("Auto-save failed:", err);
+      console.error("فشل الحفظ:", err);
     }
-  };
-
-  const deleteCustomerAccountCompletely = async (buyerName: string) => {
-    const cleanBuyer = buyerName.trim();
-    if (!cleanBuyer) return;
-
-    try {
-      const txs = await callTauri<PartnerTransaction[]>(
-        "get_partner_transactions",
-        { partnerName: cleanBuyer, kind: "زبون" },
-      );
-
-      for (const tx of txs || []) {
-        await callTauri("delete_partner_transaction", {
-          id: tx.id,
-          partnerName: cleanBuyer,
-          kind: "زبون",
-        });
-      }
-
-      await callTauri("delete_partner", {
-        name: cleanBuyer,
-        kind: "زبون",
-      });
-    } catch (err) {
-      console.error("Failed to delete old customer account after buyer change:", err);
-      throw err;
-    }
-  };
-
-  const handleSaleAutomation = async (formData: CarFormState) => {
-    const buyerName = formData.buyerName.trim();
-
-    if (!buyerName) return;
-
-    const isInstallmentsOrDue = formData.paymentType === "اقساط" || formData.paymentType === "موعد";
-    if (isInstallmentsOrDue) {
-      setPendingSaleData(formData);
-      setShowSaleConfirm(true);
-      return;
-    }
-
-    await executeSaleAutomation(formData);
   };
 
   const executeSaleAutomation = async (formData: CarFormState) => {
