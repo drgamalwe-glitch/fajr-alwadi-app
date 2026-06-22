@@ -1401,12 +1401,36 @@ export function buildCarInvokeArgs(form: CarFormState) {
   };
 }
 
+const E2E_BRIDGE_URL = "http://127.0.0.1:3899/__e2e/invoke";
+
+const isE2E = () =>
+  typeof import.meta !== "undefined" &&
+  (import.meta as any).env?.VITE_E2E === "1";
+
+async function e2eInvoke<T>(
+  command: string,
+  args: Record<string, unknown> = {},
+): Promise<T> {
+  const res = await fetch(E2E_BRIDGE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ command, args }),
+  });
+  const json = await res.json();
+  if (json.error) throw new Error(json.error);
+  return json.result as T;
+}
+
 export async function callTauri<T>(
   command: string,
   args: Record<string, unknown> = {},
 ): Promise<T> {
   if (isTauri()) {
     return invoke<T>(command, args);
+  }
+
+  if (isE2E()) {
+    return e2eInvoke<T>(command, args);
   }
 
   console.warn(`[وضع المتصفح] استدعاء: ${command}`, args);
