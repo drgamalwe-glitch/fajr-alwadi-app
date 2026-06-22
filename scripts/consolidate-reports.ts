@@ -314,57 +314,80 @@ function main() {
   const failLines: string[] = [];
   failLines.push("# تقرير حالات الفشل\n");
   failLines.push(`**التاريخ:** ${new Date().toISOString()}\n`);
-  const failures = results.filter((r) => !r.pass);
-  if (verdictStatus === "PARTIAL") {
-    failLines.push("الفحص غير مكتمل لأن طبقة Chromium UI لم تعمل أو لم تسجل نتائجها.\n");
-    failLines.push("### السيناريوهات المتأثرة\n");
-    for (const [sid, verdict] of scenarioVerdicts) {
-      if (!verdict.hasAllLayers) {
-        failLines.push(`- السيناريو ${sid}: الطبقات المفقودة: ${verdict.missingLayers.join(", ")}`);
-      }
-    }
-    failLines.push("");
-  } else if (verdictStatus === "FAIL") {
-    for (const [sid, verdict] of scenarioVerdicts) {
-      if (verdict.anyFail) {
-        const layerMap = scenarioMap.get(sid)!;
-        failLines.push(`### السيناريو ${sid}\n`);
-        for (const [layer, layerResults] of layerMap) {
-          for (const r of layerResults) {
-            if (!r.pass) {
-              failLines.push(`#### ${layer}\n`);
-              failLines.push(`- **السبب:** ${r.failureReason}`);
-              if (r.uiChecks) {
-                const failedChecks = r.uiChecks.filter((c) => !c.pass);
-                if (failedChecks.length > 0) {
-                  failLines.push("\n| التبويب | العنصر | القيمة المتوقعة | القيمة الفعلية |");
-                  failLines.push("|---|---|---|---|");
-                  for (const c of failedChecks) {
-                    failLines.push(`| ${c.tab} | ${c.element} | ${c.expected} | ${c.actual} |`);
-                  }
+  failLines.push(`**الحالة:** ${verdictStatus}\n`);
+  failLines.push(`**إجمالي السيناريوهات:** ${scenarioIds.length}`);
+  failLines.push(`**الناجحة:** ${[...scenarioVerdicts.values()].filter((v) => v.overall).length}`);
+  failLines.push(`**الفاشلة:** ${[...scenarioVerdicts.values()].filter((v) => v.anyFail).length}`);
+  failLines.push(`**الجزئية:** ${[...scenarioVerdicts.values()].filter((v) => !v.hasAllLayers && !v.anyFail).length}\n`);
+
+  // List all scenarios with their status
+  failLines.push("## حالة جميع السيناريوهات\n");
+  for (const [sid, verdict] of scenarioVerdicts) {
+    const layerMap = scenarioMap.get(sid)!;
+    const scenarioName = ([...layerMap.values()].flat()[0])?.scenarioName ?? sid;
+    
+    if (verdict.overall) {
+      failLines.push(`### ${sid}: ${scenarioName} — ناجح\n`);
+      failLines.push("- ORACLE: ناجح");
+      failLines.push("- BACKEND_DB: ناجح");
+      failLines.push("- CHROMIUM_UI: ناجح\n");
+    } else if (verdict.anyFail) {
+      failLines.push(`### ${sid}: ${scenarioName} — فشل\n`);
+      for (const [layer, layerResults] of layerMap) {
+        for (const r of layerResults) {
+          if (!r.pass) {
+            failLines.push(`#### ${layer}\n`);
+            failLines.push(`- **السبب:** ${r.failureReason || "فشل غير محدد"}`);
+            if (r.expected && Object.keys(r.expected).length > 0) {
+              failLines.push("\n**القيم المتوقعة:**");
+              for (const [k, v] of Object.entries(r.expected)) {
+                failLines.push(`- ${k}: ${v}`);
+              }
+            }
+            if (r.actual && Object.keys(r.actual).length > 0) {
+              failLines.push("\n**القيم الفعلية:**");
+              for (const [k, v] of Object.entries(r.actual)) {
+                failLines.push(`- ${k}: ${v}`);
+              }
+            }
+            if (r.uiChecks) {
+              const failedChecks = r.uiChecks.filter((c) => !c.pass);
+              if (failedChecks.length > 0) {
+                failLines.push("\n**فحوصات الواجهة الفاشلة:**\n");
+                failLines.push("| التبويب | العنصر | القيمة المتوقعة | القيمة الفعلية |");
+                failLines.push("|---|---|---|---|");
+                for (const c of failedChecks) {
+                  failLines.push(`| ${c.tab} | ${c.element} | ${c.expected} | ${c.actual} |`);
                 }
               }
-              failLines.push("");
             }
+            failLines.push("");
           }
         }
       }
-    }
-  } else if (failures.length === 0) {
-    failLines.push("لا توجد حالات فشل. جميع الاختبارات ناجحة.\n");
-  } else {
-    for (const r of failures) {
-      failLines.push(`### ${r.scenarioId}: ${r.scenarioName} — ${r.layer}\n`);
-      failLines.push(`- **السبب:** ${r.failureReason}`);
-      if (r.uiChecks) {
-        const failedChecks = r.uiChecks.filter((c) => !c.pass);
-        for (const c of failedChecks) {
-          failLines.push(`- **${c.tab} / ${c.element}:** متوقع "${c.expected}"، فعلي "${c.actual}"`);
+    } else if (!verdict.hasAllLayers) {
+      failLines.push(`### ${sid}: ${scenarioName} — جزئي\n`);
+      for (const missing of verdict.missingLayers) {
+        if (missing === "ORACLE") {
+          failLines.push("- **ORACLE مفقود** — لا يوجد حساب موثوق للقيم المتوقعة.");
+        } else if (missing === "BACKEND_DB") {
+          failLines.push("- **BACKEND_DB مفقود** — لم يتم اختبار قاعدة البيانات.");
+        } else if (missing === "CHROMIUM_UI") {
+          failLines.push("- **CHROMIUM_UI مفقود** — السيناريو غير مكتمل.");
         }
+      }
+      // Show which layers are present
+      const presentLayers: string[] = [];
+      if (layerMap.has("ORACLE")) presentLayers.push("ORACLE");
+      if (layerMap.has("BACKEND_DB")) presentLayers.push("BACKEND_DB");
+      if (layerMap.has("CHROMIUM_UI")) presentLayers.push("CHROMIUM_UI");
+      if (presentLayers.length > 0) {
+        failLines.push(`\n**الطبقات الموجودة:** ${presentLayers.join(", ")}`);
       }
       failLines.push("");
     }
   }
+
   fs.writeFileSync(path.join(ROOT, "ACCOUNTING_TEST_FAILURES.md"), failLines.join("\n"), "utf-8");
 
   console.log(`\n${"═".repeat(60)}`);

@@ -1,16 +1,16 @@
 {
-  "timestamp": "2026-06-22T15:20:39.150Z",
+  "timestamp": "2026-06-22T15:37:43.370Z",
   "totalScenarios": 23,
-  "passedScenarios": 0,
-  "failedScenarios": 20,
-  "partialScenarios": 3,
+  "passedScenarios": 9,
+  "failedScenarios": 14,
+  "partialScenarios": 0,
   "finalVerdict": "FAIL",
   "backendMode": "E2E_BRIDGE",
   "backendNote": "E2E_BRIDGE uses Node.js SQLite mock, not real Tauri backend",
   "scenarios": [
     {
-      "id": "A",
-      "verdict": "PARTIAL",
+      "id": "S01",
+      "verdict": "PASS",
       "oracle": [
         {
           "pass": true,
@@ -24,20 +24,40 @@
           "backendMode": "E2E_BRIDGE"
         }
       ],
-      "chromiumUi": []
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "قيمة المخزون",
+              "expected": "10000000",
+              "actual": "10000000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "القاصة",
+              "expected": "-10000000",
+              "actual": "-10000000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "الربح",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            }
+          ]
+        }
+      ]
     },
     {
-      "id": "B",
-      "verdict": "PARTIAL",
+      "id": "S05",
+      "verdict": "PASS",
       "oracle": [
-        {
-          "pass": true,
-          "failureReason": ""
-        },
-        {
-          "pass": true,
-          "failureReason": ""
-        },
         {
           "pass": true,
           "failureReason": ""
@@ -50,11 +70,46 @@
           "backendMode": "E2E_BRIDGE"
         }
       ],
-      "chromiumUi": []
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "القاصة",
+              "expected": "6000000",
+              "actual": "6000000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "قيمة المخزون",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "الربح",
+              "expected": "6000000",
+              "actual": "6000000",
+              "pass": true
+            },
+            {
+              "tab": "توزيع الارباح",
+              "element": "اجمالي الارباح",
+              "expected": "6000000",
+              "actual": "6000000",
+              "pass": true
+            }
+          ]
+        }
+      ]
     },
     {
-      "id": "C",
-      "verdict": "PARTIAL",
+      "id": "S08",
+      "verdict": "PASS",
       "oracle": [
         {
           "pass": true,
@@ -68,12 +123,77 @@
           "backendMode": "E2E_BRIDGE"
         }
       ],
-      "chromiumUi": []
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "القاصة",
+              "expected": "6000000",
+              "actual": "6000000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "الربح",
+              "expected": "6000000",
+              "actual": "6000000",
+              "pass": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S09",
+      "verdict": "PASS",
+      "oracle": [
+        {
+          "pass": true,
+          "failureReason": ""
+        }
+      ],
+      "backend": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "backendMode": "E2E_BRIDGE"
+        }
+      ],
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "القاصة",
+              "expected": "-3000000",
+              "actual": "-3000000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "الربح",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "S10",
-      "verdict": "FAIL",
-      "oracle": [],
+      "verdict": "PASS",
+      "oracle": [
+        {
+          "pass": true,
+          "failureReason": ""
+        }
+      ],
       "backend": [
         {
           "pass": true,
@@ -81,12 +201,38 @@
           "backendMode": "E2E_BRIDGE"
         }
       ],
-      "chromiumUi": []
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "القاصة",
+              "expected": "-5000000",
+              "actual": "-5000000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "الربح",
+              "expected": "2500000",
+              "actual": "2500000",
+              "pass": true
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "S11",
-      "verdict": "FAIL",
-      "oracle": [],
+      "verdict": "PASS",
+      "oracle": [
+        {
+          "pass": true,
+          "failureReason": ""
+        }
+      ],
       "backend": [
         {
           "pass": true,
@@ -94,12 +240,38 @@
           "backendMode": "E2E_BRIDGE"
         }
       ],
-      "chromiumUi": []
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "القاصة",
+              "expected": "-4000000",
+              "actual": "-4000000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "الربح",
+              "expected": "3000000",
+              "actual": "3000000",
+              "pass": true
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "S12",
-      "verdict": "FAIL",
-      "oracle": [],
+      "verdict": "PASS",
+      "oracle": [
+        {
+          "pass": true,
+          "failureReason": ""
+        }
+      ],
       "backend": [
         {
           "pass": true,
@@ -107,12 +279,38 @@
           "backendMode": "E2E_BRIDGE"
         }
       ],
-      "chromiumUi": []
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "القاصة",
+              "expected": "10000000",
+              "actual": "10000000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "الربح",
+              "expected": "10000000",
+              "actual": "10000000",
+              "pass": true
+            }
+          ]
+        }
+      ]
     },
     {
-      "id": "S60",
-      "verdict": "FAIL",
-      "oracle": [],
+      "id": "S22",
+      "verdict": "PASS",
+      "oracle": [
+        {
+          "pass": true,
+          "failureReason": ""
+        }
+      ],
       "backend": [
         {
           "pass": true,
@@ -120,12 +318,38 @@
           "backendMode": "E2E_BRIDGE"
         }
       ],
-      "chromiumUi": []
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "القاصة",
+              "expected": "-1000000",
+              "actual": "-1000000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "الربح",
+              "expected": "-1000000",
+              "actual": "-1000000",
+              "pass": true
+            }
+          ]
+        }
+      ]
     },
     {
-      "id": "S61",
-      "verdict": "FAIL",
-      "oracle": [],
+      "id": "S23",
+      "verdict": "PASS",
+      "oracle": [
+        {
+          "pass": true,
+          "failureReason": ""
+        }
+      ],
       "backend": [
         {
           "pass": true,
@@ -133,7 +357,28 @@
           "backendMode": "E2E_BRIDGE"
         }
       ],
-      "chromiumUi": []
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "القاصة",
+              "expected": "7000000",
+              "actual": "7000000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "الربح",
+              "expected": "7000000",
+              "actual": "7000000",
+              "pass": true
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "S63",
@@ -147,6 +392,213 @@
         }
       ],
       "chromiumUi": []
+    },
+    {
+      "id": "A",
+      "verdict": "FAIL",
+      "oracle": [],
+      "backend": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "backendMode": "E2E_BRIDGE"
+        }
+      ],
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "بعد الشراء",
+              "element": "قيمة المخزون",
+              "expected": "10000",
+              "actual": "10000",
+              "pass": true
+            },
+            {
+              "tab": "بعد الشراء",
+              "element": "القاصة",
+              "expected": "-10000",
+              "actual": "-10000",
+              "pass": true
+            },
+            {
+              "tab": "بعد الشراء",
+              "element": "رأس مال الشركاء",
+              "expected": "-10000",
+              "actual": "-10000",
+              "pass": true
+            },
+            {
+              "tab": "بعد الشراء",
+              "element": "الربح",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "بعد الشراء",
+              "element": "صفوف البيع",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "قيمة المخزون",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "القاصة الصافية",
+              "expected": "10000",
+              "actual": "10000",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "الربح",
+              "expected": "10000",
+              "actual": "10000",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "ربح أمير",
+              "expected": "5000",
+              "actual": "5000",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "ربح منتصر",
+              "expected": "5000",
+              "actual": "5000",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "صفوف حركة النقد (لا تكرار)",
+              "expected": "1",
+              "actual": "1",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "صفوف الربح (لا تكرار)",
+              "expected": "1",
+              "actual": "1",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "صف الربح لا يؤثر على القاصة",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "صف الربح لا يؤثر على رأس المال",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "بطاقة القاصة (IQD)",
+              "expected": "10000",
+              "actual": "10000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "قيمة المخزون (IQD)",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "بطاقة الربح (IQD)",
+              "expected": "10000",
+              "actual": "10000",
+              "pass": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "B",
+      "verdict": "FAIL",
+      "oracle": [],
+      "backend": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "backendMode": "E2E_BRIDGE"
+        }
+      ],
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "بطاقة الربح (IQD)",
+              "expected": "3000000",
+              "actual": "3000000",
+              "pass": true
+            },
+            {
+              "tab": "توزيع الارباح",
+              "element": "اجمالي الارباح (IQD)",
+              "expected": "3000000",
+              "actual": "3000000",
+              "pass": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "C",
+      "verdict": "FAIL",
+      "oracle": [],
+      "backend": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "backendMode": "E2E_BRIDGE"
+        }
+      ],
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "بطاقة القاصة (IQD)",
+              "expected": "-1000000",
+              "actual": "-1000000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "بطاقة الربح (IQD)",
+              "expected": "-1000000",
+              "actual": "-1000000",
+              "pass": true
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "S53",
@@ -188,7 +640,41 @@
       "chromiumUi": []
     },
     {
-      "id": "S05",
+      "id": "S56",
+      "verdict": "FAIL",
+      "oracle": [],
+      "backend": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "backendMode": "E2E_BRIDGE"
+        }
+      ],
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "القاصة",
+              "expected": "37500000",
+              "actual": "37500000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "الربح",
+              "expected": "7500000",
+              "actual": "7500000",
+              "pass": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S59",
       "verdict": "FAIL",
       "oracle": [],
       "backend": [
@@ -201,7 +687,7 @@
       "chromiumUi": []
     },
     {
-      "id": "S08",
+      "id": "S60",
       "verdict": "FAIL",
       "oracle": [],
       "backend": [
@@ -214,7 +700,7 @@
       "chromiumUi": []
     },
     {
-      "id": "S09",
+      "id": "S61",
       "verdict": "FAIL",
       "oracle": [],
       "backend": [
@@ -254,71 +740,6 @@
     },
     {
       "id": "S50",
-      "verdict": "FAIL",
-      "oracle": [],
-      "backend": [
-        {
-          "pass": true,
-          "failureReason": "",
-          "backendMode": "E2E_BRIDGE"
-        }
-      ],
-      "chromiumUi": []
-    },
-    {
-      "id": "S56",
-      "verdict": "FAIL",
-      "oracle": [],
-      "backend": [
-        {
-          "pass": true,
-          "failureReason": "",
-          "backendMode": "E2E_BRIDGE"
-        }
-      ],
-      "chromiumUi": []
-    },
-    {
-      "id": "S59",
-      "verdict": "FAIL",
-      "oracle": [],
-      "backend": [
-        {
-          "pass": true,
-          "failureReason": "",
-          "backendMode": "E2E_BRIDGE"
-        }
-      ],
-      "chromiumUi": []
-    },
-    {
-      "id": "S22",
-      "verdict": "FAIL",
-      "oracle": [],
-      "backend": [
-        {
-          "pass": true,
-          "failureReason": "",
-          "backendMode": "E2E_BRIDGE"
-        }
-      ],
-      "chromiumUi": []
-    },
-    {
-      "id": "S23",
-      "verdict": "FAIL",
-      "oracle": [],
-      "backend": [
-        {
-          "pass": true,
-          "failureReason": "",
-          "backendMode": "E2E_BRIDGE"
-        }
-      ],
-      "chromiumUi": []
-    },
-    {
-      "id": "S01",
       "verdict": "FAIL",
       "oracle": [],
       "backend": [

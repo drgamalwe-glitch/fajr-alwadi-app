@@ -1,43 +1,94 @@
 # تقرير حالات الفشل
 
-**التاريخ:** 2026-06-22T15:20:39.150Z
+**التاريخ:** 2026-06-22T15:37:43.370Z
 
-### السيناريو S10
+**الحالة:** FAIL
 
-### السيناريو S11
+**إجمالي السيناريوهات:** 23
+**الناجحة:** 9
+**الفاشلة:** 14
+**الجزئية:** 0
 
-### السيناريو S12
+## حالة جميع السيناريوهات
 
-### السيناريو S60
+### S01: S01: Cash car purchase — ناجح
 
-### السيناريو S61
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
 
-### السيناريو S63
+### S05: S05: Cash sale after cash purchase — ناجح
 
-### السيناريو S53
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
 
-### السيناريو S54
+### S08: S08: Cash sale with car expense — ناجح
 
-### السيناريو S25
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
 
-### السيناريو S05
+### S09: S09: Cash sale at loss — ناجح
 
-### السيناريو S08
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
 
-### السيناريو S09
+### S10: S10: Installment - after down payment — ناجح
 
-### السيناريو S47
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
 
-### السيناريو S49
+### S11: S11: Installment - after one installment — ناجح
 
-### السيناريو S50
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
 
-### السيناريو S56
+### S12: S12: Installment - after all payments — ناجح
 
-### السيناريو S59
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
 
-### السيناريو S22
+### S22: S22: General expense — ناجح
 
-### السيناريو S23
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
 
-### السيناريو S01
+### S23: S23: General expense after car profit — ناجح
+
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
+
+### S63: الدوال القرائية لا تكتب — فشل
+
+### A: بيع سيارة كاش (شراء ثم بيع) — فشل
+
+### B: B1: Installment - After Down Payment — فشل
+
+### C: C: General Expense — فشل
+
+### S53: حذف سيارة متوفرة — فشل
+
+### S54: حذف سيارة مبيوعة كاش — فشل
+
+### S25: حذف مصروف عام — فشل
+
+### S56: حالة الشركة بعد عمليات مختلطة — فشل
+
+### S59: بطاقة الربح = توزيع الأرباح — فشل
+
+### S60: فصل العملات — IQD و USD — فشل
+
+### S61: مصروف عام بالدولار — فشل
+
+### S47: إيداع الشركاء — فشل
+
+### S49: منع إنشاء شريك ثالث — فشل
+
+### S50: منع حذف شريك — فشل
