@@ -2151,6 +2151,80 @@ def audit_source(lib_path):
         if not cars_tab_ok:
             warnings.append("S71: CarsTab.tsx could not be read")
 
+    # ─── S72: Cash sale must not use customer_sale_payment path ─────
+    print("\n[S72] Cash sale must not use customer_sale_payment/customer path...")
+    sell_fn_start = content.find("fn sell_car_with_accounting")
+    if sell_fn_start >= 0:
+        sell_fn_end = content.find("\nfn ", sell_fn_start + 5)
+        if sell_fn_end < 0:
+            sell_fn_end = sell_fn_start + 3000
+        sell_body = content[sell_fn_start:sell_fn_end]
+        has_customer_guard = (
+            'if is_installments_or_due' in sell_body
+            and 'ensure_partner_exists' in sell_body
+            and "'زبون'" in sell_body
+        )
+        has_cash_sale_path = (
+            'payment_type == "كاش"' in sell_body
+            and 'cash_movement' in sell_body
+            and 'profit_recognition' in sell_body
+        )
+        has_cash_guard = 'else if payment_type == "كاش"' in sell_body
+        if has_customer_guard and has_cash_sale_path and has_cash_guard:
+            print("  PASS (customer path guarded by is_installments_or_due, cash uses car_sale)")
+        else:
+            missing = []
+            if not has_customer_guard: missing.append("customer path not guarded by is_installments_or_due")
+            if not has_cash_sale_path: missing.append("cash sale missing car_sale cash_movement/profit_recognition")
+            if not has_cash_guard: missing.append("no cash sale else branch")
+            errors.append(f"FAIL: {'; '.join(missing)}")
+    else:
+        errors.append("FAIL: sell_car_with_accounting not found for S72")
+
+    # ─── S73: update_sold_car_with_accounting also guards customer path ─────
+    print("\n[S73] update_sold_car_with_accounting guards customer path for cash...")
+    update_fn_start = content.find("fn update_sold_car_with_accounting")
+    if update_fn_start >= 0:
+        update_fn_end = content.find("\nfn ", update_fn_start + 5)
+        if update_fn_end < 0:
+            update_fn_end = update_fn_start + 3000
+        update_body = content[update_fn_start:update_fn_end]
+        has_update_cash_path = (
+            'else if payment_type == "كاش"' in update_body
+            and 'cash_movement' in update_body
+            and 'profit_recognition' in update_body
+        )
+        if has_update_cash_path:
+            print("  PASS (update_sold_car_with_accounting has cash_sale car_sale path)")
+        else:
+            missing = []
+            if not has_update_cash_path: missing.append("cash sale car_sale path missing in update_sold_car_with_accounting")
+            errors.append(f"FAIL: {'; '.join(missing)}")
+    else:
+        errors.append("FAIL: update_sold_car_with_accounting not found for S73")
+
+    # ─── S74: rebuild_sold_car_accounting_after_cost_change uses car_sale ─────
+    print("\n[S74] rebuild_sold_car_accounting_after_cost_change rebuilds car_sale not customer_sale_payment...")
+    rebuild_fn_start = content.find("fn rebuild_sold_car_accounting_after_cost_change")
+    if rebuild_fn_start >= 0:
+        rebuild_fn_end = content.find("\nfn ", rebuild_fn_start + 5)
+        if rebuild_fn_end < 0:
+            rebuild_fn_end = rebuild_fn_start + 2000
+        rebuild_body = content[rebuild_fn_start:rebuild_fn_end]
+        has_rebuild_car_sale = (
+            'delete_generated_car_sale_partner_transactions' in rebuild_body
+            and 'distribute_to_partners_50_with_effects_and_related' in rebuild_body
+            and 'profit_recognition' in rebuild_body
+        )
+        if has_rebuild_car_sale:
+            print("  PASS (rebuild uses car_sale profit_recognition not customer_sale_payment)")
+        else:
+            missing = []
+            if not has_rebuild_car_sale: missing.append("rebuild missing car_sale profit_recognition path")
+            errors.append(f"FAIL: {'; '.join(missing)}")
+    else:
+        errors.append("FAIL: rebuild_sold_car_accounting_after_cost_change not found for S74")
+
     # Summary
     print("\n" + "=" * 60)
     if errors:

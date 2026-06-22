@@ -25,13 +25,13 @@ export function FinancialAccountsTab() {
       });
       if (tab === "الكاش") {
         setBalance({
-          iqd: data?.net_capital_iqd || 0,
-          usd: data?.net_capital_usd || 0,
+          iqd: data?.cash_iqd || 0,
+          usd: data?.cash_usd || 0,
         });
       } else {
         setBalance({
-          iqd: data?.cash_iqd || 0,
-          usd: data?.cash_usd || 0,
+          iqd: data?.qasa_iqd || 0,
+          usd: data?.qasa_usd || 0,
         });
       }
     } catch {

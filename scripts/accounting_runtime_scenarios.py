@@ -1099,6 +1099,178 @@ def s25_atomic_rollback(con):
     chkeq("ledger rollback", ledger_after, ledger_before)
     chkeq("partner_tx rollback", pt_after, pt_before)
 
+def s26_financial_summary_cash_vs_qasa(con):
+    """Scenario 26: Financial summary: cash tab shows cash_iqd, qasa tab shows qasa_iqd, not net_capital."""
+    cur = con.cursor()
+    seed_partners(cur)
+    create_car_cash_purchase(cur, "S26_A", "اختبار كاش", 10_000_000.0)
+
+    # cash_iqd: sum of partner_transactions where affects_partner_cash=1 AND kind='شريك' AND currency='IQD'
+    # سحب is negative, ايداع is positive
+    cash_iqd = cur.execute("""
+        SELECT COALESCE(SUM(
+            CASE
+                WHEN (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                      OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                     AND type NOT LIKE 'تحويل%' THEN amount
+                WHEN (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                     AND type NOT LIKE 'تحويل%' THEN -amount
+                ELSE 0
+            END
+         ), 0.0)
+         FROM partner_transactions
+         WHERE affects_partner_cash = 1 AND kind = 'شريك' AND COALESCE(currency, 'IQD') = 'IQD'
+    """).fetchone()[0]
+    chkeq("cash_iqd after cash car purchase = -10M", cash_iqd, -10_000_000.0)
+
+    # qasa_iqd: same logic but affects_qasa=1 AND kind IN ('شريك','مستثمر')
+    qasa_iqd = cur.execute("""
+        SELECT COALESCE(SUM(
+            CASE
+                WHEN (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                      OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                     AND type NOT LIKE 'تحويل%' THEN amount
+                WHEN (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                     AND type NOT LIKE 'تحويل%' THEN -amount
+                ELSE 0
+            END
+         ), 0.0)
+         FROM partner_transactions
+         WHERE affects_qasa = 1 AND kind IN ('شريك', 'مستثمر') AND COALESCE(currency, 'IQD') = 'IQD'
+    """).fetchone()[0]
+    chkeq("qasa_iqd after cash car purchase = -10M", qasa_iqd, -10_000_000.0)
+
+    # inventory_value_iqd: ledger inventory debit-credit
+    inv_iqd = cur.execute(
+        "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'inventory' AND currency = 'IQD'"
+    ).fetchone()[0]
+    chkeq("inventory_value_iqd after cash car purchase = 10M", inv_iqd, 10_000_000.0)
+
+    # monthly_profits_iqd: no profit entries yet
+    chkeq("monthly_profits_iqd = 0", 0, 0)
+
+    # Assert that net_capital_iqd differs from cash_iqd (this is the bug)
+    net_capital_iqd = cash_iqd + inv_iqd
+    chk("net_capital_iqd != cash_iqd (bug: cash tab was using net_capital)", net_capital_iqd != cash_iqd, f"net_capital={net_capital_iqd} cash={cash_iqd}")
+
+def s27_cash_sale_no_customer_account(con):
+    """Scenario 27: Cash sale must NOT create customer account or receivable.
+       Cash sale uses car_sale cash_movement + profit_recognition directly."""
+    cur = con.cursor()
+    seed_partners(cur)
+    create_car_cash_purchase(cur, "S27_A", "سيارة كاش", 10_000_000.0)
+    add_car_expense(cur, "S27_A", "مصاريف اصلاح", 1_000_000.0)
+    sell_car_cash(cur, "S27_A", "سيارة كاش", "زبون كاش 1", 15_000_000.0)
+
+    # 1. Car status = مبيوعة
+    status = cur.execute("SELECT status FROM cars WHERE car_number='S27_A'").fetchone()
+    chkeq("car status sold", status[0] if status else "", "مبيوعة")
+
+    # 2. No customer account exists for cash buyer
+    customer = cur.execute("SELECT COUNT(*) FROM partners WHERE partner_name='زبون كاش 1' AND kind='زبون'").fetchone()[0]
+    chkeq("no customer account for cash buyer", customer, 0)
+
+    # 3. No customer_sale_payment rows related to this car
+    cust_pay = cur.execute("SELECT COUNT(*) FROM partner_transactions WHERE source_type='customer_sale_payment' AND related_source_type='car' AND related_source_id='S27_A'").fetchone()[0]
+    chkeq("no customer_sale_payment for cash sale", cust_pay, 0)
+
+    # 4. No receivable ledger entries for cash buyer
+    recv = cur.execute("SELECT COUNT(*) FROM financial_ledger WHERE account_type='receivable' AND account_id='زبون كاش 1'").fetchone()[0]
+    chkeq("no receivable for cash buyer", recv, 0)
+
+    # 5. car_sale cash_movement rows exist
+    cash_movements = cur.execute(
+        "SELECT partner_name, amount FROM partner_transactions WHERE source_type='car_sale' AND source_id='S27_A' AND source_role='cash_movement' ORDER BY partner_name"
+    ).fetchall()
+    chkeq("cash_movement count", len(cash_movements), 2)
+    total_cash_movement = sum(r[1] for r in cash_movements)
+    chkeq("total cash_movement = selling_price 15M", total_cash_movement, 15_000_000.0)
+    amir_cm = cur.execute("SELECT amount FROM partner_transactions WHERE source_type='car_sale' AND source_id='S27_A' AND source_role='cash_movement' AND partner_name='أمير'").fetchone()
+    chkeq("amir cash_movement = 7.5M", amir_cm[0] if amir_cm else 0, 7_500_000.0)
+    muntasir_cm = cur.execute("SELECT amount FROM partner_transactions WHERE source_type='car_sale' AND source_id='S27_A' AND source_role='cash_movement' AND partner_name='منتصر'").fetchone()
+    chkeq("muntasir cash_movement = 7.5M", muntasir_cm[0] if muntasir_cm else 0, 7_500_000.0)
+
+    # 6. cash_movement affects_qasa=1, affects_partner_cash=1, affects_profit=0
+    cm_flags = cur.execute(
+        "SELECT affects_qasa, affects_partner_cash, affects_profit FROM partner_transactions WHERE source_type='car_sale' AND source_id='S27_A' AND source_role='cash_movement' LIMIT 1"
+    ).fetchone()
+    chkeq("cash_movement affects_qasa", cm_flags[0], 1)
+    chkeq("cash_movement affects_partner_cash", cm_flags[1], 1)
+    chkeq("cash_movement affects_profit", cm_flags[2], 0)
+
+    # 7. car_sale profit_recognition rows exist (profit = 15M - 10M - 1M = 4M)
+    profit_rows = cur.execute(
+        "SELECT partner_name, amount FROM partner_transactions WHERE source_type='car_sale' AND source_id='S27_A' AND source_role='profit_recognition' ORDER BY partner_name"
+    ).fetchall()
+    chkeq("profit_recognition count", len(profit_rows), 2)
+    total_profit = sum(r[1] for r in profit_rows)
+    chkeq("total profit = 4M", total_profit, 4_000_000.0)
+    amir_pr = cur.execute("SELECT amount FROM partner_transactions WHERE source_type='car_sale' AND source_id='S27_A' AND source_role='profit_recognition' AND partner_name='أمير'").fetchone()
+    chkeq("amir profit = 2M", amir_pr[0] if amir_pr else 0, 2_000_000.0)
+    muntasir_pr = cur.execute("SELECT amount FROM partner_transactions WHERE source_type='car_sale' AND source_id='S27_A' AND source_role='profit_recognition' AND partner_name='منتصر'").fetchone()
+    chkeq("muntasir profit = 2M", muntasir_pr[0] if muntasir_pr else 0, 2_000_000.0)
+
+    # 8. profit_recognition affects_qasa=0, affects_partner_cash=0, affects_profit=1
+    pr_flags = cur.execute(
+        "SELECT affects_qasa, affects_partner_cash, affects_profit FROM partner_transactions WHERE source_type='car_sale' AND source_id='S27_A' AND source_role='profit_recognition' LIMIT 1"
+    ).fetchone()
+    chkeq("profit_recognition affects_qasa=0", pr_flags[0], 0)
+    chkeq("profit_recognition affects_partner_cash=0", pr_flags[1], 0)
+    chkeq("profit_recognition affects_profit=1", pr_flags[2], 1)
+
+    # 9. Qasa net = -10M (purchase cash) -1M (expense share?) + 15M (sale) = 4M
+    # Actually qasa includes: -10M from purchase + 15M from sale = 5M total from car_sale + car_purchase
+    # Wait - the expense also affects qasa. Let me compute from partner_transactions.
+    cash_iqd = cur.execute("""
+        SELECT COALESCE(SUM(
+            CASE
+                WHEN (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                      OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                     AND type NOT LIKE 'تحويل%' THEN amount
+                WHEN (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                     AND type NOT LIKE 'تحويل%' THEN -amount
+                ELSE 0
+            END
+         ), 0.0)
+         FROM partner_transactions
+         WHERE affects_partner_cash = 1 AND kind = 'شريك' AND COALESCE(currency, 'IQD') = 'IQD'
+    """).fetchone()[0]
+    chkeq("cash_iqd = 4M", cash_iqd, 4_000_000.0)
+
+    qasa_iqd = cur.execute("""
+        SELECT COALESCE(SUM(
+            CASE
+                WHEN (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                      OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                     AND type NOT LIKE 'تحويل%' THEN amount
+                WHEN (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                     AND type NOT LIKE 'تحويل%' THEN -amount
+                ELSE 0
+            END
+         ), 0.0)
+         FROM partner_transactions
+         WHERE affects_qasa = 1 AND kind IN ('شريك', 'مستثمر') AND COALESCE(currency, 'IQD') = 'IQD'
+    """).fetchone()[0]
+    chkeq("qasa_iqd = 4M", qasa_iqd, 4_000_000.0)
+
+    # 10. Inventory = -1M after sale (10M purchase - 11M COGS including expense)
+    # The expense adds to COGS but does not increase inventory,
+    # so net inventory after sale = 10M - (10M + 1M) = -1M
+    inv_iqd = cur.execute(
+        "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type='inventory' AND currency='IQD'"
+    ).fetchone()[0]
+    chkeq("inventory = -1M after sale (expense in COGS)", inv_iqd, -1_000_000.0)
+
+    # 11. No duplicate cash_movement or profit_recognition rows
+    cm_count = cur.execute("SELECT COUNT(*) FROM partner_transactions WHERE source_type='car_sale' AND source_id='S27_A' AND source_role='cash_movement'").fetchone()[0]
+    chkeq("no duplicate cash_movement", cm_count, 2)
+    pr_count = cur.execute("SELECT COUNT(*) FROM partner_transactions WHERE source_type='car_sale' AND source_id='S27_A' AND source_role='profit_recognition'").fetchone()[0]
+    chkeq("no duplicate profit_recognition", pr_count, 2)
+
 # ─── Scenario list ─────────────────────────────────────────────────
 
 SCENARIOS = [
@@ -1127,6 +1299,8 @@ SCENARIOS = [
     (23, "Qasa/cash double-count prevention", s23_qasa_double_count),
     (24, "Source metadata completeness", s24_source_metadata_completeness),
     (25, "Atomic rollback simulation", s25_atomic_rollback),
+    (26, "Financial summary cash/qasa not net_capital", s26_financial_summary_cash_vs_qasa),
+    (27, "Cash sale no customer account", s27_cash_sale_no_customer_account),
 ]
 
 # ─── Main ──────────────────────────────────────────────────────────

@@ -1081,9 +1081,13 @@ async function mockInvoke<T>(
       .filter((p) => p.kind === "شريك")
       .reduce((sum, p) => sum + (p.usd_balance ?? 0), 0);
 
+    const qasaIqd = cashIqd + totalInvestmentsIqd;
+    const qasaUsd = cashUsd + totalInvestmentsUsd;
     return {
       cash_iqd: cashIqd,
       cash_usd: cashUsd,
+      qasa_iqd: qasaIqd,
+      qasa_usd: qasaUsd,
       inventory_value_iqd: inventoryValueIqd,
       inventory_value_usd: inventoryValueUsd,
       total_investments_iqd: totalInvestmentsIqd,

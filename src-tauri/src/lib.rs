@@ -1132,11 +1132,6 @@ fn is_deposit_type(tx_type: &str) -> bool {
         || tx_type.starts_with("تسديد")
 }
 
-fn is_customer_remaining_type(tx_type: &str) -> bool {
-    !tx_type.starts_with("تحويل")
-        && !tx_type.starts_with("واصل")
-        && (tx_type.starts_with("باقي") || tx_type.starts_with("سحب"))
-}
 
 // ============================================================
 // CENTRAL VALIDATION HELPERS
@@ -3201,158 +3196,6 @@ fn record_car_sale_ledger_entries(db: &Connection, car_number: &str) -> Result<(
     Ok(())
 }
 
-/// Safe coordinator: delegates to purchase-only and sale-only ledger recorders.
-/// Do NOT add direct record_ledger_entry calls here — they belong in the specific functions.
-fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), String> {
-    record_car_purchase_ledger_entries(db, car_number)?;
-    record_car_sale_ledger_entries(db, car_number)?;
-    Ok(())
-}
-
-fn record_car_sale_ledger_entries_from_vars(
-    db: &Connection,
-    car_number: &str,
-    car_name: &str,
-    purchase_price: f64,
-    currency: &str,
-    selling_price: &f64,
-    sale_currency: &str,
-    sale_date: &str,
-    sale_time: &str,
-    payment_type_opt: &Option<String>,
-    amount_paid_opt: &Option<f64>,
-    amount_remaining_opt: &Option<f64>,
-    buyer_name_opt: &Option<String>,
-) -> Result<(), String> {
-    let s_date = if sale_date.is_empty() {
-        "2026-06-12".to_string()
-    } else {
-        sale_date.to_string()
-    };
-    let s_time = sale_time.to_string();
-    let buyer_name = buyer_name_opt.clone().unwrap_or_else(|| "مشتري مجهول".to_string());
-    let payment_type = payment_type_opt.clone().unwrap_or_else(|| "كاش".to_string());
-    let _amount_paid = amount_paid_opt.unwrap_or(*selling_price);
-    let _amount_remaining = amount_remaining_opt.unwrap_or(0.0);
-
-    let expenses_sum: f64 = db
-        .query_row(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
-            [car_number],
-            |row| row.get(0),
-        )
-        .unwrap_or(0.0);
-    let total_cogs = purchase_price + expenses_sum;
-
-    if payment_type == "كاش" {
-        record_ledger_entry(
-            db,
-            &s_date,
-            &s_time,
-            "revenue",
-            Some(car_number),
-            0.0,
-            *selling_price,
-            sale_currency,
-            "car",
-            car_number,
-            "بيع سيارة",
-            &format!("إيراد بيع سيارة {} ({}) إلى {}", car_name, car_number, buyer_name),
-            None,
-        )?;
-
-        record_ledger_entry(
-            db,
-            &s_date,
-            &s_time,
-            "cash",
-            Some("قاصه"),
-            *selling_price,
-            0.0,
-            sale_currency,
-            "car",
-            car_number,
-            "بيع سيارة كاش",
-            &format!("استلام نقدي بيع سيارة {} ({})", car_name, car_number),
-            None,
-        )?;
-    } else {
-        record_ledger_entry(
-            db,
-            &s_date,
-            &s_time,
-            "receivable",
-            Some(&buyer_name),
-            *selling_price,
-            0.0,
-            sale_currency,
-            "car",
-            car_number,
-            "مدينون بيع سيارة",
-            &format!(
-                "ذمة مدينة كاملة بيع سيارة {} ({}) على {}",
-                car_name, car_number, buyer_name
-            ),
-            None,
-        )?;
-
-        record_ledger_entry(
-            db,
-            &s_date,
-            &s_time,
-            "deferred_revenue",
-            Some(car_number),
-            0.0,
-            *selling_price,
-            sale_currency,
-            "car",
-            car_number,
-            "إيراد مؤجل بيع سيارة",
-            &format!(
-                "إيراد مؤجل بيع سيارة {} ({}) إلى {}",
-                car_name, car_number, buyer_name
-            ),
-            None,
-        )?;
-    }
-
-    if total_cogs > 0.0 {
-        record_ledger_entry(
-            db,
-            &s_date,
-            &s_time,
-            "expense",
-            Some(car_number),
-            total_cogs,
-            0.0,
-            currency,
-            "car",
-            car_number,
-            "تكلفة المبيعات",
-            &format!("تكلفة بيع سيارة {} ({})", car_name, car_number),
-            None,
-        )?;
-    }
-
-    record_ledger_entry(
-        db,
-        &s_date,
-        &s_time,
-        "inventory",
-        Some(car_number),
-        0.0,
-        total_cogs,
-        currency,
-        "car",
-        car_number,
-        "تخفيض المخزون بيع سيارة",
-        &format!("إخراج سيارة {} ({}) من المخزون", car_name, car_number),
-        None,
-    )?;
-
-    Ok(())
-}
-
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[tauri::command]
 fn add_car(
@@ -4051,75 +3894,77 @@ fn sell_car_with_accounting(
     ).map_err(|e| e.to_string())?;
 
     // ============================================================
-    // STEP 3: Create customer account if not exists
+    // STEP 3a: Installment/Due-date: Create customer account + payment + schedule
     // ============================================================
-    ensure_partner_exists(&db, &buyer_name, &buyer_phone, "زبون")?;
-
     let is_installments_or_due = payment_type == "اقساط" || payment_type == "موعد";
 
-    // ============================================================
-    // STEP 4: Create down payment transaction if amount_paid > 0
-    // ============================================================
-    if amount_paid > 0.0 {
-        let dp_type = if is_installments_or_due { "مقدمة بيع سيارة" } else { "ايداع" };
-        let dp_notes = if is_installments_or_due {
-            format!("استلام مقدمة سيارة من {} رقم الشاصي {} #بيع_سيارة_{}", buyer_name, clean_chassis, car_number)
-        } else {
-            format!("دفعة أولى مستلمة - بيع {} #بيع_سيارة_{}", car_label, car_number)
-        };
+    if is_installments_or_due {
+        ensure_partner_exists(&db, &buyer_name, &buyer_phone, "زبون")?;
 
-        db.execute(
-            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
-             VALUES (?1, 'زبون', ?2, ?3, ?4, ?5, ?6, ?7, 'قاصه')",
-            params![buyer_name.trim(), dp_type, amount_paid, sale_date, &now_time, &dp_notes, sale_currency],
-        ).map_err(|e| e.to_string())?;
+        // Down payment
+        if amount_paid > 0.0 {
+            let dp_notes = format!("استلام مقدمة سيارة من {} رقم الشاصي {} #بيع_سيارة_{}", buyer_name, clean_chassis, car_number);
 
-        let dp_id = db.last_insert_rowid();
+            db.execute(
+                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                 VALUES (?1, 'زبون', 'مقدمة بيع سيارة', ?2, ?3, ?4, ?5, ?6, 'قاصه')",
+                params![buyer_name.trim(), amount_paid, sale_date, &now_time, &dp_notes, sale_currency],
+            ).map_err(|e| e.to_string())?;
 
-        // Classify the down payment as a sale-generated customer payment
-        db.execute(
-            "UPDATE partner_transactions SET
-             source_type = 'customer_sale_payment',
-             source_id = ?1,
-             source_role = 'sale_down_payment',
-             affects_qasa = 1,
-             affects_partner_cash = 1,
-             affects_profit = 0,
-             related_source_type = 'car',
-             related_source_id = ?2
-             WHERE id = ?3",
-            params![format!("{}:down_payment", car_number), car_number, dp_id],
-        ).map_err(|e| e.to_string())?;
+            let dp_id = db.last_insert_rowid();
 
-        // Record ledger entries for the down payment
-        record_partner_ledger_entries(&db, dp_id)?;
+            db.execute(
+                "UPDATE partner_transactions SET
+                 source_type = 'customer_sale_payment',
+                 source_id = ?1,
+                 source_role = 'sale_down_payment',
+                 affects_qasa = 1,
+                 affects_partner_cash = 1,
+                 affects_profit = 0,
+                 related_source_type = 'car',
+                 related_source_id = ?2
+                 WHERE id = ?3",
+                params![format!("{}:down_payment", car_number), car_number, dp_id],
+            ).map_err(|e| e.to_string())?;
 
-        // Apply splits (creates cash_movement and profit_recognition)
-        apply_partner_transaction_splits(&db, dp_id, buyer_name.trim(), "زبون", dp_type, amount_paid, &sale_date, Some(&dp_notes), &sale_currency)?;
+            record_partner_ledger_entries(&db, dp_id)?;
+            apply_partner_transaction_splits(&db, dp_id, buyer_name.trim(), "زبون", "مقدمة بيع سيارة", amount_paid, &sale_date, Some(&dp_notes), &sale_currency)?;
 
-        recalculate_partner_total(&db, buyer_name.trim(), "زبون")?;
-    }
+            recalculate_partner_total(&db, buyer_name.trim(), "زبون")?;
+        }
 
-    // ============================================================
-    // STEP 5: Create remaining installment rows if needed (with source fields — Issue 3)
-    // ============================================================
-    if amount_remaining > 0.0 {
-        if payment_type == "اقساط" {
-            let base_date = first_payment_date.as_deref().unwrap_or(&sale_date);
-            let months = installment_months.unwrap_or(1);
-            let monthly_amount = (amount_remaining / months as f64).floor();
-            let last_amount = amount_remaining - (monthly_amount * (months - 1) as f64);
+        // Installment schedule
+        if amount_remaining > 0.0 {
+            if payment_type == "اقساط" {
+                let base_date = first_payment_date.as_deref().unwrap_or(&sale_date);
+                let months = installment_months.unwrap_or(1);
+                let monthly_amount = (amount_remaining / months as f64).floor();
+                let last_amount = amount_remaining - (monthly_amount * (months - 1) as f64);
 
-            for i in 0..months {
-                let installment_amount = if i == months - 1 { last_amount } else { monthly_amount };
-                if installment_amount <= 0.0 { continue; }
+                for i in 0..months {
+                    let installment_amount = if i == months - 1 { last_amount } else { monthly_amount };
+                    if installment_amount <= 0.0 { continue; }
 
-                let inst_date = add_months_to_date(base_date, i);
-                let inst_notes = if months > 1 {
-                    format!("باقي قسط شهر {} من {} على {} رقم الشاصي {}", i + 1, months, buyer_name, clean_chassis)
-                } else {
-                    format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name, clean_chassis)
-                };
+                    let inst_date = add_months_to_date(base_date, i);
+                    let inst_notes = if months > 1 {
+                        format!("باقي قسط شهر {} من {} على {} رقم الشاصي {}", i + 1, months, buyer_name, clean_chassis)
+                    } else {
+                        format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name, clean_chassis)
+                    };
+
+                    db.execute(
+                        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type,
+                            source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit,
+                            related_source_type, related_source_id)
+                         VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه',
+                            'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
+                        params![buyer_name.trim(), installment_amount, inst_date, &now_time, &inst_notes, sale_currency,
+                            format!("{}:installment:{}", car_number, i + 1), car_number],
+                    ).map_err(|e| e.to_string())?;
+                }
+            } else if payment_type == "موعد" {
+                let due_date = delivery_date.as_deref().unwrap_or(&sale_date);
+                let due_notes = format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name, clean_chassis);
 
                 db.execute(
                     "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type,
@@ -4127,26 +3972,73 @@ fn sell_car_with_accounting(
                         related_source_type, related_source_id)
                      VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه',
                         'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
-                    params![buyer_name.trim(), installment_amount, inst_date, &now_time, &inst_notes, sale_currency,
-                        format!("{}:installment:{}", car_number, i + 1), car_number],
+                    params![buyer_name.trim(), amount_remaining, due_date, &now_time, &due_notes, sale_currency,
+                        format!("{}:due:1", car_number), car_number],
                 ).map_err(|e| e.to_string())?;
             }
-        } else if payment_type == "موعد" {
-            let due_date = delivery_date.as_deref().unwrap_or(&sale_date);
-            let due_notes = format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name, clean_chassis);
 
-            db.execute(
-                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type,
-                    source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit,
-                    related_source_type, related_source_id)
-                 VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه',
-                    'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
-                params![buyer_name.trim(), amount_remaining, due_date, &now_time, &due_notes, sale_currency,
-                    format!("{}:due:1", car_number), car_number],
-            ).map_err(|e| e.to_string())?;
+            recalculate_partner_total(&db, buyer_name.trim(), "زبون")?;
         }
+    } else if payment_type == "كاش" {
+        // ============================================================
+        // STEP 3b: Cash sale — NO customer account, NO receivable
+        // Car_sale cash_movement + profit_recognition directly to partners
+        // ============================================================
 
-        recalculate_partner_total(&db, buyer_name.trim(), "زبون")?;
+        // 1. Cash movement (selling_price split 50/50, affects qasa/cash)
+        let cash_note = format!("ايداع بيع سيارة {} ({}) إلى {}", car_label, car_number, buyer_name.trim());
+        distribute_to_partners_50_with_effects_and_related(
+            &db,
+            selling_price,
+            &sale_currency,
+            &sale_date,
+            "قاصه",
+            "ايداع بيع سيارة",
+            &cash_note,
+            "car_sale",
+            &car_number,
+            "cash_movement",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
+            false, // affects_profit
+            Some("car"),
+            Some(&car_number),
+        )?;
+
+        // 2. Profit recognition (profit = selling_price - purchase_price - expenses_sum)
+        let purchase_price: f64 = db.query_row(
+            "SELECT COALESCE(purchase_price, 0.0) FROM cars WHERE car_number = ?1",
+            [&car_number],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+
+        let expenses_sum: f64 = db.query_row(
+            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+            [&car_number],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+
+        let profit = selling_price - purchase_price - expenses_sum;
+        if profit > 0.0 {
+            let profit_note = format!("ارباح بيع سيارة {} ({})", car_label, car_number);
+            distribute_to_partners_50_with_effects_and_related(
+                &db,
+                profit,
+                &sale_currency,
+                &sale_date,
+                "قاصه",
+                "ايداع ارباح سيارة",
+                &profit_note,
+                "car_sale",
+                &car_number,
+                "profit_recognition",
+                false, // affects_qasa
+                false, // affects_partner_cash
+                true,  // affects_profit
+                Some("car"),
+                Some(&car_number),
+            )?;
+        }
     }
 
     // ============================================================
@@ -4621,66 +4513,74 @@ fn update_sold_car_with_accounting(
     delete_car_sale_ledger_entries(&db, &car_number)?;
 
     // ============================================================
-    // STEP 3: Recreate down payment row if amount_paid > 0
+    // STEP 3a: Installment/Due-date: Recreate down payment + schedule
     // ============================================================
     let is_installments_or_due = payment_type == "اقساط" || payment_type == "موعد";
 
-    if amount_paid > 0.0 {
-        let dp_type = if is_installments_or_due { "مقدمة بيع سيارة" } else { "ايداع" };
-        let dp_notes = if is_installments_or_due {
-            format!("استلام مقدمة سيارة من {} رقم الشاصي {} #بيع_سيارة_{}", buyer_name.trim(), clean_chassis, car_number)
-        } else {
-            format!("دفعة أولى مستلمة - بيع {} #بيع_سيارة_{}", car_name, car_number)
-        };
+    if is_installments_or_due {
+        if amount_paid > 0.0 {
+            let dp_notes = format!("استلام مقدمة سيارة من {} رقم الشاصي {} #بيع_سيارة_{}", buyer_name.trim(), clean_chassis, car_number);
 
-        db.execute(
-            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
-             VALUES (?1, 'زبون', ?2, ?3, ?4, ?5, ?6, ?7, 'قاصه')",
-            params![buyer_name.trim(), dp_type, amount_paid, sale_date, &now_time, &dp_notes, sale_currency],
-        ).map_err(|e| e.to_string())?;
+            db.execute(
+                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                 VALUES (?1, 'زبون', 'مقدمة بيع سيارة', ?2, ?3, ?4, ?5, ?6, 'قاصه')",
+                params![buyer_name.trim(), amount_paid, sale_date, &now_time, &dp_notes, sale_currency],
+            ).map_err(|e| e.to_string())?;
 
-        let dp_id = db.last_insert_rowid();
+            let dp_id = db.last_insert_rowid();
 
-        db.execute(
-            "UPDATE partner_transactions SET
-             source_type = 'customer_sale_payment',
-             source_id = ?1,
-             source_role = 'sale_down_payment',
-             affects_qasa = 1,
-             affects_partner_cash = 1,
-             affects_profit = 0,
-             related_source_type = 'car',
-             related_source_id = ?2
-             WHERE id = ?3",
-            params![format!("{}:down_payment", car_number), car_number, dp_id],
-        ).map_err(|e| e.to_string())?;
+            db.execute(
+                "UPDATE partner_transactions SET
+                 source_type = 'customer_sale_payment',
+                 source_id = ?1,
+                 source_role = 'sale_down_payment',
+                 affects_qasa = 1,
+                 affects_partner_cash = 1,
+                 affects_profit = 0,
+                 related_source_type = 'car',
+                 related_source_id = ?2
+                 WHERE id = ?3",
+                params![format!("{}:down_payment", car_number), car_number, dp_id],
+            ).map_err(|e| e.to_string())?;
 
-        record_partner_ledger_entries(&db, dp_id)?;
-        apply_partner_transaction_splits(&db, dp_id, buyer_name.trim(), "زبون", dp_type, amount_paid, &sale_date, Some(&dp_notes), &sale_currency)?;
+            record_partner_ledger_entries(&db, dp_id)?;
+            apply_partner_transaction_splits(&db, dp_id, buyer_name.trim(), "زبون", "مقدمة بيع سيارة", amount_paid, &sale_date, Some(&dp_notes), &sale_currency)?;
 
-        buyers_to_recalc.insert(buyer_name.trim().to_string());
-    }
+            buyers_to_recalc.insert(buyer_name.trim().to_string());
+        }
 
-    // ============================================================
-    // STEP 4: Recreate installment rows if amount_remaining > 0
-    // ============================================================
-    if amount_remaining > 0.0 {
-        if payment_type == "اقساط" {
-            let base_date = first_payment_date.as_deref().unwrap_or(&sale_date);
-            let months = installment_months.unwrap_or(1);
-            let monthly_amount = (amount_remaining / months as f64).floor();
-            let last_amount = amount_remaining - (monthly_amount * (months - 1) as f64);
+        // STEP 4: Recreate installment rows
+        if amount_remaining > 0.0 {
+            if payment_type == "اقساط" {
+                let base_date = first_payment_date.as_deref().unwrap_or(&sale_date);
+                let months = installment_months.unwrap_or(1);
+                let monthly_amount = (amount_remaining / months as f64).floor();
+                let last_amount = amount_remaining - (monthly_amount * (months - 1) as f64);
 
-            for i in 0..months {
-                let inst_amount = if i == months - 1 { last_amount } else { monthly_amount };
-                if inst_amount <= 0.0 { continue; }
+                for i in 0..months {
+                    let inst_amount = if i == months - 1 { last_amount } else { monthly_amount };
+                    if inst_amount <= 0.0 { continue; }
 
-                let inst_date = add_months_to_date(base_date, i);
-                let inst_notes = if months > 1 {
-                    format!("باقي قسط شهر {} من {} على {} رقم الشاصي {}", i + 1, months, buyer_name.trim(), clean_chassis)
-                } else {
-                    format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name.trim(), clean_chassis)
-                };
+                    let inst_date = add_months_to_date(base_date, i);
+                    let inst_notes = if months > 1 {
+                        format!("باقي قسط شهر {} من {} على {} رقم الشاصي {}", i + 1, months, buyer_name.trim(), clean_chassis)
+                    } else {
+                        format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name.trim(), clean_chassis)
+                    };
+
+                    db.execute(
+                        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type,
+                            source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit,
+                            related_source_type, related_source_id)
+                         VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه',
+                            'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
+                        params![buyer_name.trim(), inst_amount, inst_date, &now_time, &inst_notes, sale_currency,
+                            format!("{}:installment:{}", car_number, i + 1), car_number],
+                    ).map_err(|e| e.to_string())?;
+                }
+            } else if payment_type == "موعد" {
+                let due_date = delivery_date.as_deref().unwrap_or(&sale_date);
+                let due_notes = format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name.trim(), clean_chassis);
 
                 db.execute(
                     "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type,
@@ -4688,26 +4588,67 @@ fn update_sold_car_with_accounting(
                         related_source_type, related_source_id)
                      VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه',
                         'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
-                    params![buyer_name.trim(), inst_amount, inst_date, &now_time, &inst_notes, sale_currency,
-                        format!("{}:installment:{}", car_number, i + 1), car_number],
+                    params![buyer_name.trim(), amount_remaining, due_date, &now_time, &due_notes, sale_currency,
+                        format!("{}:due:1", car_number), car_number],
                 ).map_err(|e| e.to_string())?;
             }
-        } else if payment_type == "موعد" {
-            let due_date = delivery_date.as_deref().unwrap_or(&sale_date);
-            let due_notes = format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name.trim(), clean_chassis);
 
-            db.execute(
-                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type,
-                    source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit,
-                    related_source_type, related_source_id)
-                 VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه',
-                    'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
-                params![buyer_name.trim(), amount_remaining, due_date, &now_time, &due_notes, sale_currency,
-                    format!("{}:due:1", car_number), car_number],
-            ).map_err(|e| e.to_string())?;
+            buyers_to_recalc.insert(buyer_name.trim().to_string());
         }
+    } else if payment_type == "كاش" {
+        // ============================================================
+        // STEP 3b: Cash sale — NO customer, NO receivable
+        // Car_sale cash_movement + profit_recognition directly to partners
+        // ============================================================
 
-        buyers_to_recalc.insert(buyer_name.trim().to_string());
+        // 1. Cash movement
+        let cash_note = format!("ايداع بيع سيارة {} ({}) إلى {}", car_name, car_number, buyer_name.trim());
+        distribute_to_partners_50_with_effects_and_related(
+            &db,
+            selling_price,
+            &sale_currency,
+            &sale_date,
+            "قاصه",
+            "ايداع بيع سيارة",
+            &cash_note,
+            "car_sale",
+            &car_number,
+            "cash_movement",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
+            false, // affects_profit
+            Some("car"),
+            Some(&car_number),
+        )?;
+
+        // 2. Profit recognition
+        let expenses_sum: f64 = db.query_row(
+            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+            [&car_number],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+
+        let profit = selling_price - purchase_price - expenses_sum;
+        if profit > 0.0 {
+            let profit_note = format!("ارباح بيع سيارة {} ({})", car_name, car_number);
+            distribute_to_partners_50_with_effects_and_related(
+                &db,
+                profit,
+                &sale_currency,
+                &sale_date,
+                "قاصه",
+                "ايداع ارباح سيارة",
+                &profit_note,
+                "car_sale",
+                &car_number,
+                "profit_recognition",
+                false, // affects_qasa
+                false, // affects_partner_cash
+                true,  // affects_profit
+                Some("car"),
+                Some(&car_number),
+            )?;
+        }
     }
 
     // ============================================================
@@ -4890,70 +4831,76 @@ fn save_and_sell_car_with_accounting(
     record_car_purchase_ledger_entries(&db, &car_number)?;
 
     // ============================================================
-    // STEP 4: Create customer account
-    // ============================================================
-    ensure_partner_exists(&db, &buyer_name, &buyer_phone, "زبون")?;
-
-    // ============================================================
-    // STEP 5: Create down payment row
+    // STEP 4a: Installment/Due-date: Create customer + payment + schedule
     // ============================================================
     let is_installments_or_due = payment_type == "اقساط" || payment_type == "موعد";
     let sale_date_str = sale_date.as_deref().unwrap_or("");
 
-    if amount_paid > 0.0 {
-        let dp_type = if is_installments_or_due { "مقدمة بيع سيارة" } else { "ايداع" };
-        let dp_notes = if is_installments_or_due {
-            format!("استلام مقدمة سيارة من {} رقم الشاصي {} #بيع_سيارة_{}", buyer_name.trim(), clean_chassis, car_number)
-        } else {
-            format!("دفعة أولى مستلمة - بيع {} #بيع_سيارة_{}", clean_name, car_number)
-        };
+    if is_installments_or_due {
+        ensure_partner_exists(&db, &buyer_name, &buyer_phone, "زبون")?;
 
-        db.execute(
-            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
-             VALUES (?1, 'زبون', ?2, ?3, ?4, ?5, ?6, ?7, 'قاصه')",
-            params![buyer_name.trim(), dp_type, amount_paid, sale_date_str, &now_time, &dp_notes, sale_curr],
-        ).map_err(|e| e.to_string())?;
+        // Down payment
+        if amount_paid > 0.0 {
+            let dp_notes = format!("استلام مقدمة سيارة من {} رقم الشاصي {} #بيع_سيارة_{}", buyer_name.trim(), clean_chassis, car_number);
 
-        let dp_id = db.last_insert_rowid();
+            db.execute(
+                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                 VALUES (?1, 'زبون', 'مقدمة بيع سيارة', ?2, ?3, ?4, ?5, ?6, 'قاصه')",
+                params![buyer_name.trim(), amount_paid, sale_date_str, &now_time, &dp_notes, sale_curr],
+            ).map_err(|e| e.to_string())?;
 
-        db.execute(
-            "UPDATE partner_transactions SET
-             source_type = 'customer_sale_payment',
-             source_id = ?1,
-             source_role = 'sale_down_payment',
-             affects_qasa = 1,
-             affects_partner_cash = 1,
-             affects_profit = 0,
-             related_source_type = 'car',
-             related_source_id = ?2
-             WHERE id = ?3",
-            params![format!("{}:down_payment", car_number), car_number, dp_id],
-        ).map_err(|e| e.to_string())?;
+            let dp_id = db.last_insert_rowid();
 
-        record_partner_ledger_entries(&db, dp_id)?;
-        apply_partner_transaction_splits(&db, dp_id, buyer_name.trim(), "زبون", dp_type, amount_paid, sale_date_str, Some(&dp_notes), sale_curr)?;
-    }
+            db.execute(
+                "UPDATE partner_transactions SET
+                 source_type = 'customer_sale_payment',
+                 source_id = ?1,
+                 source_role = 'sale_down_payment',
+                 affects_qasa = 1,
+                 affects_partner_cash = 1,
+                 affects_profit = 0,
+                 related_source_type = 'car',
+                 related_source_id = ?2
+                 WHERE id = ?3",
+                params![format!("{}:down_payment", car_number), car_number, dp_id],
+            ).map_err(|e| e.to_string())?;
 
-    // ============================================================
-    // STEP 6: Create installment rows
-    // ============================================================
-    if amount_remaining > 0.0 {
-        if payment_type == "اقساط" {
-            let base_date = first_payment_date.as_deref().unwrap_or(sale_date_str);
-            let months = installment_months.unwrap_or(1);
-            let monthly_amount = (amount_remaining / months as f64).floor();
-            let last_amount = amount_remaining - (monthly_amount * (months - 1) as f64);
+            record_partner_ledger_entries(&db, dp_id)?;
+            apply_partner_transaction_splits(&db, dp_id, buyer_name.trim(), "زبون", "مقدمة بيع سيارة", amount_paid, sale_date_str, Some(&dp_notes), sale_curr)?;
+        }
 
-            for i in 0..months {
-                let inst_amount = if i == months - 1 { last_amount } else { monthly_amount };
-                if inst_amount <= 0.0 { continue; }
+        // Installment schedule
+        if amount_remaining > 0.0 {
+            if payment_type == "اقساط" {
+                let base_date = first_payment_date.as_deref().unwrap_or(sale_date_str);
+                let months = installment_months.unwrap_or(1);
+                let monthly_amount = (amount_remaining / months as f64).floor();
+                let last_amount = amount_remaining - (monthly_amount * (months - 1) as f64);
 
-                let inst_date = add_months_to_date(base_date, i);
-                let inst_notes = if months > 1 {
-                    format!("باقي قسط شهر {} من {} على {} رقم الشاصي {}", i + 1, months, buyer_name.trim(), clean_chassis)
-                } else {
-                    format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name.trim(), clean_chassis)
-                };
+                for i in 0..months {
+                    let inst_amount = if i == months - 1 { last_amount } else { monthly_amount };
+                    if inst_amount <= 0.0 { continue; }
+
+                    let inst_date = add_months_to_date(base_date, i);
+                    let inst_notes = if months > 1 {
+                        format!("باقي قسط شهر {} من {} على {} رقم الشاصي {}", i + 1, months, buyer_name.trim(), clean_chassis)
+                    } else {
+                        format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name.trim(), clean_chassis)
+                    };
+
+                    db.execute(
+                        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type,
+                            source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit,
+                            related_source_type, related_source_id)
+                         VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه',
+                            'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
+                        params![buyer_name.trim(), inst_amount, inst_date, &now_time, &inst_notes, sale_curr,
+                            format!("{}:installment:{}", car_number, i + 1), car_number],
+                    ).map_err(|e| e.to_string())?;
+                }
+            } else if payment_type == "موعد" {
+                let due_date = delivery_date.as_deref().unwrap_or(sale_date_str);
+                let due_notes = format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name.trim(), clean_chassis);
 
                 db.execute(
                     "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type,
@@ -4961,23 +4908,63 @@ fn save_and_sell_car_with_accounting(
                         related_source_type, related_source_id)
                      VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه',
                         'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
-                    params![buyer_name.trim(), inst_amount, inst_date, &now_time, &inst_notes, sale_curr,
-                        format!("{}:installment:{}", car_number, i + 1), car_number],
+                    params![buyer_name.trim(), amount_remaining, due_date, &now_time, &due_notes, sale_curr,
+                        format!("{}:due:1", car_number), car_number],
                 ).map_err(|e| e.to_string())?;
             }
-        } else if payment_type == "موعد" {
-            let due_date = delivery_date.as_deref().unwrap_or(sale_date_str);
-            let due_notes = format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name.trim(), clean_chassis);
+        }
+    } else if payment_type == "كاش" {
+        // ============================================================
+        // STEP 4b: Cash sale — NO customer, NO receivable
+        // Car_sale cash_movement + profit_recognition directly to partners
+        // ============================================================
 
-            db.execute(
-                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type,
-                    source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit,
-                    related_source_type, related_source_id)
-                 VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه',
-                    'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
-                params![buyer_name.trim(), amount_remaining, due_date, &now_time, &due_notes, sale_curr,
-                    format!("{}:due:1", car_number), car_number],
-            ).map_err(|e| e.to_string())?;
+        // 1. Cash movement
+        let cash_note = format!("ايداع بيع سيارة {} ({}) إلى {}", clean_name, car_number, buyer_name.trim());
+        distribute_to_partners_50_with_effects_and_related(
+            &db,
+            selling,
+            &sale_curr,
+            sale_date_str,
+            "قاصه",
+            "ايداع بيع سيارة",
+            &cash_note,
+            "car_sale",
+            &car_number,
+            "cash_movement",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
+            false, // affects_profit
+            Some("car"),
+            Some(&car_number),
+        )?;
+
+        // 2. Profit recognition
+        let expenses_sum: f64 = db.query_row(
+            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+            [&car_number],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+        let profit = selling - purchase - expenses_sum;
+        if profit > 0.0 {
+            let profit_note = format!("ارباح بيع سيارة {} ({})", clean_name, car_number);
+            distribute_to_partners_50_with_effects_and_related(
+                &db,
+                profit,
+                &sale_curr,
+                sale_date_str,
+                "قاصه",
+                "ايداع ارباح سيارة",
+                &profit_note,
+                "car_sale",
+                &car_number,
+                "profit_recognition",
+                false, // affects_qasa
+                false, // affects_partner_cash
+                true,  // affects_profit
+                Some("car"),
+                Some(&car_number),
+            )?;
         }
     }
 
@@ -4989,7 +4976,9 @@ fn save_and_sell_car_with_accounting(
     // ============================================================
     // STEP 8: Recalculate and commit
     // ============================================================
-    recalculate_partner_total(&db, buyer_name.trim(), "زبون")?;
+    if is_installments_or_due {
+        recalculate_partner_total(&db, buyer_name.trim(), "زبون")?;
+    }
     recalculate_all_partners(&db)?;
 
     db.commit().map_err(|e| e.to_string())?;
@@ -7086,47 +7075,95 @@ fn rebuild_sold_car_accounting_after_cost_change(
     delete_car_sale_ledger_entries(db, car_number)?;
     record_car_sale_ledger_entries(db, car_number)?;
 
-    // 3. For cash sales: rebuild partner profit_recognition splits for the down payment
+    // 3. For cash sales: rebuild car_sale cash_movement + profit_recognition
     if payment_type == "كاش" {
-        // Find the down payment transaction(s) linked to this car
-        let mut payment_stmt = db.prepare(
-            "SELECT id, partner_name, amount, date, currency
-             FROM partner_transactions
-             WHERE related_source_type = 'car'
-               AND related_source_id = ?1
-               AND source_type = 'customer_sale_payment'
-               AND source_role = 'sale_down_payment'",
-        ).map_err(|e| e.to_string())?;
+        // Delete old car_sale partner rows (cash_movement + profit_recognition)
+        delete_generated_car_sale_partner_transactions(db, car_number)?;
 
-        let payment_rows: Vec<(i64, String, f64, String, String)> = payment_stmt
-            .query_map([car_number], |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "IQD".to_string()),
-                ))
-            })
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-
-        for (pid, pname, pamount, pdate, pcurrency) in &payment_rows {
-            // Delete old cash_movement and profit_recognition splits for this payment
+        // Also clean up any legacy customer_sale_payment rows from the old bug
+        let legacy_ids: Vec<i64> = {
+            let mut stmt = db.prepare(
+                "SELECT id FROM partner_transactions
+                 WHERE kind = 'زبون'
+                   AND source_type = 'customer_sale_payment'
+                   AND related_source_type = 'car'
+                   AND related_source_id = ?1",
+            ).map_err(|e| e.to_string())?;
+            let rows = stmt.query_map([car_number], |row| row.get(0))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            drop(stmt);
+            rows
+        };
+        for pid in &legacy_ids {
             delete_customer_payment_partner_splits(db, *pid)?;
             delete_customer_payment_profit_splits(db, *pid)?;
+            delete_ledger_entries(db, "partner_transaction", &pid.to_string())?;
+            db.execute("DELETE FROM partner_transactions WHERE id = ?1", [pid])
+                .map_err(|e| e.to_string())?;
+        }
 
-            // Re-apply splits — will recreate with current profit (selling_price - purchase_price - expenses_sum)
-            apply_partner_transaction_splits(
-                db, *pid, pname, "زبون",
-                if *pamount > 0.0 { "ايداع" } else { "" },
-                *pamount, pdate,
-                Some(&format!("إعادة توزيع ربح بعد تغيير التكلفة #بيع_سيارة_{}", car_number)),
-                pcurrency,
+        let car_data: Result<(f64, f64, String, String, String), _> = db.query_row(
+            "SELECT purchase_price, selling_price,
+                    COALESCE(car_name, ''), COALESCE(sale_currency, 'IQD'),
+                    COALESCE(sale_date, '')
+             FROM cars WHERE car_number = ?1",
+            [car_number],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        );
+        let (purchase_price, selling_price, car_name, sale_currency, sale_date) = match car_data {
+            Ok(d) => d,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+            Err(e) => return Err(e.to_string()),
+        };
+
+        // Recreate cash_movement (selling_price split 50/50)
+        let cash_note = format!("ايداع بيع سيارة {} ({}) بعد تغيير التكلفة", car_name, car_number);
+        distribute_to_partners_50_with_effects_and_related(
+            db,
+            selling_price,
+            &sale_currency,
+            &sale_date,
+            "قاصه",
+            "ايداع بيع سيارة",
+            &cash_note,
+            "car_sale",
+            car_number,
+            "cash_movement",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
+            false, // affects_profit
+            Some("car"),
+            Some(car_number),
+        )?;
+
+        // Recreate profit_recognition with updated profit
+        let expenses_sum: f64 = db.query_row(
+            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+            [car_number],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+        let profit = selling_price - purchase_price - expenses_sum;
+        if profit > 0.0 {
+            let profit_note = format!("ارباح بيع سيارة {} ({}) بعد تغيير التكلفة", car_name, car_number);
+            distribute_to_partners_50_with_effects_and_related(
+                db,
+                profit,
+                &sale_currency,
+                &sale_date,
+                "قاصه",
+                "ايداع ارباح سيارة",
+                &profit_note,
+                "car_sale",
+                car_number,
+                "profit_recognition",
+                false, // affects_qasa
+                false, // affects_partner_cash
+                true,  // affects_profit
+                Some("car"),
+                Some(car_number),
             )?;
-
-            recalculate_partner_total(db, pname, "زبون")?;
         }
     } // For installment/موعد: only ledger entries are rebuilt above; manual customer payments are preserved
 
@@ -7746,60 +7783,6 @@ fn is_leap_year(year: u64) -> bool {
     (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
-fn distribute_to_partners_50(
-    db: &Connection,
-    amount: f64,
-    currency: &str,
-    date: &str,
-    payment_type: &str,
-    tx_type: &str,
-    notes: &str,
-) -> Result<(), String> {
-    if amount <= 0.0 {
-        return Ok(());
-    }
-
-    let partner_names = vec!["أمير".to_string(), "منتصر".to_string()];
-    let per_partner = amount / 2.0;
-
-    let time_str = db
-        .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
-            row.get::<_, String>(0)
-        })
-        .unwrap_or_else(|_| "00:00".to_string());
-
-    for p_name in &partner_names {
-        db.execute(
-            "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, '', 0.0, 'شريك')",
-            [p_name],
-        )
-        .map_err(|e| e.to_string())?;
-
-        // Issue 5: Use unique source_id to prevent collisions
-        let unique_source_id = format!("legacy_{}_{}_{}_{}", p_name, date, &time_str, tx_type.len());
-        db.execute(
-            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit)
-             VALUES (?1, 'شريك', ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'legacy_distribution', ?9, 'legacy_cash_movement', 1, 1, 0)",
-            params![
-                p_name,
-                tx_type,
-                per_partner,
-                date,
-                &time_str,
-                notes,
-                currency,
-                payment_type,
-                unique_source_id,
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-
-        recalculate_partner_total(db, p_name, "شريك")?;
-    }
-
-    Ok(())
-}
-
 fn agency_profit_note(old_agent_name: &str, new_agent_name: &str) -> String {
     format!(
         "ايداع ارباح وكالة {} {} رئيسي",
@@ -8260,7 +8243,7 @@ fn get_financial_summary(
     ).unwrap_or(0.0);
 
     // 2. Inventory Value — from ledger entries. Car purchases, including cash purchases,
-    // are recorded in record_car_ledger_entries(), so adding cars.purchase_price here
+    // are recorded via record_car_purchase_ledger_entries(), so adding cars.purchase_price here
     // would count the same vehicle twice.
     let ledger_inventory_iqd: f64 = db.query_row(
         "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'inventory' AND currency = 'IQD'",
@@ -8971,18 +8954,6 @@ fn get_partner_names_for_distribution(db: &Connection) -> Result<Vec<String>, St
         .map_err(|e| e.to_string())?;
 
     Ok(names)
-}
-
-fn deduct_from_partners_5050(
-    db: &Connection,
-    amount: f64,
-    currency: &str,
-    date: &str,
-    payment_type: &str,
-    tx_type: &str,
-    notes: &str,
-) -> Result<(), String> {
-    distribute_to_partners_50(db, amount, currency, date, payment_type, tx_type, notes)
 }
 
 // ==================== PHASE 2: CENTRALIZED PARTNER TRANSACTION HELPERS ====================
