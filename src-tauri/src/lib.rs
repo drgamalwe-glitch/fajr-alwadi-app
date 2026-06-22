@@ -1122,6 +1122,66 @@ fn is_customer_remaining_type(tx_type: &str) -> bool {
         && (tx_type.starts_with("باقي") || tx_type.starts_with("سحب"))
 }
 
+// ============================================================
+// CENTRAL VALIDATION HELPERS
+// ============================================================
+
+fn validate_required_text(value: &str, field_name: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{} مطلوب ولا يمكن أن يكون فارغاً", field_name));
+    }
+    Ok(())
+}
+
+fn validate_finite_amount(value: f64, field_name: &str) -> Result<(), String> {
+    if !value.is_finite() {
+        return Err(format!("{} يجب أن يكون رقماً صالحاً", field_name));
+    }
+    Ok(())
+}
+
+fn validate_positive_amount(value: f64, field_name: &str) -> Result<(), String> {
+    validate_finite_amount(value, field_name)?;
+    if value <= 0.0 {
+        return Err(format!("{} يجب أن يكون أكبر من صفر", field_name));
+    }
+    Ok(())
+}
+
+fn validate_non_negative_amount(value: f64, field_name: &str) -> Result<(), String> {
+    validate_finite_amount(value, field_name)?;
+    if value < 0.0 {
+        return Err(format!("{} لا يمكن أن يكون سالباً", field_name));
+    }
+    Ok(())
+}
+
+fn validate_currency(currency: &str) -> Result<(), String> {
+    let c = currency.trim();
+    if c != "IQD" && c != "USD" {
+        return Err(format!("العملة غير مدعومة: {}. يجب أن تكون IQD أو USD", c));
+    }
+    Ok(())
+}
+
+fn validate_ledger_amounts(debit: f64, credit: f64) -> Result<(), String> {
+    validate_finite_amount(debit, "المدين")?;
+    validate_finite_amount(credit, "الدائن")?;
+    if debit < 0.0 {
+        return Err("المدين لا يمكن أن يكون سالباً".to_string());
+    }
+    if credit < 0.0 {
+        return Err("الدائن لا يمكن أن يكون سالباً".to_string());
+    }
+    if debit == 0.0 && credit == 0.0 {
+        return Err("المدين والدائن لا يمكن أن يكونا صفر معاً".to_string());
+    }
+    if debit > 0.0 && credit > 0.0 {
+        return Err("المدين والدائن لا يمكن أن يكونا موجبين معاً في نفس القيد".to_string());
+    }
+    Ok(())
+}
+
 // Issue 3: Classification helper for partner transactions
 struct TransactionClassification {
     source_type: String,
@@ -1214,6 +1274,8 @@ fn record_ledger_entry(
     description: &str,
     notes: Option<&str>,
 ) -> Result<(), String> {
+    validate_ledger_amounts(debit, credit)?;
+    validate_currency(currency)?;
     conn.execute(
         "INSERT INTO financial_ledger (
             date, time, account_type, account_id, debit, credit, currency, 
@@ -3151,7 +3213,55 @@ fn add_car(
     commission_value: Option<f64>,
     _car_partners: Option<Vec<CarPartner>>,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // ============================================================
+    // VALIDATION (before any write)
+    // ============================================================
+    validate_required_text(&num, "رقم السيارة")?;
+    validate_required_text(&name, "اسم السيارة")?;
+    validate_non_negative_amount(purchase, "سعر الشراء")?;
+    validate_non_negative_amount(selling, "سعر البيع")?;
+    if let Some(ref ap) = amount_paid {
+        validate_non_negative_amount(*ap, "المبلغ المدفوع")?;
+    }
+    if let Some(ref ar) = amount_remaining {
+        validate_non_negative_amount(*ar, "المبلغ المتبقي")?;
+    }
+    if let Some(ref mp) = monthly_payment {
+        validate_non_negative_amount(*mp, "القسط الشهري")?;
+    }
+    if let Some(ref cv) = commission_value {
+        validate_non_negative_amount(*cv, "قيمة العمولة")?;
+    }
+    let curr = currency.as_deref().unwrap_or("IQD");
+    validate_currency(curr)?;
+    let sale_curr = sale_currency.as_deref().unwrap_or("IQD");
+    validate_currency(sale_curr)?;
+
+    // Mixed currency validation
+    if status == "مبيوعة" && curr != sale_curr {
+        return Err("لا يمكن بيع السيارة بعملة مختلفة عن عملة الشراء بدون سعر صرف مثبت".to_string());
+    }
+
+    // Buyer name required when sold
+    if status == "مبيوعة" && buyer_name.as_deref().unwrap_or("").trim().is_empty() {
+        return Err("اسم المشتري مطلوب عند بيع السيارة".to_string());
+    }
+
+    // Installment months validation
+    if payment_type.as_deref() == Some("اقساط") {
+        if let Some(months) = installment_months {
+            if months <= 0 {
+                return Err("عدد أشهر التقسيط يجب أن يكون أكبر من صفر".to_string());
+            }
+        }
+    }
+
+    // ============================================================
+    // ATOMIC TRANSACTION
+    // ============================================================
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
+
     let car_number = num.trim().to_string();
     let old_num = old_num.unwrap_or_default();
     let old_num = old_num.trim();
@@ -3315,12 +3425,14 @@ fn add_car(
     }
 
     // حذف حركات الشراء القديمة ثم إعادة إنشائها حسب نوع الشراء الحالي (باستخدام حقول المصدر)
-    if should_create_purchase_transactions {
+    // Also rebuild when purchase data changes for existing cars
+    let should_rebuild_purchase = should_create_purchase_transactions || is_existing_car;
+    if should_rebuild_purchase {
         // Delete only car purchase generated rows (not sale rows)
         delete_generated_car_purchase_partner_transactions(&db, &car_number)?;
     }
 
-    if should_create_purchase_transactions && purchase_type.as_deref() == Some("كاش") {
+    if should_rebuild_purchase && purchase_type.as_deref() == Some("كاش") {
         // توزيع 50% من مبلغ الشراء على حسابات الشركاء
         let purchase_curr = currency.as_deref().unwrap_or("IQD");
         distribute_to_partners_50_with_effects(
@@ -3338,7 +3450,7 @@ fn add_car(
             true,  // affects_partner_cash
             false, // affects_profit
         )?;
-    } else if should_create_purchase_transactions && (purchase_type.as_deref() == Some("تمويل") || purchase_type.as_deref() == Some("شركة") || purchase_type.as_deref() == Some("دين")) {
+    } else if should_rebuild_purchase && (purchase_type.as_deref() == Some("تمويل") || purchase_type.as_deref() == Some("شركة") || purchase_type.as_deref() == Some("دين")) {
         let p_kind = if purchase_type.as_deref() == Some("تمويل") || purchase_type.as_deref() == Some("دين") {
             "ممول"
         } else {
@@ -3519,7 +3631,190 @@ fn add_car(
 
     record_car_ledger_entries(&db, car_number.as_str())?;
 
+    db.commit().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Add a partner if not exists (inside transaction).
+fn ensure_partner_exists(tx: &rusqlite::Transaction, name: &str, phone: &str, kind: &str) -> Result<(), String> {
+    tx.execute(
+        "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind) VALUES (?1, ?2, 0.0, ?3)",
+        params![name.trim(), phone.trim(), kind.trim()],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// sell_car_with_accounting: Atomic car sale workflow.
+/// Creates customer account, down payment, installment rows, and car ledger entries in one transaction.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn sell_car_with_accounting(
+    state: State<AppState>,
+    car_number: String,
+    buyer_name: String,
+    buyer_phone: String,
+    selling_price: f64,
+    sale_currency: String,
+    sale_date: String,
+    payment_type: String,
+    amount_paid: f64,
+    amount_remaining: f64,
+    installment_months: Option<i32>,
+    first_payment_date: Option<String>,
+    delivery_date: Option<String>,
+    chassis_number: Option<String>,
+) -> Result<(), String> {
+    // ============================================================
+    // VALIDATION
+    // ============================================================
+    validate_required_text(&car_number, "رقم السيارة")?;
+    validate_required_text(&buyer_name, "اسم المشتري")?;
+    validate_positive_amount(selling_price, "سعر البيع")?;
+    validate_currency(&sale_currency)?;
+    validate_required_text(&sale_date, "تاريخ البيع")?;
+    validate_non_negative_amount(amount_paid, "المبلغ المدفوع")?;
+    validate_non_negative_amount(amount_remaining, "المبلغ المتبقي")?;
+
+    if payment_type == "اقساط" {
+        if let Some(months) = installment_months {
+            if months <= 0 {
+                return Err("عدد أشهر التقسيط يجب أن يكون أكبر من صفر".to_string());
+            }
+        }
+    }
+
+    // ============================================================
+    // ATOMIC TRANSACTION
+    // ============================================================
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
+
+    let car_label = db.query_row(
+        "SELECT car_name FROM cars WHERE car_number = ?1",
+        [&car_number],
+        |row| row.get::<_, String>(0),
+    ).unwrap_or_else(|_| "سيارة".to_string());
+
+    let chassis_label = chassis_number.unwrap_or_default();
+    let clean_chassis = chassis_label.trim();
+
+    // 1. Create customer account if not exists
+    ensure_partner_exists(&db, &buyer_name, &buyer_phone, "زبون")?;
+
+    let is_installments_or_due = payment_type == "اقساط" || payment_type == "موعد";
+
+    // 2. Create down payment transaction if amount_paid > 0
+    if amount_paid > 0.0 {
+        let time_str = db
+            .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap_or_else(|_| "00:00".to_string());
+
+        let dp_type = if is_installments_or_due { "مقدمة بيع سيارة" } else { "ايداع" };
+        let dp_notes = if is_installments_or_due {
+            format!("استلام مقدمة سيارة من {} رقم الشاصي {} #بيع_سيارة_{}", buyer_name, clean_chassis, car_number)
+        } else {
+            format!("دفعة أولى مستلمة - بيع {} #بيع_سيارة_{}", car_label, car_number)
+        };
+
+        db.execute(
+            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+             VALUES (?1, 'زبون', ?2, ?3, ?4, ?5, ?6, ?7, 'قاصه')",
+            params![buyer_name.trim(), dp_type, amount_paid, sale_date, &time_str, &dp_notes, sale_currency],
+        ).map_err(|e| e.to_string())?;
+
+        let dp_id = db.last_insert_rowid();
+
+        // Classify the down payment
+        let classification = classify_partner_transaction("زبون", dp_type, dp_id);
+        db.execute(
+            "UPDATE partner_transactions SET source_type = ?1, source_id = ?2, source_role = ?3, affects_qasa = ?4, affects_partner_cash = ?5, affects_profit = ?6 WHERE id = ?7",
+            params![classification.source_type, classification.source_id, classification.source_role, classification.affects_qasa, classification.affects_partner_cash, classification.affects_profit, dp_id],
+        ).map_err(|e| e.to_string())?;
+
+        // Set related_source fields for car linkage
+        db.execute(
+            "UPDATE partner_transactions SET related_source_type = 'car', related_source_id = ?1 WHERE id = ?2",
+            params![car_number, dp_id],
+        ).map_err(|e| e.to_string())?;
+
+        // Record ledger entries for the down payment
+        record_partner_ledger_entries(&db, dp_id)?;
+
+        // Apply splits (creates cash_movement and profit_recognition)
+        apply_partner_transaction_splits(&db, dp_id, buyer_name.trim(), "زبون", dp_type, amount_paid, &sale_date, Some(&dp_notes), &sale_currency)?;
+
+        recalculate_partner_total(&db, buyer_name.trim(), "زبون")?;
+    }
+
+    // 3. Create remaining installment rows if needed
+    if amount_remaining > 0.0 {
+        let time_str = db
+            .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap_or_else(|_| "00:00".to_string());
+
+        if payment_type == "اقساط" {
+            let base_date = first_payment_date.as_deref().unwrap_or(&sale_date);
+            let months = installment_months.unwrap_or(1);
+            let monthly_amount = (amount_remaining / months as f64).floor();
+            let last_amount = amount_remaining - (monthly_amount * (months - 1) as f64);
+
+            for i in 0..months {
+                let installment_amount = if i == months - 1 { last_amount } else { monthly_amount };
+                if installment_amount <= 0.0 { continue; }
+
+                let inst_date = add_months_to_date(base_date, i);
+                let inst_notes = if months > 1 {
+                    format!("باقي قسط شهر {} من {} على {} رقم الشاصي {}", i + 1, months, buyer_name, clean_chassis)
+                } else {
+                    format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name, clean_chassis)
+                };
+
+                db.execute(
+                    "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                     VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه')",
+                    params![buyer_name.trim(), installment_amount, inst_date, &time_str, &inst_notes, sale_currency],
+                ).map_err(|e| e.to_string())?;
+            }
+        } else if payment_type == "موعد" {
+            let due_date = delivery_date.as_deref().unwrap_or(&sale_date);
+            let due_notes = format!("باقي مجموع قسط على {} رقم الشاصي {}", buyer_name, clean_chassis);
+
+            db.execute(
+                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type)
+                 VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه')",
+                params![buyer_name.trim(), amount_remaining, due_date, &time_str, &due_notes, sale_currency],
+            ).map_err(|e| e.to_string())?;
+        }
+
+        recalculate_partner_total(&db, buyer_name.trim(), "زبون")?;
+    }
+
+    // 4. Record car ledger entries
+    record_car_ledger_entries(&db, &car_number)?;
+
+    db.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Helper to add months to a date string (YYYY-MM-DD).
+fn add_months_to_date(date_str: &str, months: i32) -> String {
+    let parts: Vec<&str> = date_str.split('-').collect();
+    if parts.len() != 3 {
+        return date_str.to_string();
+    }
+    let year: i32 = parts[0].parse().unwrap_or(2026);
+    let month: i32 = parts[1].parse().unwrap_or(1);
+    let day: &str = parts[2];
+
+    let total_months = (year * 12 + month - 1) + months;
+    let new_year = total_months / 12;
+    let new_month = (total_months % 12) + 1;
+
+    format!("{:04}-{:02}-{}", new_year, new_month, day)
 }
 
 #[tauri::command]
@@ -3618,9 +3913,50 @@ fn get_cars(state: State<AppState>) -> Result<Vec<Car>, String> {
     Ok(cars_with_partners)
 }
 
+/// Delete partner transactions by related_source fields with ledger cleanup.
+fn delete_partner_transactions_by_related_source_with_ledger(
+    db: &Connection,
+    related_source_type: &str,
+    related_source_id: &str,
+) -> Result<(), String> {
+    let rows: Vec<(i64, String, String)> = {
+        let mut stmt = db
+            .prepare("SELECT id, partner_name, kind FROM partner_transactions WHERE related_source_type = ?1 AND related_source_id = ?2")
+            .map_err(|e| e.to_string())?;
+        let mut result = Vec::new();
+        let mut query_rows = stmt.query_map(params![related_source_type, related_source_id], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        }).map_err(|e| e.to_string())?;
+        while let Some(r) = query_rows.next() {
+            if let Ok(row) = r {
+                result.push(row);
+            }
+        }
+        result
+    };
+
+    let mut partners_to_recalc: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    for (id, partner_name, kind) in &rows {
+        delete_ledger_entries(db, "partner_transaction", &id.to_string())?;
+        db.execute("DELETE FROM partner_transactions WHERE id = ?1", [id])
+            .map_err(|e| e.to_string())?;
+        partners_to_recalc.insert((partner_name.clone(), kind.clone()));
+    }
+
+    for (p_name, p_kind) in partners_to_recalc {
+        recalculate_partner_total(db, &p_name, &p_kind)?;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 fn delete_car(state: State<AppState>, num: String, admin_name: Option<String>) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // ============================================================
+    // ATOMIC TRANSACTION
+    // ============================================================
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
     let car_number = num.trim();
     let admin = admin_name.unwrap_or_else(|| "الإدارة".to_string());
 
@@ -3638,16 +3974,6 @@ fn delete_car(state: State<AppState>, num: String, admin_name: Option<String>) -
     let chassis_str = chassis_number.unwrap_or_default();
     let clean_name = car_name.trim();
     let clean_chassis = chassis_str.trim();
-
-    let mut related_patterns = vec![
-        format!("%#بيع_سيارة_{}%", car_number),
-        format!("%{}%", car_number),
-    ];
-    if !clean_chassis.is_empty() {
-        related_patterns.push(format!("%{}%", clean_chassis));
-        related_patterns.push(format!("%(شاصي: {})%", clean_chassis));
-        related_patterns.push(format!("%رقم الشاصي {}%", clean_chassis));
-    }
 
     // تسجيل عملية الحذف في سجل المعاملات المالية
     let (today, now_time) = now_datetime();
@@ -3675,33 +4001,46 @@ fn delete_car(state: State<AppState>, num: String, admin_name: Option<String>) -
     ).map_err(|e| e.to_string())?;
 
     // حذف قيود مصاريف السيارة من دفتر الأستاذ (reference_type = 'car_expense')
-    let mut ce_stmt = db
-        .prepare("SELECT id FROM car_expenses WHERE car_number = ?1")
-        .map_err(|e| e.to_string())?;
-    let ce_ids = ce_stmt
-        .query_map([car_number], |r| r.get::<_, i64>(0))
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, rusqlite::Error>>()
-        .map_err(|e| e.to_string())?;
-    for ce_id in ce_ids {
+    let ce_ids: Vec<i64> = {
+        let mut ce_stmt = db
+            .prepare("SELECT id FROM car_expenses WHERE car_number = ?1")
+            .map_err(|e| e.to_string())?;
+        let x = ce_stmt
+            .query_map([car_number], |r| r.get::<_, i64>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()
+            .map_err(|e| e.to_string())?;
+        x
+    };
+    for ce_id in &ce_ids {
         delete_ledger_entries(&db, "car_expense", &ce_id.to_string())?;
         delete_partner_transactions_by_source_with_ledger(&db, "car_expense", &ce_id.to_string(), Some("cash_payment"))?;
     }
 
-    let mut ge_stmt = db
-        .prepare("SELECT id FROM expenses WHERE car_number = ?1")
-        .map_err(|e| e.to_string())?;
-    let ge_ids = ge_stmt
-        .query_map([car_number], |r| r.get::<_, i64>(0))
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, rusqlite::Error>>()
-        .map_err(|e| e.to_string())?;
-    for ge_id in ge_ids {
+    let ge_ids: Vec<i64> = {
+        let mut ge_stmt = db
+            .prepare("SELECT id FROM expenses WHERE car_number = ?1")
+            .map_err(|e| e.to_string())?;
+        let x = ge_stmt
+            .query_map([car_number], |r| r.get::<_, i64>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()
+            .map_err(|e| e.to_string())?;
+        x
+    };
+    for ge_id in &ge_ids {
         db.execute(
             "DELETE FROM financial_ledger WHERE reference_type = 'expense' AND reference_id = ?1",
             [ge_id.to_string()],
         ).map_err(|e| e.to_string())?;
     }
+
+    // حذف حركات الشراء والمبيعات المولدة للسيارة (باستخدام حقول المصدر فقط)
+    delete_partner_transactions_by_source_with_ledger(&db, "car_purchase", car_number, None)?;
+    delete_partner_transactions_by_source_with_ledger(&db, "car_sale", car_number, None)?;
+
+    // حذف حركات الدفعات المرتبطة بالسيارة (باستخدام related_source_id)
+    delete_partner_transactions_by_related_source_with_ledger(&db, "car", car_number)?;
 
     db.execute("DELETE FROM cars WHERE car_number = ?1", [car_number])
         .map_err(|e| e.to_string())?;
@@ -3718,32 +4057,8 @@ fn delete_car(state: State<AppState>, num: String, admin_name: Option<String>) -
     db.execute("DELETE FROM expenses WHERE car_number = ?1", [car_number])
         .map_err(|e| e.to_string())?;
 
-    let mut related_tx_ids = Vec::new();
-    for pattern in related_patterns {
-        let mut tx_stmt = db
-            .prepare("SELECT id FROM partner_transactions WHERE notes LIKE ?1")
-            .map_err(|e| e.to_string())?;
-        let ids = tx_stmt
-            .query_map([pattern], |r| r.get::<_, i64>(0))
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, rusqlite::Error>>()
-            .map_err(|e| e.to_string())?;
-        related_tx_ids.extend(ids);
-    }
-    related_tx_ids.sort_unstable();
-    related_tx_ids.dedup();
-    for tx_id in related_tx_ids {
-        db.execute(
-            "DELETE FROM financial_ledger WHERE reference_type = 'partner_transaction' AND reference_id = ?1",
-            [tx_id.to_string()],
-        ).map_err(|e| e.to_string())?;
-        db.execute(
-            "DELETE FROM partner_transactions WHERE id = ?1",
-            [tx_id],
-        ).map_err(|e| e.to_string())?;
-    }
-
     recalculate_all_partners(&db)?;
+    db.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -4229,7 +4544,23 @@ fn add_partner_transaction(
     currency: Option<String>,
     payment_type: Option<String>,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // ============================================================
+    // VALIDATION (before any write)
+    // ============================================================
+    validate_required_text(&partner_name, "اسم الشريك/العميل")?;
+    validate_required_text(&kind, "نوع الحساب")?;
+    validate_required_text(&type_, "نوع المعاملة")?;
+    validate_positive_amount(amount, "المبلغ")?;
+    validate_required_text(&date, "التاريخ")?;
+    let curr = currency.as_deref().unwrap_or("IQD");
+    validate_currency(curr)?;
+
+    // ============================================================
+    // ATOMIC TRANSACTION
+    // ============================================================
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
+
     let is_financier_repayment = kind.trim() == "ممول" && type_.trim().starts_with("سحب");
     let tx_payment_type = if is_financier_repayment {
         Some(payment_type.as_deref().unwrap_or("قاصه"))
@@ -4287,6 +4618,7 @@ fn add_partner_transaction(
 
     recalculate_partner_total(&db, partner_name.trim(), kind.trim())?;
 
+    db.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -4814,21 +5146,30 @@ fn pay_financier_from_partners(
     commission_currency: Option<String>,
     _commission_notes: Option<String>,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // ============================================================
+    // VALIDATION (before any write)
+    // ============================================================
+    validate_required_text(&financier_name, "اسم الممول")?;
+    validate_required_text(&financier_kind, "نوع الممول")?;
+    validate_positive_amount(amount, "مبلغ التسديد")?;
+    validate_required_text(&date, "التاريخ")?;
+    let currency = currency.unwrap_or_else(|| "IQD".to_string());
+    validate_currency(&currency)?;
+    let commission_amount = commission_amount.unwrap_or(0.0);
+    if commission_amount > 0.0 {
+        validate_positive_amount(commission_amount, "العمولة")?;
+    }
+
+    // ============================================================
+    // ATOMIC TRANSACTION
+    // ============================================================
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
     let financier_name = financier_name.trim();
     let financier_kind = financier_kind.trim();
     let date = date.trim();
-    let currency = currency.unwrap_or_else(|| "IQD".to_string());
-    let commission_amount = commission_amount.unwrap_or(0.0);
 
-    if financier_name.is_empty() {
-        return Err("اسم الممول مطلوب".to_string());
-    }
-    if amount <= 0.0 {
-        return Err("مبلغ التسديد يجب أن يكون أكبر من صفر".to_string());
-    }
-
-    let financier_tx_type = "سحب";
+    let financier_tx_type = "挓";
 
     let time_str = db
         .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
@@ -4974,6 +5315,7 @@ fn pay_financier_from_partners(
         )?;
     }
 
+    db.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -4991,7 +5333,22 @@ fn update_partner_transaction(
     currency: Option<String>,
     payment_type: Option<String>,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // ============================================================
+    // VALIDATION (before any write)
+    // ============================================================
+    validate_required_text(&partner_name, "اسم الشريك/العميل")?;
+    validate_required_text(&kind, "نوع الحساب")?;
+    validate_required_text(&type_, "نوع المعاملة")?;
+    validate_positive_amount(amount, "المبلغ")?;
+    validate_required_text(&date, "التاريخ")?;
+    let curr_val = currency.as_deref().unwrap_or("IQD");
+    validate_currency(curr_val)?;
+
+    // ============================================================
+    // ATOMIC TRANSACTION
+    // ============================================================
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
 
     // 1. Reverse old ledger entries for this partner transaction
     reverse_ledger_entries(&db, "partner_transaction", &id.to_string())?;
@@ -5205,6 +5562,7 @@ fn update_partner_transaction(
 
     recalculate_partner_total(&db, partner_name.trim(), kind.trim())?;
 
+    db.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -5215,7 +5573,11 @@ fn delete_partner_transaction(
     partner_name: String,
     kind: String,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // ============================================================
+    // ATOMIC TRANSACTION
+    // ============================================================
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
 
     // Delete corresponding commission expense if it exists
     let target_note = format!("%رقم الحركة: {}%", id);
@@ -5257,6 +5619,7 @@ fn delete_partner_transaction(
 
     recalculate_partner_total(&db, partner_name.trim(), kind.trim())?;
 
+    db.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -5515,8 +5878,20 @@ fn add_expense(
     currency: Option<String>,
     car_number: Option<String>,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // ============================================================
+    // VALIDATION (before any write)
+    // ============================================================
+    validate_required_text(&description, "وصف المصروف")?;
+    validate_positive_amount(amount, "المبلغ")?;
+    validate_required_text(&date, "التاريخ")?;
     let currency_val = currency.unwrap_or_else(|| "IQD".to_string());
+    validate_currency(&currency_val)?;
+
+    // ============================================================
+    // ATOMIC TRANSACTION
+    // ============================================================
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
     let (_current_date, current_time) = now_datetime();
 
     if let Some(ref car_num) = car_number {
@@ -5606,6 +5981,7 @@ fn add_expense(
                 record_car_ledger_entries(&db, car_num)?;
             }
 
+            db.commit().map_err(|e| e.to_string())?;
             return Ok(());
         }
     }
@@ -5682,6 +6058,7 @@ fn add_expense(
         )?;
     }
 
+    db.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -5714,7 +6091,11 @@ fn get_expenses(state: State<AppState>) -> Result<Vec<ExpenseEntry>, String> {
 
 #[tauri::command]
 fn delete_expense(state: State<AppState>, id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // ============================================================
+    // ATOMIC TRANSACTION
+    // ============================================================
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
 
     // Delete partner transactions WITH their ledger entries (prevents orphan ledger rows)
     delete_partner_transactions_by_source_with_ledger(&db, "expense", &id.to_string(), Some("cash_payment"))?;
@@ -5728,6 +6109,7 @@ fn delete_expense(state: State<AppState>, id: i64) -> Result<(), String> {
 
     recalculate_all_partners(&db)?;
 
+    db.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -5741,15 +6123,27 @@ fn update_expense(
     notes: Option<String>,
     currency: Option<String>,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // ============================================================
+    // VALIDATION (before any write)
+    // ============================================================
+    validate_required_text(&description, "وصف المصروف")?;
+    validate_positive_amount(amount, "المبلغ")?;
+    validate_required_text(&date, "التاريخ")?;
     let currency_val = currency.unwrap_or_else(|| "IQD".to_string());
+    validate_currency(&currency_val)?;
+
+    // ============================================================
+    // ATOMIC TRANSACTION — Delete and Rebuild policy
+    // ============================================================
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
     let (_, current_time) = now_datetime();
 
-    // Delete old partner transactions WITH their ledger entries (prevents orphan ledger rows)
+    // 1. Delete old partner transactions WITH their ledger entries
     delete_partner_transactions_by_source_with_ledger(&db, "expense", &id.to_string(), Some("cash_payment"))?;
 
-    // 2. عكس القيد القديم
-    reverse_ledger_entries(&db, "expense", &id.to_string())?;
+    // 2. Delete old expense ledger entries (clean rebuild, not reverse)
+    delete_ledger_entries(&db, "expense", &id.to_string())?;
 
     // 3. تحديث جدول المصروفات
     db.execute(
@@ -5798,7 +6192,7 @@ fn update_expense(
         notes.as_deref(),
     )?;
 
-    // 5. إعادة توزيع 50% من المصروف على حسابات الشركاء (Phase 13: with source fields)
+    // 5. إعادة توزيع 50% من المصروف على حسابات الشركاء
     if amount > 0.0 {
         let expense_note = format!("سحب مصروف {} (رقم المصروف: {})", description.trim(), id);
         distribute_to_partners_50_with_effects(
@@ -5818,6 +6212,7 @@ fn update_expense(
         )?;
     }
 
+    db.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -5830,8 +6225,21 @@ fn add_car_expense_record(
     date: String,
     currency: Option<String>,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // ============================================================
+    // VALIDATION (before any write)
+    // ============================================================
+    validate_required_text(&car_number, "رقم السيارة")?;
+    validate_required_text(&description, "وصف المصروف")?;
+    validate_positive_amount(amount, "المبلغ")?;
+    validate_required_text(&date, "التاريخ")?;
     let currency_val = currency.unwrap_or_else(|| "IQD".to_string());
+    validate_currency(&currency_val)?;
+
+    // ============================================================
+    // ATOMIC TRANSACTION
+    // ============================================================
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
     let (_, current_time) = now_datetime();
 
     db.execute(
@@ -5919,6 +6327,7 @@ fn add_car_expense_record(
         record_car_ledger_entries(&db, car_number.trim())?;
     }
 
+    db.commit().map_err(|e| e.to_string())?;
     Ok(id)
 }
 
@@ -5957,7 +6366,11 @@ fn get_car_expense_records(
 
 #[tauri::command]
 fn delete_car_expense_record(state: State<AppState>, id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // ============================================================
+    // ATOMIC TRANSACTION
+    // ============================================================
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
 
     // 1. جلب معلومات المصروف
     let row_result = db.query_row(
@@ -5997,6 +6410,7 @@ fn delete_car_expense_record(state: State<AppState>, id: i64) -> Result<(), Stri
 
     recalculate_all_partners(&db)?;
 
+    db.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -8341,6 +8755,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             add_car,
+            sell_car_with_accounting,
             get_cars,
             delete_car,
             add_partner,

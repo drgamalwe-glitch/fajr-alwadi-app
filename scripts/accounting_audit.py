@@ -974,6 +974,215 @@ def audit_source(lib_path):
     else:
         errors.append("FAIL: No mixed-currency check found in add_car")
 
+    # 19. add_car uses transaction
+    print("\n[S19] add_car uses transaction...")
+    in_add_car = False
+    has_tx = False
+    for i, line in enumerate(lines, 1):
+        if 'fn add_car' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_add_car = True
+        if in_add_car:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'transaction()' in stripped:
+                has_tx = True
+                break
+            if 'fn delete_car' in line or 'fn update_car' in line:
+                in_add_car = False
+    if has_tx:
+        print("  PASS")
+    else:
+        errors.append("FAIL: add_car does not use database transaction")
+
+    # 20. add_partner_transaction uses transaction
+    print("\n[S20] add_partner_transaction uses transaction...")
+    in_func = False
+    has_tx = False
+    for i, line in enumerate(lines, 1):
+        if 'fn add_partner_transaction' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_func = True
+        if in_func:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'transaction()' in stripped:
+                has_tx = True
+                break
+            if 'fn pay_financier' in line or 'fn update_partner_transaction' in line:
+                in_func = False
+    if has_tx:
+        print("  PASS")
+    else:
+        errors.append("FAIL: add_partner_transaction does not use database transaction")
+
+    # 21. delete_car does not use notes LIKE to delete partner_transactions
+    print("\n[S21] delete_car source-based deletion...")
+    in_delete_car = False
+    bad_notes_delete = False
+    for i, line in enumerate(lines, 1):
+        if 'fn delete_car' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_delete_car = True
+        if in_delete_car:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'DELETE' in stripped and 'partner_transactions' in stripped and 'notes LIKE' in stripped:
+                bad_notes_delete = True
+                break
+            if 'fn add_partner' in line:
+                in_delete_car = False
+    if not bad_notes_delete:
+        print("  PASS")
+    else:
+        errors.append("FAIL: delete_car still uses notes LIKE to delete partner_transactions")
+
+    # 22. record_ledger_entry validates debit/credit
+    print("\n[S22] record_ledger_entry validates debit/credit...")
+    in_func = False
+    has_validation = False
+    for i, line in enumerate(lines, 1):
+        if 'fn record_ledger_entry' in line:
+            in_func = True
+        if in_func:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'validate_ledger_amounts' in stripped or 'validate_currency' in stripped:
+                has_validation = True
+                break
+            if line.strip().startswith('}') and i > 1250:
+                in_func = False
+    if has_validation:
+        print("  PASS")
+    else:
+        errors.append("FAIL: record_ledger_entry does not validate debit/credit")
+
+    # 23. update_expense does not use reverse_ledger_entries
+    print("\n[S23] update_expense uses delete-and-rebuild...")
+    in_func = False
+    uses_reverse = False
+    for i, line in enumerate(lines, 1):
+        if 'fn update_expense' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_func = True
+        if in_func:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'reverse_ledger_entries' in stripped:
+                uses_reverse = True
+                break
+            if 'fn add_car_expense' in line:
+                in_func = False
+    if not uses_reverse:
+        print("  PASS")
+    else:
+        errors.append("FAIL: update_expense still uses reverse_ledger_entries")
+
+    # 24. sell_car_with_accounting exists
+    print("\n[S24] sell_car_with_accounting exists...")
+    if 'fn sell_car_with_accounting' in content:
+        print("  PASS")
+    else:
+        errors.append("FAIL: sell_car_with_accounting not found")
+
+    # 25. Expense functions validate amount
+    print("\n[S25] Expense functions validate amount...")
+    for func_name in ['fn add_expense', 'fn update_expense', 'fn add_car_expense_record']:
+        in_func = False
+        has_validation = False
+        func_start_line = 0
+        for i, line in enumerate(lines, 1):
+            if func_name in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+                in_func = True
+                func_start_line = i
+            if in_func and i > func_start_line:
+                stripped = line.split('//')[0] if '//' in line else line
+                if 'validate_positive_amount' in stripped or 'validate_non_negative_amount' in stripped:
+                    has_validation = True
+                    break
+                # Stop at next function definition
+                if i > func_start_line + 5 and ('fn ' in stripped and '(' in stripped and '{' in stripped):
+                    in_func = False
+                    break
+        if not has_validation:
+            errors.append(f"FAIL: {func_name} does not validate amount")
+    if not any('FAIL' in e for e in errors[len(errors)-3:]):
+        print("  PASS")
+
+    # 26. pay_financier_from_partners uses transaction
+    print("\n[S26] pay_financier_from_partners uses transaction...")
+    in_func = False
+    has_tx = False
+    for i, line in enumerate(lines, 1):
+        if 'fn pay_financier_from_partners' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_func = True
+        if in_func:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'transaction()' in stripped:
+                has_tx = True
+                break
+            if 'fn update_partner_transaction' in line or 'fn delete_partner_transaction' in line:
+                in_func = False
+    if has_tx:
+        print("  PASS")
+    else:
+        errors.append("FAIL: pay_financier_from_partners does not use database transaction")
+
+    # 27. update_partner_transaction uses transaction
+    print("\n[S27] update_partner_transaction uses transaction...")
+    in_func = False
+    has_tx = False
+    for i, line in enumerate(lines, 1):
+        if 'fn update_partner_transaction' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_func = True
+        if in_func:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'transaction()' in stripped:
+                has_tx = True
+                break
+            if 'fn delete_partner_transaction' in line:
+                in_func = False
+    if has_tx:
+        print("  PASS")
+    else:
+        errors.append("FAIL: update_partner_transaction does not use database transaction")
+
+    # 28. delete_partner_transaction uses transaction
+    print("\n[S28] delete_partner_transaction uses transaction...")
+    in_func = False
+    has_tx = False
+    for i, line in enumerate(lines, 1):
+        if 'fn delete_partner_transaction' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_func = True
+        if in_func:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'transaction()' in stripped:
+                has_tx = True
+                break
+            if 'fn get_partner_transactions' in line:
+                in_func = False
+    if has_tx:
+        print("  PASS")
+    else:
+        errors.append("FAIL: delete_partner_transaction does not use database transaction")
+
+    # 29. Car purchase rebuild on edit
+    print("\n[S29] Car purchase rebuild on edit...")
+    if 'should_rebuild_purchase' in content and 'delete_generated_car_purchase_partner_transactions' in content:
+        print("  PASS")
+    else:
+        errors.append("FAIL: Car purchase rebuild logic not found in add_car")
+
+    # 30. Frontend uses sell_car_with_accounting for sale
+    print("\n[S30] Frontend uses sell_car_with_accounting...")
+    frontend_path = os.path.join(os.path.dirname(lib_path) if lib_path else '.', '..', 'src', 'components', 'CarsTab.tsx')
+    alt_frontend = os.path.join('src', 'components', 'CarsTab.tsx')
+    fe_file = None
+    for p in [frontend_path, alt_frontend]:
+        if os.path.exists(p):
+            fe_file = p
+            break
+    if fe_file:
+        with open(fe_file, 'r', encoding='utf-8') as f:
+            fe_content = f.read()
+        if 'sell_car_with_accounting' in fe_content:
+            print("  PASS")
+        else:
+            errors.append("FAIL: Frontend does not call sell_car_with_accounting")
+    else:
+        print("  SKIP (CarsTab.tsx not found)")
+
     # Summary
     print("\n" + "=" * 60)
     if errors:

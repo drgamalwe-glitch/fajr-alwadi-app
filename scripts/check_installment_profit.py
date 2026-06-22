@@ -651,6 +651,70 @@ def check(db_path):
     test("Expense partner transactions have matching ledger entries",
          orphans_exp == 0, f"missing ledger count={orphans_exp}")
 
+    # ===== Scenario 28: Car purchase source rebuild on edit =====
+    print("\n[28] CAR PURCHASE SOURCE REBUILD")
+    # Verify that car_purchase rows exist for all cash-purchased cars
+    cash_cars = conn.execute("""
+        SELECT car_number, purchase_price FROM cars
+        WHERE purchase_type = 'كاش' AND purchase_price > 0
+    """).fetchall()
+    for car in cash_cars:
+        cn = car['car_number']
+        purchase_rows = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+            WHERE source_type = 'car_purchase' AND source_id = ? AND source_role = 'cash_payment'
+        """, [cn]).fetchone()[0]
+        test(f"Car {cn}: purchase rows match purchase price",
+             abs(purchase_rows - car['purchase_price']) < 0.01,
+             f"purchase_rows={purchase_rows:,.0f} expected={car['purchase_price']:,.0f}")
+
+    # ===== Scenario 29: Customer balance after full payment =====
+    print("\n[29] CUSTOMER BALANCE AFTER FULL PAYMENT")
+    # Check that customers with all installments paid have zero balance
+    customers = conn.execute("""
+        SELECT partner_name FROM partners WHERE kind = 'زبون'
+    """).fetchall()
+    for cust in customers:
+        cname = cust['partner_name']
+        # Check if all installments are paid (no remaining 'باقي' rows)
+        remaining = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+            WHERE partner_name = ? AND kind = 'زبون'
+              AND type LIKE 'باقي%' AND type NOT LIKE 'واصل%'
+        """, [cname]).fetchone()[0]
+        paid = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+            WHERE partner_name = ? AND kind = 'زبون'
+              AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                   OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
+        """, [cname]).fetchone()[0]
+        if remaining <= 0.01 and paid > 0:
+            # All installments paid - balance should be zero or negative
+            balance = conn.execute("""
+                SELECT COALESCE(iqd_balance, 0.0) FROM partners
+                WHERE partner_name = ? AND kind = 'زبون'
+            """, [cname]).fetchone()[0]
+            test(f"Customer {cname}: balance zero after full payment",
+                 abs(balance) < 0.01,
+                 f"balance={balance:,.0f}")
+
+    # ===== Scenario 30: Ledger balance per sold car =====
+    print("\n[30] LEDGER BALANCE PER SOLD CAR")
+    sold_cars = conn.execute("""
+        SELECT car_number, selling_price FROM cars WHERE status = 'مبيوعة'
+    """).fetchall()
+    for car in sold_cars:
+        cn = car['car_number']
+        bal = conn.execute("""
+            SELECT COALESCE(SUM(debit), 0.0), COALESCE(SUM(credit), 0.0)
+            FROM financial_ledger
+            WHERE reference_type = 'car' AND reference_id = ?
+        """, [cn]).fetchone()
+        if bal:
+            test(f"Car {cn}: ledger balanced",
+                 abs(bal[0] - bal[1]) < 0.01,
+                 f"debit={bal[0]:,.0f} credit={bal[1]:,.0f}")
+
     # ===== Summary =====
     print("\n" + "=" * 60)
     passed_count = sum(1 for _, p, _ in results if p)

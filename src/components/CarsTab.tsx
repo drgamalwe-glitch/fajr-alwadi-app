@@ -609,27 +609,6 @@ export function CarsTab({
     }
   };
 
-  const addMonthsToDate = (dateStr: string, monthsToAdd: number): string => {
-    if (monthsToAdd === 0) return dateStr;
-    const parts = dateStr.split("-");
-    if (parts.length < 3) return dateStr;
-
-    let year = parseInt(parts[0], 10);
-    let month = parseInt(parts[1], 10);
-    let day = parseInt(parts[2], 10);
-
-    if (isNaN(year) || isNaN(month) || isNaN(day)) return dateStr;
-
-    const totalMonths = year * 12 + (month - 1) + monthsToAdd;
-    const newYear = Math.floor(totalMonths / 12);
-    const newMonth = (totalMonths % 12) + 1;
-
-    const maxDays = new Date(newYear, newMonth, 0).getDate();
-    const newDay = Math.min(day, maxDays);
-
-    return `${newYear}-${String(newMonth).padStart(2, "0")}-${String(newDay).padStart(2, "0")}`;
-  };
-
   const handleSaleAutomation = async (formData: CarFormState) => {
     const buyerName = formData.buyerName.trim();
 
@@ -649,89 +628,26 @@ export function CarsTab({
     // 1. تنظيف البيانات والأسماء تماماً من المسافات الخفية في حقل البيع والمعرض
     const buyerName = formData.buyerName.trim();
     const phone = formData.phone.trim();
-    const carLabel = (formData.name || formData.model || "سيارة").trim();
-    const chassisLabel = formData.chassis.trim();
 
     if (!buyerName) return;
 
-    // 2. استخدام نوع الحساب الصحيح المتوافق مع الفلترة والتحويل
-    const partnerKind = "زبون";
-
     try {
-      // استدعاء الحفظ بالاسم النظيف تماماً ليتطابق مع قيود قاعدة البيانات
-      await callTauri("add_partner", { name: buyerName, phone, kind: partnerKind });
-
-      const amountPaidNum = Number(formData.amountPaid);
-      if (amountPaidNum > 0) {
-        const isInstallmentsOrDue = formData.paymentType === "اقساط" || formData.paymentType === "موعد";
-        await callTauri("add_partner_transaction", {
-          partnerName: buyerName,
-          kind: partnerKind,
-          type: isInstallmentsOrDue ? "مقدمة بيع سيارة" : "ايداع",
-          amount: amountPaidNum,
-          date: formData.saleDate || todayIsoDate(),
-          notes: isInstallmentsOrDue
-            ? `استلام مقدمة سيارة من ${buyerName} رقم الشاصي ${chassisLabel} #بيع_سيارة_${formData.num}`
-            : `دفعة أولى مستلمة - بيع ${carLabel} #بيع_سيارة_${formData.num}`,
-          currency: formData.saleCurrency,
-          paymentType: "قاصه",
-        });
-      }
-
-      const remaining = Number(formData.amountRemaining);
-      if (remaining > 0) {
-        const existingTxns = await callTauri<PartnerTransaction[]>(
-          "get_partner_transactions",
-          { partnerName: buyerName, kind: partnerKind },
-        );
-
-        const saleLabel = `${buyerName} ${carLabel} ${chassisLabel}`;
-        const alreadyLinked = existingTxns?.some(
-          (tx) =>
-            (tx.type_ === "باقي قسط" || tx.type_ === "باقي" || tx.type_?.includes("باقي")) &&
-            (tx.notes?.includes(saleLabel) || (!!chassisLabel && tx.notes?.includes(chassisLabel)))
-        );
-
-        if (!alreadyLinked) {
-          if (formData.paymentType === "اقساط") {
-            const baseDate = formData.firstPaymentDate || formData.saleDate || todayIsoDate();
-            const months = Number(formData.installmentMonths) || 1;
-            const monthlyAmount = Math.floor(remaining / months);
-            const lastAmount = remaining - (monthlyAmount * (months - 1));
-
-            for (let i = 0; i < months; i++) {
-              const installmentAmount = i === months - 1 ? lastAmount : monthlyAmount;
-              if (installmentAmount <= 0) continue;
-
-              const instDate = addMonthsToDate(baseDate, i);
-              await callTauri("add_partner_transaction", {
-                partnerName: buyerName,
-                kind: partnerKind,
-                type: "باقي قسط",
-                amount: installmentAmount,
-                date: instDate,
-                notes: months > 1
-                  ? `باقي قسط شهر ${i + 1} من ${months} على ${buyerName} رقم الشاصي ${chassisLabel}`
-                  : `باقي مجموع قسط على ${buyerName} رقم الشاصي ${chassisLabel}`,
-                currency: formData.saleCurrency,
-                paymentType: "قاصه",
-              });
-            }
-          } else if (formData.paymentType === "موعد") {
-            const dueDate = formData.deliveryDate || formData.saleDate || todayIsoDate();
-            await callTauri("add_partner_transaction", {
-              partnerName: buyerName,
-              kind: partnerKind,
-              type: "باقي قسط",
-              amount: remaining,
-              date: dueDate,
-              notes: `باقي مجموع قسط على ${buyerName} رقم الشاصي ${chassisLabel}`,
-              currency: formData.saleCurrency,
-              paymentType: "قاصه",
-            });
-          }
-        }
-      }
+      // Use the unified sell_car_with_accounting command for atomic sale workflow
+      await callTauri("sell_car_with_accounting", {
+        carNumber: formData.num,
+        buyerName,
+        buyerPhone: phone,
+        sellingPrice: Number(formData.selling),
+        saleCurrency: formData.saleCurrency || "IQD",
+        saleDate: formData.saleDate || todayIsoDate(),
+        paymentType: formData.paymentType,
+        amountPaid: Number(formData.amountPaid) || 0,
+        amountRemaining: Number(formData.amountRemaining) || 0,
+        installmentMonths: formData.paymentType === "اقساط" ? Number(formData.installmentMonths) || 1 : null,
+        firstPaymentDate: formData.firstPaymentDate || null,
+        deliveryDate: formData.deliveryDate || null,
+        chassisNumber: formData.chassis || null,
+      });
     } catch (saveErr) {
       console.error("فشل إكمال أتمتة البيع والتسجيل التلقائي:", saveErr);
     }
