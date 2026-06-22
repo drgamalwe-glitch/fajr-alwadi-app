@@ -3734,39 +3734,42 @@ fn add_car(
         // Delete only car sale generated rows (not purchase rows)
         delete_generated_car_sale_partner_transactions(&db, &car_number)?;
 
-        // Delete only sale-generated customer payment splits (preserve manual customer payments)
-        // Scoped by source_type to avoid deleting manual customer payment splits (Defect 3 fix)
-        let sale_gen_customer_ids: Vec<(i64, String)> = db
-            .prepare("SELECT id, partner_name FROM partner_transactions WHERE kind = 'زبون' AND related_source_type = 'car' AND related_source_id = ?1 AND (source_type = 'customer_sale_payment' OR source_type = 'customer_installment_schedule')")
-            .map_err(|e| e.to_string())?
-            .query_map(params![car_number], |row| Ok((row.get(0)?, row.get(1)?)))
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-        let mut buyers_to_recalc_for_splits: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for (pid, buyer_name_str) in &sale_gen_customer_ids {
-            delete_customer_payment_partner_splits(&db, *pid)?;
-            delete_customer_payment_profit_splits(&db, *pid)?;
-            delete_ledger_entries(&db, "partner_transaction", &pid.to_string())?;
-            db.execute("DELETE FROM partner_transactions WHERE id = ?1", [pid])
+        // Only delete and recreate customer sale-generated rows when actual sale terms changed.
+        // For cost-only or car-number-only edits, preserve existing customer rows (down payment,
+        // installment schedule, due-date) to avoid data loss — add_car does not recreate them.
+        if sale_changed {
+            let sale_gen_customer_ids: Vec<(i64, String)> = db
+                .prepare("SELECT id, partner_name FROM partner_transactions WHERE kind = 'زبون' AND related_source_type = 'car' AND related_source_id = ?1 AND (source_type = 'customer_sale_payment' OR source_type = 'customer_installment_schedule')")
+                .map_err(|e| e.to_string())?
+                .query_map(params![car_number], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| e.to_string())?;
-            buyers_to_recalc_for_splits.insert(buyer_name_str.clone());
-        }
-        for buyer_name_recalc in buyers_to_recalc_for_splits {
-            recalculate_partner_total(&db, &buyer_name_recalc, "زبون")?;
-        }
+            let mut buyers_to_recalc_for_splits: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for (pid, buyer_name_str) in &sale_gen_customer_ids {
+                delete_customer_payment_partner_splits(&db, *pid)?;
+                delete_customer_payment_profit_splits(&db, *pid)?;
+                delete_ledger_entries(&db, "partner_transaction", &pid.to_string())?;
+                db.execute("DELETE FROM partner_transactions WHERE id = ?1", [pid])
+                    .map_err(|e| e.to_string())?;
+                buyers_to_recalc_for_splits.insert(buyer_name_str.clone());
+            }
+            for buyer_name_recalc in buyers_to_recalc_for_splits {
+                recalculate_partner_total(&db, &buyer_name_recalc, "زبون")?;
+            }
 
-        // Legacy rows (source_type IS NULL) with notes LIKE — scope is narrow, only for migration completeness
-        let legacy_ids: Vec<i64> = db
-            .prepare("SELECT id FROM partner_transactions WHERE kind = 'زبون' AND related_source_type IS NULL AND source_type IS NULL AND notes LIKE ?1")
-            .map_err(|e| e.to_string())?
-            .query_map(params![format!("%#بيع_سيارة_{}%", car_number)], |row| row.get(0))
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-        for pid in legacy_ids {
-            delete_customer_payment_partner_splits(&db, pid)?;
-            delete_customer_payment_profit_splits(&db, pid)?;
+            // Legacy rows (source_type IS NULL) with notes LIKE — scope is narrow, only for migration completeness
+            let legacy_ids: Vec<i64> = db
+                .prepare("SELECT id FROM partner_transactions WHERE kind = 'زبون' AND related_source_type IS NULL AND source_type IS NULL AND notes LIKE ?1")
+                .map_err(|e| e.to_string())?
+                .query_map(params![format!("%#بيع_سيارة_{}%", car_number)], |row| row.get(0))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            for pid in legacy_ids {
+                delete_customer_payment_partner_splits(&db, pid)?;
+                delete_customer_payment_profit_splits(&db, pid)?;
+            }
         }
     }
 

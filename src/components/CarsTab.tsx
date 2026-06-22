@@ -639,9 +639,14 @@ export function CarsTab({
           deliveryDate: data.deliveryDate || null,
           chassisNumber: data.chassis || null,
         });
+      } else if (hasSaleChange && (hasCostChange || hasIdentityChange)) {
+        // Mixed edits: sale + cost/identity simultaneously — not safe for a single backend call.
+        // user must save sale change separately from cost/identity change.
+        setToast("يرجى حفظ تعديل البيع منفصلًا عن تعديل التكلفة أو رقم السيارة");
+        setSaving(false);
+        return;
       } else {
         // Non-sale edit or new available car: use add_car
-        // Also handles mixed edits (sale + cost/identity simultaneously)
         const carArgs = buildCarInvokeArgs(data);
         if (isEditing && wasSold && originalCar) {
           carArgs.oldNum = originalCar.car_number;

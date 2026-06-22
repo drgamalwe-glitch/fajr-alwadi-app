@@ -2046,6 +2046,111 @@ def audit_source(lib_path):
     else:
         errors.append(f"FAIL: {offending} sold-car function(s) still call record_car_ledger_entries directly")
 
+    # 68. add_car must only delete customer_sale_payment/installment_schedule when guarded by sale_changed
+    print("\n[S68] add_car customer row deletion guarded by sale_changed...")
+    add_car_start = content.find("\nfn add_car(")
+    if add_car_start >= 0:
+        add_car_end = content.find("\nfn ", add_car_start + 5)
+        if add_car_end < 0:
+            add_car_end = content.find("#[tauri::command]", add_car_start + 5)
+        if add_car_end < 0:
+            add_car_end = add_car_start + 25000
+        add_car_body = content[add_car_start:add_car_end]
+        cust_pay_pos = add_car_body.find("customer_sale_payment")
+        cust_inst_pos = add_car_body.find("customer_installment_schedule")
+        sale_guard_pos = add_car_body.find("if sale_changed")
+        if cust_pay_pos >= 0 and sale_guard_pos >= 0:
+            before_pay = add_car_body[:cust_pay_pos]
+            last_sale_guard_before_pay = before_pay.rfind("if sale_changed")
+            if last_sale_guard_before_pay >= 0:
+                print("  PASS (customer_sale_payment inside sale_changed guard)")
+            else:
+                errors.append("FAIL: customer_sale_payment in add_car outside sale_changed guard")
+        else:
+            errors.append("FAIL: add_car missing customer_sale_payment or sale_changed guard")
+        if cust_inst_pos >= 0 and sale_guard_pos >= 0:
+            before_inst = add_car_body[:cust_inst_pos]
+            last_sale_guard_before_inst = before_inst.rfind("if sale_changed")
+            if last_sale_guard_before_inst < 0:
+                errors.append("FAIL: customer_installment_schedule in add_car outside sale_changed guard")
+    else:
+        errors.append("FAIL: add_car function not found")
+
+    # 69. sold_cost_changed-only path preserves customer rows
+    print("\n[S69] sold_cost_changed-only path preserves customer sale-generated rows...")
+    if add_car_start >= 0:
+        rebuild_def_pos = add_car_body.find("let should_rebuild_sale_ledger")
+        rebuild_def = add_car_body[rebuild_def_pos:rebuild_def_pos+200] if rebuild_def_pos >= 0 else ""
+        has_sold_cost_in_rebuild = "sold_cost_changed" in rebuild_def
+        has_unconditional_delete = False
+        for token in ["customer_sale_payment", "customer_installment_schedule"]:
+            pos = 0
+            while True:
+                pos = add_car_body.find(token, pos)
+                if pos < 0:
+                    break
+                before = add_car_body[:pos]
+                last_guard = before.rfind("if sale_changed")
+                if last_guard < 0:
+                    before_100 = before[-100:] if len(before) >= 100 else before
+                    if "source_type =" in before_100 or "AND source_type" in before_100:
+                        has_unconditional_delete = True
+                pos += 1
+        if has_sold_cost_in_rebuild and not has_unconditional_delete:
+            print("  PASS (sold_cost_changed in should_rebuild_sale_ledger, customer deletion guarded by sale_changed)")
+        else:
+            missing = []
+            if not has_sold_cost_in_rebuild: missing.append("sold_cost_changed not in should_rebuild_sale_ledger")
+            if has_unconditional_delete: missing.append("unconditional customer_sale_payment deletion without sale_changed")
+            errors.append(f"FAIL: {'; '.join(missing)}")
+    else:
+        errors.append("FAIL: add_car function not found for S69")
+
+    # 70. car_number_changed path preserves and migrates customer rows
+    print("\n[S70] car_number_changed path preserves + migrates customer sale-generated rows...")
+    migrate_fn_start = content.find("fn migrate_car_number_references")
+    if migrate_fn_start >= 0:
+        migrate_fn_end = content.find("\nfn ", migrate_fn_start + 5)
+        if migrate_fn_end < 0:
+            migrate_fn_end = migrate_fn_start + 2000
+        migrate_body = content[migrate_fn_start:migrate_fn_end]
+        has_cust_sale_migrate = "customer_sale_payment" in migrate_body and "source_id" in migrate_body
+        has_cust_inst_migrate = "customer_installment_schedule" in migrate_body and "source_id" in migrate_body
+        msg_parts = []
+        if has_cust_sale_migrate:
+            msg_parts.append("customer_sale_payment migrated")
+        else:
+            errors.append("FAIL: customer_sale_payment not migrated in migrate_car_number_references")
+        if has_cust_inst_migrate:
+            msg_parts.append("customer_installment_schedule migrated")
+        else:
+            errors.append("FAIL: customer_installment_schedule not migrated in migrate_car_number_references")
+        if not any("migrate" in e for e in errors):
+            print(f"  PASS ({'; '.join(msg_parts)})")
+    else:
+        errors.append("FAIL: migrate_car_number_references function not found")
+
+    # 71. Mixed sale+cost edit blocked in frontend
+    print("\n[S71] Mixed sale+cost/identity edit blocked in frontend...")
+    if cars_tab_ok:
+        has_arabic_error = any(msg in cars_content for msg in [
+            "يرجى حفظ تعديل البيع منفصلًا عن تعديل التكلفة أو رقم السيارة",
+            "منفصلًا عن",
+        ])
+        has_mixed_condition = "hasSaleChange && (hasCostChange || hasIdentityChange)" in cars_content
+        if has_arabic_error and has_mixed_condition:
+            print("  PASS (mixed edits show Arabic error and are blocked)")
+        elif has_arabic_error:
+            errors.append("FAIL: Arabic error found but mixed-edit condition missing")
+        elif has_mixed_condition:
+            errors.append("FAIL: mixed-edit condition found but Arabic error message missing")
+        else:
+            errors.append("FAIL: no mixed-edit guard found in CarsTab")
+    else:
+        errors.append("FAIL: CarsTab not found for S71")
+        if not cars_tab_ok:
+            warnings.append("S71: CarsTab.tsx could not be read")
+
     # Summary
     print("\n" + "=" * 60)
     if errors:
