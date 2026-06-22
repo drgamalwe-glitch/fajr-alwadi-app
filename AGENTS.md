@@ -8,44 +8,32 @@
 - `python3 scripts/accounting_audit.py static` — S1–S64 all PASS
 - Runtime DB tests require `fajr_alwadi.db` in project root or `data/` or `src-tauri/`
 
-### Phase 3 Completed — 6 Defects Fixed
+### Phase 3 Completed — 9 Defects Fixed (Rounds 1 + 2)
 
-**Defect 1 — `skip_sale` blocking sale rebuild when car number changes:**
-- Introduced `effective_skip_sale = skip_sale_raw && !car_number_changed` — car_number change always forces sale ledger rebuild.
-- Added `sold_cost_changed` flag detecting changes to purchase_price + car_expenses for sold cars.
-- `sold_cost_changed` forces both `should_rebuild_purchase` and `should_rebuild_sale_ledger`.
+**Round 1 (6 defects):**
+- Defect 1: `effective_skip_sale = skip_sale_raw && !car_number_changed`
+- Defect 2: `validate_profit_cap_for_car()` helper + call for sold_cost_changed
+- Defect 3: add_car customer split deletion scoped by source_type
+- Defect 4: delete_partner SUM(ABS) → SUM(debit-credit) with .abs()
+- Defect 5: CarsTab split hasSoldCarCostAccountingChange from hasSoldCarAccountingChange
+- Defect 6: Dashboard handlePayInstallment redirect-only (no direct mutation)
 
-**Defect 2 — No profit cap validation on sold-cost edit:**
-- Added `validate_profit_cap_for_car()` helper: queries full_profit (selling_price − purchase_price − expenses_sum) and recognized_profit (SUM of affects_profit rows linked to car). Returns Arabic error if recognized > full_profit.
-- Called in `add_car` when `sold_cost_changed` is true, before any rebuild operations.
-
-**Defect 3 — Broad customer split deletion deleting manual payments:**
-- Restricted add_car customer-split deletion to `source_type IN ('customer_sale_payment', 'customer_installment_schedule')`.
-- Manual customer payments (different source_type or NULL) are preserved.
-- Legacy rows (source_type IS NULL, notes LIKE marker) still handled for migration completeness.
-
-**Defect 4 — `delete_partner` SUM(ABS) blocking deletion of fully paid customers:**
-- Changed `SUM(ABS(debit - credit))` to `SUM(debit - credit)` with `.abs()` guard in Rust.
-- Fully paid-off customers (net balance ≈ 0) can now be deleted.
-- Overpaid/underpaid customers with any non-zero net balance are still blocked.
-
-**Defect 5 — Frontend sold-car edit dispatch (identity-only triggers accounting rebuild):**
-- Split `hasSoldCarAccountingChange` into `hasSoldCarCostAccountingChange` (financial changes) and removed unused `hasSoldCarIdentityChange`.
-- `isSoldCarAccountingEdit` now based only on `hasCostChange` — identity-only edits go through `add_car` with `skipSaleAccounting: true`.
-
-**Defect 6 — Dashboard `handlePayInstallment` direct accounting mutation:**
-- Replaced `handlePayInstallment` body with redirect to partner page via `onNavigateToPartner`.
-- `handleOpenPayInstallment` now always navigates (no fallback modal).
-- Direct mutation (`add_partner_transaction` + `delete_partner_transaction`) removed.
+**Round 2 (5 defects):**
+- Defect 1: `effective_skip_sale` now also respects `!sold_cost_changed` (moved after sold_cost_changed calc)
+- Defect 2: CarsTab now has 3 separated helpers: `hasSoldCarSaleAccountingChange`, `hasSoldCarCostAccountingChange` (checks purchase fields), `hasSoldCarIdentityChange` (car_number). `isSoldCarAccountingEdit` combines all 3.
+- Defect 3: New `rebuild_sold_car_accounting_after_cost_change` used in add_expense + delete_car_expense_record. For cash sales: rebuilds profit_recognition splits via delete + re-apply. For installment: rebuilds ledger only, preserves manual payments.
+- Defect 4: delete_partner now also blocks `مستثمر` with non-zero net balance.
+- Defect 5: Static audit S60-S64 strengthened: S60 checks all 3 helpers defined, S61 checks they're combined in dispatch, S62 checks effective_skip_sale has both guards, S64 checks no direct mutation in Dashboard + has guard.
 
 ### Key Files
-- `src-tauri/src/lib.rs` — Defects 1-4 fixes (9977 lines)
-  - `add_car` — `effective_skip_sale`, `sold_cost_changed`, `validate_profit_cap_for_car()` call, scoped customer split deletion
-  - `delete_partner` — net balance check (SUM(debit-credit) not SUM(ABS))
-  - New `validate_profit_cap_for_car()` helper at ~line 1228
-- `src/components/CarsTab.tsx` — Defect 5 fix: `hasSoldCarCostAccountingChange` + `hasCostChange` dispatch
-- `src/components/Dashboard.tsx` — Defect 6 fix: redirect-only installment payment
-- `scripts/accounting_audit.py` — S1–S64 static checks (S56–S64 new)
+- `src-tauri/src/lib.rs` — All backend fixes (~10007 lines)
+  - `add_car`: `effective_skip_sale` with `!sold_cost_changed`
+  - `validate_profit_cap_for_car()` at ~line 1228
+  - `rebuild_sold_car_accounting_after_cost_change()` before add_expense
+  - `delete_partner`: investor balance check added
+  - `add_expense`, `delete_car_expense_record`: use rebuild helper
+- `src/components/CarsTab.tsx` — 3 helpers: sale, cost, identity; dispatch combines all 3
+- `scripts/accounting_audit.py` — S1–S64 (S60–S64 strengthened)
 
 ### Pending
 - Runtime DB tests (scenarios 50–52) — need a seeded `fajr_alwadi.db`

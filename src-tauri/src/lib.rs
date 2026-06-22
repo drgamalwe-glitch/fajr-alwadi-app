@@ -3488,9 +3488,6 @@ fn add_car(
     let car_number_changed = has_old_num && old_num != car_number;
     let same_car_edit = is_existing_car && (!has_old_num || old_num == car_number);
 
-    // effective_skip_sale: when car_number changes for a sold car, force sale ledger rebuild
-    let effective_skip_sale = skip_sale_raw && !car_number_changed;
-
     let purchase_changed = is_existing_car && (
         old_purchase_price.map_or(true, |v| (v - purchase).abs() > 0.001)
         || old_purchase_type.as_deref() != purchase_type.as_deref()
@@ -3501,6 +3498,9 @@ fn add_car(
 
     // sold_cost_changed: detecting purchase/cost changes for sold cars that also affect COGS/sale ledger
     let sold_cost_changed = is_existing_car && status == "مبيوعة" && purchase_changed;
+
+    // effective_skip_sale: force sale ledger rebuild when car_number changes or sold cost changes
+    let effective_skip_sale = skip_sale_raw && !car_number_changed && !sold_cost_changed;
 
     let should_rebuild_purchase = should_create_purchase_transactions || purchase_changed || force_rebuild_due_to_number_change;
 
@@ -5209,6 +5209,19 @@ fn delete_partner(state: State<AppState>, name: String, kind: String) -> Result<
         ).unwrap_or(0.0);
         if receivable.abs() > 0.001 {
             return Err("لا يمكن حذف حساب زبون لديه رصيد مستحق في دفتر الأستاذ".to_string());
+        }
+    }
+
+    // Bug S: Block deleting investor with active balance (net balance)
+    if kind == "مستثمر" {
+        let balance: f64 = db.query_row(
+            "SELECT COALESCE(SUM(credit - debit), 0.0) FROM financial_ledger
+             WHERE account_type = 'investor' AND account_id = ?1",
+            [&name],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+        if balance.abs() > 0.001 {
+            return Err("لا يمكن حذف حساب مستثمر لديه رصيد مستحق في دفتر الأستاذ".to_string());
         }
     }
 
@@ -7039,6 +7052,84 @@ fn car_expense_partner_note(db: &Connection, car_number: &str, description: &str
     .replace("  ", " ")
 }
 
+/// Rebuild sold-car accounting after cost change (expense add/delete).
+/// - Enforces profit cap.
+/// - Rebuilds sale ledger entries (COGS, receivable, deferred_revenue, revenue, inventory).
+/// - For cash sales: rebuilds partner profit_recognition splits to reflect updated costs.
+/// - For installment/due sales: only rebuilds ledger; does NOT touch customer payments or splits.
+fn rebuild_sold_car_accounting_after_cost_change(
+    db: &Connection,
+    car_number: &str,
+) -> Result<(), String> {
+    let car_info = db.query_row(
+        "SELECT status, COALESCE(payment_type, '') FROM cars WHERE car_number = ?1",
+        [car_number],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    );
+    let (status, payment_type) = match car_info {
+        Ok(info) => info,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+        Err(e) => return Err(e.to_string()),
+    };
+
+    if status != "مبيوعة" {
+        return Ok(());
+    }
+
+    // 1. Enforce profit cap before any changes
+    validate_profit_cap_for_car(db, car_number)?;
+
+    // 2. Rebuild sale ledger entries (COGS, receivable, deferred_revenue, revenue, inventory credit)
+    delete_car_sale_ledger_entries(db, car_number)?;
+    record_car_sale_ledger_entries(db, car_number)?;
+
+    // 3. For cash sales: rebuild partner profit_recognition splits for the down payment
+    if payment_type == "كاش" {
+        // Find the down payment transaction(s) linked to this car
+        let mut payment_stmt = db.prepare(
+            "SELECT id, partner_name, amount, date, currency
+             FROM partner_transactions
+             WHERE related_source_type = 'car'
+               AND related_source_id = ?1
+               AND source_type = 'customer_sale_payment'
+               AND source_role = 'sale_down_payment'",
+        ).map_err(|e| e.to_string())?;
+
+        let payment_rows: Vec<(i64, String, f64, String, String)> = payment_stmt
+            .query_map([car_number], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "IQD".to_string()),
+                ))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        for (pid, pname, pamount, pdate, pcurrency) in &payment_rows {
+            // Delete old cash_movement and profit_recognition splits for this payment
+            delete_customer_payment_partner_splits(db, *pid)?;
+            delete_customer_payment_profit_splits(db, *pid)?;
+
+            // Re-apply splits — will recreate with current profit (selling_price - purchase_price - expenses_sum)
+            apply_partner_transaction_splits(
+                db, *pid, pname, "زبون",
+                if *pamount > 0.0 { "ايداع" } else { "" },
+                *pamount, pdate,
+                Some(&format!("إعادة توزيع ربح بعد تغيير التكلفة #بيع_سيارة_{}", car_number)),
+                pcurrency,
+            )?;
+
+            recalculate_partner_total(db, pname, "زبون")?;
+        }
+    } // For installment/موعد: only ledger entries are rebuilt above; manual customer payments are preserved
+
+    Ok(())
+}
+
 #[tauri::command]
 fn add_expense(
     state: State<AppState>,
@@ -7147,9 +7238,8 @@ fn add_expense(
                 > 0;
 
             if is_sold {
-                // Issue 10: Use delete instead of reverse for clean rebuild
-                delete_ledger_entries(&db, "car", car_num)?;
-                record_car_ledger_entries(&db, car_num)?;
+                // Phase 3: Use comprehensive rebuild that also updates partner profit splits for cash sales
+                rebuild_sold_car_accounting_after_cost_change(&db, car_num)?;
             }
 
             db.commit().map_err(|e| e.to_string())?;
@@ -7570,9 +7660,8 @@ fn delete_car_expense_record(state: State<AppState>, id: i64) -> Result<(), Stri
             > 0;
 
         if is_sold {
-            // Issue 10: Use delete instead of reverse for clean rebuild
-            delete_ledger_entries(&db, "car", &car_number)?;
-            record_car_ledger_entries(&db, &car_number)?;
+            // Phase 3: Use comprehensive rebuild that also updates partner profit splits for cash sales
+            rebuild_sold_car_accounting_after_cost_change(&db, &car_number)?;
         }
     } else {
         db.execute("DELETE FROM car_expenses WHERE id = ?1", [id])

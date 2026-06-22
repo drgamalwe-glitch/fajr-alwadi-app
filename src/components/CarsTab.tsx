@@ -513,8 +513,8 @@ export function CarsTab({
   );
 
 
-  /** Check if sold-car accounting fields changed — used to decide if full sale rebuild is needed */
-  function hasSoldCarCostAccountingChange(originalCar: Car | undefined, formData: CarFormState): boolean {
+  /** Check if sold-car sale fields changed — triggers update_sold_car_with_accounting */
+  function hasSoldCarSaleAccountingChange(originalCar: Car | undefined, formData: CarFormState): boolean {
     if (!originalCar || originalCar.status !== "مبيوعة") return false;
     if (formData.status !== "مبيوعة") return false;
     return (
@@ -525,7 +525,32 @@ export function CarsTab({
       || Math.abs(Number(originalCar.amount_remaining ?? 0) - Number(formData.amountRemaining ?? 0)) > 0.001
       || Number(originalCar.installment_months ?? 1) !== Number(formData.installmentMonths ?? 1) + 0
       || Math.abs(Number(originalCar.monthly_payment ?? 0) - (Number(formData.amountRemaining ?? 0) / Math.max(1, Number(formData.installmentMonths ?? 1)))) > 0.001
+      || (originalCar.buyer_name ?? "") !== formData.buyerName.trim()
+      || (originalCar.buyer_phone ?? "") !== formData.phone.trim()
+      || (originalCar.sale_date ?? "") !== (formData.saleDate ?? "")
+      || (originalCar.delivery_date ?? "") !== (formData.deliveryDate ?? "")
+      || (originalCar.first_payment_date ?? "") !== (formData.firstPaymentDate ?? "")
     );
+  }
+
+  /** Check if sold-car cost fields changed — forces backend rebuild regardless of skipSaleAccounting */
+  function hasSoldCarCostAccountingChange(originalCar: Car | undefined, formData: CarFormState): boolean {
+    if (!originalCar || originalCar.status !== "مبيوعة") return false;
+    if (formData.status !== "مبيوعة") return false;
+    return (
+      Math.abs(Number(originalCar.purchase_price) - Number(formData.purchase)) > 0.001
+      || (originalCar.currency ?? "IQD") !== (formData.currency || "IQD")
+      || (originalCar.purchase_type ?? "") !== (formData.purchaseType ?? "")
+      || (originalCar.financer_name ?? "") !== (formData.financerName ?? "")
+      || (originalCar.purchase_payment_type ?? "") !== (formData.purchasePaymentType ?? "")
+    );
+  }
+
+  /** Check if sold-car identity field changed (car_number) */
+  function hasSoldCarIdentityChange(originalCar: Car | undefined, formData: CarFormState): boolean {
+    if (!originalCar || originalCar.status !== "مبيوعة") return false;
+    if (formData.status !== "مبيوعة") return false;
+    return (originalCar.car_number ?? "") !== formData.num.trim();
   }
 
   const handleAutoSave = async () => {
@@ -534,8 +559,14 @@ export function CarsTab({
     const wasSold = originalCar?.status === "مبيوعة";
     const isNewSoldCar = panelMode === "new" && data.status === "مبيوعة";
     const isNewSaleFromAvailable = panelMode === "edit" && originalCar?.status === "متوفرة" && data.status === "مبيوعة";
-    const hasCostChange = wasSold && isEditing && hasSoldCarCostAccountingChange(originalCar, data);
-    const isSoldCarAccountingEdit = hasCostChange;
+    const isSoldCarAccountingEdit =
+      wasSold
+      && isEditing
+      && (
+        hasSoldCarSaleAccountingChange(originalCar, data)
+        || hasSoldCarCostAccountingChange(originalCar, data)
+        || hasSoldCarIdentityChange(originalCar, data)
+      );
 
     try {
       if (isNewSoldCar) {

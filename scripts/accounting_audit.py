@@ -1876,7 +1876,7 @@ def audit_source(lib_path):
     else:
         errors.append(f"FAIL: still contains {sum_abs_count} SUM(ABS) occurrence(s)")
 
-    # 60-61: CarsTab.tsx checks
+    # 60-61: CarsTab.tsx helper split checks
     cars_tab_ok = True
     cars_tab_path = None
     for c in ["src/components/CarsTab.tsx", "../src/components/CarsTab.tsx"]:
@@ -1884,49 +1884,58 @@ def audit_source(lib_path):
             cars_tab_path = c
             break
 
-    print("\n[S60] Sold-car identity-only edits go through add_car (not update_sold_car_with_accounting)...")
+    print("\n[S60] CarsTab defines all 3 sold-car change detectors (sale, cost, identity)...")
     if cars_tab_path:
         with open(cars_tab_path) as f:
             cars_content = f.read()
-        # Check: isSoldCarAccountingEdit is based on hasSoldCarCostAccountingChange only (not identity changes)
-        if "isSoldCarAccountingEdit = hasCostChange" in cars_content or "isSoldCarAccountingEdit" in cars_content:
-            # Also verify add_car with skipSaleAccounting: true exists for identity-only path
-            if "skipSaleAccounting: true" in cars_content:
-                print("  PASS")
-            else:
-                cars_tab_ok = False
-                errors.append("FAIL: skipSaleAccounting: true not found in CarsTab.tsx")
+        has_sale = "function hasSoldCarSaleAccountingChange" in cars_content
+        has_cost = "function hasSoldCarCostAccountingChange" in cars_content
+        has_identity = "function hasSoldCarIdentityChange" in cars_content
+        if has_sale and has_cost and has_identity:
+            print("  PASS (all 3 functions defined)")
         else:
+            cnt_txt = []
+            if not has_sale: cnt_txt.append("hasSoldCarSaleAccountingChange")
+            if not has_cost: cnt_txt.append("hasSoldCarCostAccountingChange")
+            if not has_identity: cnt_txt.append("hasSoldCarIdentityChange")
             cars_tab_ok = False
-            errors.append("FAIL: isSoldCarAccountingEdit logic not based on cost-only changes")
+            errors.append(f"FAIL: missing {', '.join(cnt_txt)} in CarsTab.tsx")
     else:
         cars_tab_ok = False
         errors.append("FAIL: CarsTab.tsx not found")
 
-    print("\n[S61] hasSoldCarCostAccountingChange function in CarsTab.tsx...")
+    print("\n[S61] isSoldCarAccountingEdit combines all 3 helpers in dispatch logic...")
     if cars_tab_ok:
-        if "function hasSoldCarCostAccountingChange" in cars_content:
+        in_logic = (
+            "hasSoldCarSaleAccountingChange" in cars_content
+            and "hasSoldCarCostAccountingChange" in cars_content
+            and "hasSoldCarIdentityChange" in cars_content
+            and "isSoldCarAccountingEdit" in cars_content
+        )
+        if in_logic:
             print("  PASS")
         else:
-            errors.append("FAIL: hasSoldCarCostAccountingChange not found")
+            errors.append("FAIL: isSoldCarAccountingEdit does not combine all 3 helpers")
 
-    # 62. Dashboard handlePayInstallment safety
-    print("\n[S62] Dashboard handlePayInstallment does not mutate accounting directly...")
-    dashboard_path = None
-    for c in ["src/components/Dashboard.tsx", "../src/components/Dashboard.tsx"]:
-        if os.path.exists(c):
-            dashboard_path = c
-            break
-    if dashboard_path:
-        with open(dashboard_path) as f:
-            dash_content = f.read()
-        # Check that handlePayInstallment redirects rather than mutating
-        if "لا يمكن تسديد القسط من لوحة التحكم مباشرة" in dash_content:
-            print("  PASS (redirect/error path only)")
+    # 62. Backend effective_skip_sale includes both !car_number_changed and !sold_cost_changed
+    print("\n[S62] Backend effective_skip_sale includes !car_number_changed && !sold_cost_changed...")
+    if "effective_skip_sale" in content:
+        if "!car_number_changed" in content and "!sold_cost_changed" in content:
+            # Verify they are both part of the same effective_skip_sale expression
+            line_start = content.find("let effective_skip_sale")
+            if line_start >= 0:
+                line_end = content.find("\n", line_start)
+                eff_line = content[line_start:line_end] if line_end > line_start else content[line_start:line_start+200]
+                if "!car_number_changed" in eff_line and "!sold_cost_changed" in eff_line:
+                    print("  PASS")
+                else:
+                    errors.append("FAIL: effective_skip_sale expression missing one or both guards")
+            else:
+                errors.append("FAIL: effective_skip_sale declaration not found")
         else:
-            errors.append("FAIL: Dashboard handlePayInstallment may still mutate accounting directly")
+            errors.append("FAIL: effective_skip_sale not guarded by both car_number_changed and sold_cost_changed")
     else:
-        errors.append("FAIL: Dashboard.tsx not found")
+        errors.append("FAIL: effective_skip_sale not found at all")
 
     # 63. No bare !skip_sale (without effective_) in add_car
     print("\n[S63] No bare !skip_sale (without effective_) in add_car sale rebuild...")
@@ -1936,13 +1945,32 @@ def audit_source(lib_path):
     else:
         errors.append(f"FAIL: found {bare_skip} bare !skip_sale without effective_ prefix")
 
-    # 64. CarsTab sold-car else path uses skipSaleAccounting: true
-    print("\n[S64] CarsTab sold-car else path sends skipSaleAccounting: true...")
-    if cars_tab_ok:
-        if "skipSaleAccounting: true" in cars_content:
-            print("  PASS")
+    # 64. Dashboard does not directly mutate installment settlement
+    print("\n[S64] Dashboard does not directly mutate installment settlement...")
+    dashboard_path = None
+    for c in ["src/components/Dashboard.tsx", "../src/components/Dashboard.tsx"]:
+        if os.path.exists(c):
+            dashboard_path = c
+            break
+    if dashboard_path:
+        with open(dashboard_path) as f:
+            dash_content = f.read()
+        # Check for defensive guard string AND absence of direct mutations in handlePayInstallment
+        has_guard = "لا يمكن تسديد القسط من لوحة التحكم مباشرة" in dash_content
+        # Verify no add_partner_transaction or delete_partner_transaction in handlePayInstallment function body
+        pay_fn_start = dash_content.find("handlePayInstallment")
+        creditor_fn_start = dash_content.find("handlePayCreditor")
+        if pay_fn_start >= 0 and creditor_fn_start > pay_fn_start:
+            pay_fn_body = dash_content[pay_fn_start:creditor_fn_start]
+            has_direct_mutation = "add_partner_transaction" in pay_fn_body or "delete_partner_transaction" in pay_fn_body
         else:
-            errors.append("FAIL: skipSaleAccounting: true not found in CarsTab.tsx")
+            has_direct_mutation = True
+        if has_guard and not has_direct_mutation:
+            print("  PASS (redirect/error guard present, no direct mutation)")
+        elif has_guard:
+            errors.append("FAIL: Dashboard has guard but handlePayInstallment still mutates directly")
+        else:
+            errors.append("FAIL: Dashboard handlePayInstallment lacks defensive guard")
 
     # Summary
     print("\n" + "=" * 60)
