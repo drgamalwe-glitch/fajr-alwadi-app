@@ -7583,9 +7583,8 @@ fn add_car_expense_record(
         > 0;
 
     if is_sold {
-        // Issue 10: Use delete instead of reverse for clean rebuild
-        delete_ledger_entries(&db, "car", car_number.trim())?;
-        record_car_ledger_entries(&db, car_number.trim())?;
+        // Phase 3: Use comprehensive rebuild that also updates partner profit splits for cash sales
+        rebuild_sold_car_accounting_after_cost_change(&db, car_number.trim())?;
     }
 
     db.commit().map_err(|e| e.to_string())?;

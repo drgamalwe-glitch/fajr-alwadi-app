@@ -1904,18 +1904,17 @@ def audit_source(lib_path):
         cars_tab_ok = False
         errors.append("FAIL: CarsTab.tsx not found")
 
-    print("\n[S61] isSoldCarAccountingEdit combines all 3 helpers in dispatch logic...")
+    print("\n[S61] Dispatch uses all 3 helpers in isPureSaleEdit / isCostOrIdentityEdit...")
     if cars_tab_ok:
-        in_logic = (
-            "hasSoldCarSaleAccountingChange" in cars_content
-            and "hasSoldCarCostAccountingChange" in cars_content
-            and "hasSoldCarIdentityChange" in cars_content
-            and "isSoldCarAccountingEdit" in cars_content
-        )
-        if in_logic:
+        has_sale_helper = "hasSoldCarSaleAccountingChange" in cars_content
+        has_cost_helper = "hasSoldCarCostAccountingChange" in cars_content
+        has_identity_helper = "hasSoldCarIdentityChange" in cars_content
+        has_is_pure = "isPureSaleEdit" in cars_content
+        has_is_cost_id = "isCostOrIdentityEdit" in cars_content
+        if has_sale_helper and has_cost_helper and has_identity_helper and has_is_pure and has_is_cost_id:
             print("  PASS")
         else:
-            errors.append("FAIL: isSoldCarAccountingEdit does not combine all 3 helpers")
+            errors.append("FAIL: dispatch missing one or more helpers or variables")
 
     # 62. Backend effective_skip_sale includes both !car_number_changed and !sold_cost_changed
     print("\n[S62] Backend effective_skip_sale includes !car_number_changed && !sold_cost_changed...")
@@ -1971,6 +1970,81 @@ def audit_source(lib_path):
             errors.append("FAIL: Dashboard has guard but handlePayInstallment still mutates directly")
         else:
             errors.append("FAIL: Dashboard handlePayInstallment lacks defensive guard")
+
+    # 65. CarsTab does not route cost/identity changes to update_sold_car_with_accounting
+    print("\n[S65] CarsTab cost/identity edits go through add_car (not update_sold_car_with_accounting)...")
+    if cars_tab_ok:
+        has_pure_sale = "isPureSaleEdit" in cars_content
+        has_cost_id = "isCostOrIdentityEdit" in cars_content
+        has_old_num = "carArgs.oldNum" in cars_content
+        # Find branch-level references (not variable declarations)
+        pure_branch = cars_content.find("} else if (isPureSaleEdit)")
+        cost_branch = cars_content.find("} else if (isCostOrIdentityEdit)")
+        if pure_branch >= 0 and cost_branch >= 0:
+            # Check pure-sale branch body (between pure_branch and cost_branch)
+            pure_body = cars_content[pure_branch:cost_branch]
+            update_sold_ok = "update_sold_car_with_accounting" in pure_body
+            # Check cost/identity branch body (after cost_branch until next } else if)
+            after_cost = cars_content[cost_branch:cost_branch+2000]
+            # Skip the current else-if, find the NEXT one
+            after_current = after_cost[4:]  # Skip past the first `} el`
+            next_else = after_current.find("} else if (")
+            cost_body = after_current[:next_else] if next_else >= 0 else after_cost[:1000]
+            add_car_ok = "add_car" in cost_body
+            add_old_num_ok = "oldNum" in cost_body or "carArgs.oldNum" in cost_body
+            if update_sold_ok and add_car_ok and add_old_num_ok:
+                print("  PASS (cost/identity→add_car, pure sale→update_sold_car_with_accounting)")
+            else:
+                missing = []
+                if not update_sold_ok: missing.append("update_sold_car_with_accounting in pure-sale branch")
+                if not add_car_ok: missing.append("add_car in cost/identity branch")
+                if not add_old_num_ok: missing.append("oldNum in cost/identity branch")
+                errors.append(f"FAIL: cost/identity edit path: missing {', '.join(missing)}")
+        else:
+            missing = []
+            if not has_pure_sale: missing.append("isPureSaleEdit variable")
+            if pure_branch < 0: missing.append("else if (isPureSaleEdit) branch")
+            if not has_cost_id: missing.append("isCostOrIdentityEdit variable")
+            if cost_branch < 0: missing.append("else if (isCostOrIdentityEdit) branch")
+            if not has_old_num: missing.append("carArgs.oldNum")
+            errors.append(f"FAIL: cost/identity dispatch pattern: missing {', '.join(missing)}")
+
+    # 66. add_car_expense_record uses rebuild_sold_car_accounting_after_cost_change
+    print("\n[S66] add_car_expense_record uses rebuild_sold_car_accounting_after_cost_change...")
+    fn_start = content.find("fn add_car_expense_record")
+    if fn_start >= 0:
+        fn_end = content.find("\n}", fn_start)
+        fn_body = content[fn_start:fn_end] if fn_end > fn_start else content[fn_start:fn_start+1000]
+        has_rebuild = "rebuild_sold_car_accounting_after_cost_change" in fn_body
+        has_record_car_ledger = "record_car_ledger_entries" in fn_body
+        if has_rebuild and not has_record_car_ledger:
+            print("  PASS")
+        elif has_rebuild:
+            errors.append("FAIL: add_car_expense_record uses rebuild helper but still has record_car_ledger_entries")
+        else:
+            errors.append("FAIL: add_car_expense_record does not use rebuild_sold_car_accounting_after_cost_change")
+    else:
+        errors.append("FAIL: add_car_expense_record not found in lib.rs")
+
+    # 67. No sold-car cost rebuild path uses record_car_ledger_entries directly
+    print("\n[S67] No sold-car cost rebuild calls record_car_ledger_entries directly...")
+    sold_paths_with_old = ["add_expense", "delete_car_expense_record", "add_car_expense_record"]
+    offending = 0
+    for fn_name in sold_paths_with_old:
+        fstart = content.find(f"fn {fn_name}")
+        if fstart >= 0:
+            fend = content.find("fn ", fstart + 5)
+            if fend < 0:
+                fend = content.find("#[tauri::command]", fstart + 5)
+            if fend < 0:
+                fend = fstart + 2000
+            fn_body = content[fstart:fend]
+            if "record_car_ledger_entries" in fn_body and "rebuild_sold_car_accounting_after_cost_change" not in fn_body:
+                offending += 1
+    if offending == 0:
+        print("  PASS")
+    else:
+        errors.append(f"FAIL: {offending} sold-car function(s) still call record_car_ledger_entries directly")
 
     # Summary
     print("\n" + "=" * 60)

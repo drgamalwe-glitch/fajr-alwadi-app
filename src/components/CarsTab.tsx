@@ -559,14 +559,11 @@ export function CarsTab({
     const wasSold = originalCar?.status === "مبيوعة";
     const isNewSoldCar = panelMode === "new" && data.status === "مبيوعة";
     const isNewSaleFromAvailable = panelMode === "edit" && originalCar?.status === "متوفرة" && data.status === "مبيوعة";
-    const isSoldCarAccountingEdit =
-      wasSold
-      && isEditing
-      && (
-        hasSoldCarSaleAccountingChange(originalCar, data)
-        || hasSoldCarCostAccountingChange(originalCar, data)
-        || hasSoldCarIdentityChange(originalCar, data)
-      );
+    const hasSaleChange = wasSold && isEditing && hasSoldCarSaleAccountingChange(originalCar, data);
+    const hasCostChange = wasSold && isEditing && hasSoldCarCostAccountingChange(originalCar, data);
+    const hasIdentityChange = wasSold && isEditing && hasSoldCarIdentityChange(originalCar, data);
+    const isPureSaleEdit = hasSaleChange && !hasCostChange && !hasIdentityChange;
+    const isCostOrIdentityEdit = (hasCostChange || hasIdentityChange) && !hasSaleChange;
 
     try {
       if (isNewSoldCar) {
@@ -600,8 +597,8 @@ export function CarsTab({
           commissionType: null,
           commissionValue: null,
         });
-      } else if (isSoldCarAccountingEdit) {
-        // Atomic: update sold car financial fields in one command
+      } else if (isPureSaleEdit) {
+        // Pure sale field edit (no cost/identity change): use update_sold_car_with_accounting
         await callTauri("update_sold_car_with_accounting", {
           carNumber: data.num,
           buyerName: data.buyerName.trim(),
@@ -617,6 +614,14 @@ export function CarsTab({
           deliveryDate: data.deliveryDate || null,
           monthlyPayment: data.paymentType === "اقساط" ? (Number(data.amountRemaining) || 0) / Math.max(1, Number(data.installmentMonths) || 1) : null,
         });
+      } else if (isCostOrIdentityEdit) {
+        // Cost or identity change: go through add_car which supports all purchase fields + oldNum
+        const carArgs = buildCarInvokeArgs(data);
+        if (originalCar) {
+          carArgs.oldNum = originalCar.car_number;
+          carArgs.purchaseDate = originalCar.purchase_date ?? carArgs.purchaseDate;
+        }
+        await callTauri("add_car", { ...carArgs, skipSaleAccounting: true });
       } else if (isNewSaleFromAvailable) {
         // Selling an available car: use sell_car_with_accounting
         await callTauri("sell_car_with_accounting", {
@@ -636,8 +641,10 @@ export function CarsTab({
         });
       } else {
         // Non-sale edit or new available car: use add_car
+        // Also handles mixed edits (sale + cost/identity simultaneously)
         const carArgs = buildCarInvokeArgs(data);
         if (isEditing && wasSold && originalCar) {
+          carArgs.oldNum = originalCar.car_number;
           carArgs.purchaseDate = originalCar.purchase_date ?? carArgs.purchaseDate;
         }
         await callTauri("add_car", { ...carArgs, skipSaleAccounting: true });
