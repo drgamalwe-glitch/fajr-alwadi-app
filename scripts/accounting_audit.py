@@ -742,6 +742,88 @@ def audit_db(db_path):
     else:
         print("  PASS" if not any('FAIL' in e and 'ledger unbalanced' in e for e in errors[len(errors)-len(sold_cars_detail):]) else "  FAIL")
 
+    # 40. No duplicate sale-generated customer rows per car (ISSUE 2)
+    print("\n[40] No duplicate sale-generated customer rows per car...")
+    dup_customer_rows = conn.execute("""
+        SELECT related_source_id, source_role, COUNT(*) as cnt
+        FROM partner_transactions
+        WHERE kind = 'زبون' AND related_source_type = 'car'
+          AND source_role IS NOT NULL
+        GROUP BY related_source_id, source_role
+        HAVING cnt > 1
+    """).fetchall()
+    if dup_customer_rows:
+        for r in dup_customer_rows:
+            errors.append(f"FAIL: Car {r['related_source_id']} has {r['cnt']} customer rows with role '{r['source_role']}'")
+    else:
+        print("  PASS")
+
+    # 41. No duplicate purchase ledger entries per car (ISSUE 1 complement)
+    print("\n[41] No duplicate purchase ledger entries per car...")
+    dup_purchase_ledger = conn.execute("""
+        SELECT reference_id, account_type, COUNT(*) as cnt
+        FROM financial_ledger
+        WHERE reference_type = 'car' AND account_type = 'inventory'
+        GROUP BY reference_id
+        HAVING cnt > 2
+    """).fetchall()
+    if dup_purchase_ledger:
+        for r in dup_purchase_ledger:
+            errors.append(f"FAIL: Car {r['reference_id']} has {r['cnt']} inventory ledger entries (expected 2: debit + credit)")
+    else:
+        print("  PASS")
+
+    # 42. update_partner also updated financial_ledger account_id (ISSUE 5)
+    print("\n[42] update_partner financial_ledger consistency...")
+    orphan_account_ids = conn.execute("""
+        SELECT COUNT(*) FROM financial_ledger
+        WHERE account_id NOT IN (SELECT partner_name FROM partners)
+    """).fetchone()[0]
+    if orphan_account_ids > 0:
+        errors.append(f"FAIL: {orphan_account_ids} ledger entries with non-existing account_id")
+    else:
+        print("  PASS")
+
+    # 43. No invalid dates in installment schedules (ISSUE 6)
+    print("\n[43] No invalid dates in installment schedules...")
+    bad_dates = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE source_type = 'customer_installment_schedule'
+          AND source_role = 'installment_schedule'
+          AND date NOT LIKE '____-__-__'
+    """).fetchone()[0]
+    if bad_dates > 0:
+        errors.append(f"FAIL: {bad_dates} installment schedule rows with invalid date format")
+    else:
+        print("  PASS")
+
+    # 44. No duplicate purchase partner_transactions from unnecessary rebuild (ISSUE 7)
+    print("\n[44] No duplicate purchase partner_transactions...")
+    dup_purchase_pt = conn.execute("""
+        SELECT source_id, partner_name, COUNT(*) as cnt
+        FROM partner_transactions
+        WHERE source_type = 'car_purchase' AND source_role = 'cash_payment'
+        GROUP BY source_id, partner_name
+        HAVING cnt > 1
+    """).fetchall()
+    if dup_purchase_pt:
+        for r in dup_purchase_pt:
+            errors.append(f"FAIL: Car {r['source_id']} has {r['cnt']} purchase rows for {r['partner_name']}")
+    else:
+        print("  PASS")
+
+    # 45. car_exists guard check (ISSUE 3)
+    print("\n[45] Non-existing car guard check...")
+    orphan_car_transactions = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE source_type = 'car_sale'
+          AND source_id NOT IN (SELECT CAST(car_number AS TEXT) FROM cars)
+    """).fetchone()[0]
+    if orphan_car_transactions > 0:
+        errors.append(f"FAIL: {orphan_car_transactions} sale transactions for non-existing cars")
+    else:
+        print("  PASS")
+
     # Summary
     print("\n" + "=" * 60)
     if errors:
@@ -1313,20 +1395,26 @@ def audit_source(lib_path):
 
     # 34. sell_car_with_accounting updates car sale fields
     print("\n[S34] sell_car_with_accounting updates car fields...")
-    in_func = False
     has_update = False
+    in_func = False
+    brace_depth = 0
+    saw_first_brace = False
     for i, line in enumerate(lines, 1):
         if 'fn sell_car_with_accounting' in line:
             in_func = True
         if in_func:
+            this_brace = line.count('{') - line.count('}')
+            if this_brace != 0:
+                saw_first_brace = True
+            if saw_first_brace:
+                brace_depth += this_brace
             stripped = line.split('//')[0] if '//' in line else line
             if 'UPDATE cars SET' in stripped:
-                # Check next few lines for status field
-                context = '\n'.join(lines[i-1:i+5])
+                context = '\n'.join(lines[max(0,i-2):i+5])
                 if 'status' in context:
                     has_update = True
                     break
-            if line.strip().startswith('}') and i > 3900:
+            if saw_first_brace and brace_depth <= 0:
                 in_func = False
     if has_update:
         print("  PASS")
@@ -1335,17 +1423,24 @@ def audit_source(lib_path):
 
     # 35. sell_car_with_accounting validates sale amounts
     print("\n[S35] sell_car_with_accounting validates sale amounts...")
-    in_func = False
     has_validation = False
+    in_func = False
+    brace_depth = 0
+    saw_first_brace = False
     for i, line in enumerate(lines, 1):
         if 'fn sell_car_with_accounting' in line:
             in_func = True
         if in_func:
+            this_brace = line.count('{') - line.count('}')
+            if this_brace != 0:
+                saw_first_brace = True
+            if saw_first_brace:
+                brace_depth += this_brace
             stripped = line.split('//')[0] if '//' in line else line
             if 'validate_sale_amounts' in stripped:
                 has_validation = True
                 break
-            if line.strip().startswith('}') and i > 3900:
+            if saw_first_brace and brace_depth <= 0:
                 in_func = False
     if has_validation:
         print("  PASS")
@@ -1389,6 +1484,124 @@ def audit_source(lib_path):
             print("  PASS")
         else:
             errors.append(f"FAIL: handlePurchaseAutomation still creates purchase transactions at line {bad_line}")
+    else:
+        print("  SKIP (CarsTab.tsx not found)")
+
+    # 38. record_car_sale_ledger_entries exists (ISSUE 1)
+    print("\n[S38] record_car_sale_ledger_entries exists...")
+    if 'fn record_car_sale_ledger_entries' in content:
+        print("  PASS")
+    else:
+        errors.append("FAIL: record_car_sale_ledger_entries not found")
+
+    # 39. delete_sale_generated_customer_rows_for_car in sell_car_with_accounting (ISSUE 2)
+    print("\n[S39] delete_sale_generated_customer_rows_for_car in sell_car_with_accounting...")
+    has_delete_customer = False
+    in_func = False
+    brace_depth = 0
+    saw_first_brace = False
+    for i, line in enumerate(lines, 1):
+        if 'fn sell_car_with_accounting' in line:
+            in_func = True
+        if in_func:
+            this_brace = line.count('{') - line.count('}')
+            if this_brace != 0:
+                saw_first_brace = True
+            if saw_first_brace:
+                brace_depth += this_brace
+            if 'delete_sale_generated_customer_rows_for_car' in line:
+                has_delete_customer = True
+                break
+            if saw_first_brace and brace_depth <= 0:
+                in_func = False
+    if has_delete_customer:
+        print("  PASS")
+    else:
+        errors.append("FAIL: sell_car_with_accounting does not call delete_sale_generated_customer_rows_for_car")
+
+    # 40. car_exists check in sell_car_with_accounting (ISSUE 3)
+    print("\n[S40] car_exists check in sell_car_with_accounting...")
+    has_car_exists = False
+    in_func = False
+    brace_depth = 0
+    saw_first_brace = False
+    for i, line in enumerate(lines, 1):
+        if 'fn sell_car_with_accounting' in line:
+            in_func = True
+        if in_func:
+            this_brace = line.count('{') - line.count('}')
+            if this_brace != 0:
+                saw_first_brace = True
+            if saw_first_brace:
+                brace_depth += this_brace
+            if 'car_exists' in line:
+                # Check surrounding lines for the > 0 or !car_exists check
+                context = '\n'.join(lines[max(0,i-3):min(len(lines),i+10)])
+                if '> 0' in context or '!car_exists' in context:
+                    has_car_exists = True
+                    break
+            if saw_first_brace and brace_depth <= 0:
+                in_func = False
+    if has_car_exists:
+        print("  PASS")
+    else:
+        errors.append("FAIL: sell_car_with_accounting missing car_exists check")
+
+    # 41. skip_sale_accounting parameter on add_car (ISSUE 4)
+    print("\n[S41] skip_sale_accounting parameter on add_car...")
+    if 'skip_sale_accounting' in content:
+        print("  PASS")
+    else:
+        errors.append("FAIL: add_car missing skip_sale_accounting parameter")
+
+    # 42. UPDATE financial_ledger SET account_id in update_partner (ISSUE 5)
+    print("\n[S42] update_partner updates financial_ledger account_id...")
+    in_update_partner = False
+    has_ledger_update = False
+    for i, line in enumerate(lines, 1):
+        if 'fn update_partner' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_update_partner = True
+        if in_update_partner:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'UPDATE financial_ledger' in stripped and 'SET account_id' in stripped:
+                has_ledger_update = True
+                break
+            if 'fn update_partner_transaction' in line:
+                in_update_partner = False
+    if has_ledger_update:
+        print("  PASS")
+    else:
+        errors.append("FAIL: update_partner does not update financial_ledger account_id")
+
+    # 43. days_in_month helper exists (ISSUE 6)
+    print("\n[S43] days_in_month helper exists...")
+    if 'fn days_in_month' in content:
+        print("  PASS")
+    else:
+        errors.append("FAIL: days_in_month helper not found")
+
+    # 44. purchase_changed logic in add_car (ISSUE 7)
+    print("\n[S44] purchase_changed logic in add_car...")
+    if 'purchase_changed' in content:
+        print("  PASS")
+    else:
+        errors.append("FAIL: purchase_changed logic not found in add_car")
+
+    # 45. skipSaleAccounting flag in frontend (ISSUE 4 frontend)
+    print("\n[S45] skipSaleAccounting flag in frontend...")
+    fe_file = None
+    for p in [os.path.join(os.path.dirname(lib_path) if lib_path else '.', '..', 'src', 'components', 'CarsTab.tsx'),
+              os.path.join('src', 'components', 'CarsTab.tsx')]:
+        if os.path.exists(p):
+            fe_file = p
+            break
+    if fe_file:
+        with open(fe_file, 'r', encoding='utf-8') as f:
+            fe_content = f.read()
+        if 'skipSaleAccounting' in fe_content:
+            print("  PASS")
+        else:
+            errors.append("FAIL: skipSaleAccounting flag not found in CarsTab.tsx")
     else:
         print("  SKIP (CarsTab.tsx not found)")
 

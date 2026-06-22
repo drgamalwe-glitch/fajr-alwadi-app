@@ -537,6 +537,8 @@ export function CarsTab({
         carArgs.purchaseDate = originalCar.purchase_date ?? carArgs.purchaseDate;
       }
 
+      const willCallSellAccounting = isBuyerChange || (data.status === "مبيوعة" && data.paymentType !== "كاش" && isPaymentChange);
+
       if (isNewSale) {
         // For new sale: call sell_car_with_accounting only (it updates car + does accounting atomically)
         const phone = data.phone.trim();
@@ -556,8 +558,8 @@ export function CarsTab({
           chassisNumber: data.chassis || null,
         });
       } else {
-        // For non-sale updates: use add_car
-        await callTauri("add_car", carArgs);
+        // For non-sale updates: use add_car (skip sale accounting if sell_car_with_accounting follows)
+        await callTauri("add_car", { ...carArgs, skipSaleAccounting: willCallSellAccounting });
 
         // Only handle financer/company purchase automation for non-sale car updates
         await handlePurchaseAutomation(data, originalCar);

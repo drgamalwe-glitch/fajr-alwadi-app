@@ -770,6 +770,96 @@ def check(db_path):
     test("Funder repayment type is 'سحب'",
          bad_type == 0, f"bad count={bad_type}")
 
+    # ===== Scenario 35: No duplicate sale customer rows on re-sell (ISSUE 1 + ISSUE 2) =====
+    print("\n[35] NO DUPLICATE SALE CUSTOMER ROWS ON RE-SELL")
+    has_related = False
+    try:
+        conn.execute("SELECT related_source_type FROM partner_transactions LIMIT 1")
+        has_related = True
+    except:
+        pass
+    if has_related:
+        dup_customer = conn.execute("""
+            SELECT related_source_id, source_role, COUNT(*) as cnt
+            FROM partner_transactions
+            WHERE kind = 'زبون' AND related_source_type = 'car'
+              AND source_role IS NOT NULL
+            GROUP BY related_source_id, source_role
+            HAVING cnt > 1
+        """).fetchall()
+        if dup_customer:
+            for r in dup_customer:
+                test(f"Car {r['related_source_id']}: no duplicate {r['source_role']} rows",
+                     False, f"count={r['cnt']}")
+        else:
+            test("No duplicate sale-generated customer rows per car", True)
+    else:
+        test("No duplicate sale customer rows (related_source missing)", True, "SKIP")
+
+    # ===== Scenario 36: Car existence check in sell_car_with_accounting (ISSUE 3) =====
+    print("\n[36] CAR EXISTENCE CHECK")
+    # Runtime check: no orphan sale transactions for non-existing cars
+    orphan_sales = conn.execute("""
+        SELECT COUNT(*) FROM partner_transactions
+        WHERE source_type = 'car_sale'
+          AND source_id NOT IN (SELECT CAST(car_number AS TEXT) FROM cars)
+    """).fetchone()[0]
+    test("No sale transactions for non-existing cars",
+         orphan_sales == 0, f"orphan count={orphan_sales}")
+
+    # ===== Scenario 37: Purchase only rebuilt when changed (ISSUE 7) =====
+    print("\n[37] PURCHASE NOT UNNECESSARILY REBUILT")
+    dup_purchase = conn.execute("""
+        SELECT source_id, partner_name, COUNT(*) as cnt
+        FROM partner_transactions
+        WHERE source_type = 'car_purchase' AND source_role = 'cash_payment'
+        GROUP BY source_id, partner_name
+        HAVING cnt > 1
+    """).fetchall()
+    if dup_purchase:
+        for r in dup_purchase:
+            test(f"Car {r['source_id']}: no duplicate purchase for {r['partner_name']}",
+                 False, f"count={r['cnt']}")
+    else:
+        test("No duplicate purchase rows per car", True)
+
+    # ===== Scenario 38: Financial ledger account_id consistency (ISSUE 5) =====
+    print("\n[38] FINANCIAL LEDGER ACCOUNT_ID CONSISTENCY")
+    orphan_accounts = conn.execute("""
+        SELECT COUNT(*) FROM financial_ledger
+        WHERE account_id NOT IN (SELECT partner_name FROM partners)
+    """).fetchone()[0]
+    test("No orphan account_ids in financial_ledger",
+         orphan_accounts == 0, f"orphan count={orphan_accounts}")
+
+    # ===== Scenario 39: No invalid dates (ISSUE 6) =====
+    print("\n[39] NO INVALID DATES")
+    bad_dates = 0
+    if has_related:
+        bad_dates = conn.execute("""
+            SELECT COUNT(*) FROM partner_transactions
+            WHERE source_type = 'customer_installment_schedule'
+              AND date NOT LIKE '____-__-__'
+        """).fetchone()[0]
+    test("No invalid installment schedule dates",
+         bad_dates == 0, f"bad count={bad_dates}")
+
+    # ===== Scenario 40: No duplicate inventory ledger entries (ISSUE 1) =====
+    print("\n[40] NO DUPLICATE INVENTORY LEDGER ENTRIES")
+    dup_inventory = conn.execute("""
+        SELECT reference_id, COUNT(*) as cnt
+        FROM financial_ledger
+        WHERE reference_type = 'car' AND account_type = 'inventory'
+        GROUP BY reference_id
+        HAVING cnt > 2
+    """).fetchall()
+    if dup_inventory:
+        for r in dup_inventory:
+            test(f"Car {r['reference_id']}: no duplicate inventory entries",
+                 False, f"count={r['cnt']}")
+    else:
+        test("No duplicate inventory ledger entries per car", True)
+
     # ===== Summary =====
     print("\n" + "=" * 60)
     passed_count = sum(1 for _, p, _ in results if p)

@@ -2940,6 +2940,220 @@ fn ensure_sales_cogs_entries(conn: &Connection) -> SqlResult<()> {
 }
 
 #[allow(clippy::type_complexity)]
+fn record_car_purchase_ledger_entries(db: &Connection, car_number: &str) -> Result<(), String> {
+    let car_number = car_number.trim();
+
+    let car_info: Result<(String, f64, String, String, Option<String>, String, String), rusqlite::Error> = db.query_row(
+        "SELECT car_name, purchase_price, COALESCE(currency, 'IQD'), COALESCE(purchase_type, 'كاش'), financer_name,
+                COALESCE(purchase_date, ''), COALESCE(purchase_time, '00:00')
+         FROM cars WHERE car_number = ?1",
+        [car_number],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
+    );
+
+    let (car_name, purchase_price, currency, purchase_type, financer_name_opt, purchase_date, purchase_time) = match car_info {
+        Ok(info) => info,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+        Err(e) => return Err(e.to_string()),
+    };
+
+    let p_date = if purchase_date.is_empty() {
+        "2026-06-12".to_string()
+    } else {
+        purchase_date
+    };
+    let p_time = purchase_time;
+
+    if purchase_price > 0.0 {
+        record_ledger_entry(db, &p_date, &p_time, "inventory", Some(car_number), purchase_price, 0.0, &currency, "car", car_number, "شراء سيارة", &format!("شراء سيارة: {} ({})", car_name, car_number), None).map_err(|e| e.to_string())?;
+
+        if purchase_type == "تمويل" || purchase_type == "دين" {
+            let f_name = financer_name_opt.unwrap_or_default().trim().to_string();
+            let acc_id = if f_name.is_empty() { "ممول عام".to_string() } else { f_name };
+            record_ledger_entry(db, &p_date, &p_time, "funder", Some(&acc_id), 0.0, purchase_price, &currency, "car", car_number, "تمويل شراء سيارة", &format!("تمويل شراء سيارة: {} ({}) من قبل {}", car_name, car_number, acc_id), None).map_err(|e| e.to_string())?;
+        } else if purchase_type == "شركة" {
+            let f_name = financer_name_opt.unwrap_or_default().trim().to_string();
+            let acc_id = if f_name.is_empty() { "شركة عامة".to_string() } else { f_name };
+            record_ledger_entry(db, &p_date, &p_time, "payable", Some(&acc_id), 0.0, purchase_price, &currency, "car", car_number, "شراء سيارة عن طريق شركة", &format!("شراء سيارة: {} ({}) عن طريق شركة {}", car_name, car_number, acc_id), None).map_err(|e| e.to_string())?;
+        } else {
+            let mut p_stmt = db.prepare("SELECT COALESCE(purchase_payment_type, 'قاصه') FROM cars WHERE car_number = ?1").map_err(|e| e.to_string())?;
+            let register: String = p_stmt.query_row([car_number], |row| row.get(0)).unwrap_or_else(|_| "قاصه".to_string());
+            let register = if register.trim().is_empty() { "قاصه".to_string() } else { register };
+            record_ledger_entry(db, &p_date, &p_time, "cash", Some(&register), 0.0, purchase_price, &currency, "car", car_number, "شراء سيارة كاش", &format!("سحب نقدي لشراء سيارة: {} ({}) من {}", car_name, car_number, register), None).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
+fn record_car_sale_ledger_entries(db: &Connection, car_number: &str) -> Result<(), String> {
+    let car_number = car_number.trim();
+
+    let car_info: Result<(String, f64, String, String, String, f64, String, Option<String>, Option<f64>, Option<f64>, String, String, Option<String>), rusqlite::Error> = db.query_row(
+        "SELECT car_name, purchase_price, COALESCE(currency, 'IQD'), COALESCE(sale_currency, 'IQD'),
+                COALESCE(sale_date, ''), selling_price, status, payment_type, amount_paid, amount_remaining,
+                COALESCE(sale_time, '00:00'), COALESCE(purchase_date, ''), buyer_name
+         FROM cars WHERE car_number = ?1",
+        [car_number],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+                row.get(8)?,
+                row.get(9)?,
+                row.get(10)?,
+                row.get(11)?,
+                row.get(12)?,
+            ))
+        },
+    );
+
+    let (car_name, purchase_price, currency, sale_currency, sale_date, selling_price, status, payment_type_opt, amount_paid_opt, amount_remaining_opt, sale_time, _purchase_date, buyer_name_opt) = match car_info {
+        Ok(info) => info,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+        Err(e) => return Err(e.to_string()),
+    };
+
+    if status != "مبيوعة" {
+        return Ok(());
+    }
+
+    let s_date = if sale_date.is_empty() {
+        "2026-06-12".to_string()
+    } else {
+        sale_date
+    };
+    let s_time = sale_time;
+    let buyer_name = buyer_name_opt.unwrap_or_else(|| "مشتري مجهول".to_string());
+    let payment_type = payment_type_opt.unwrap_or_else(|| "كاش".to_string());
+    let _amount_paid = amount_paid_opt.unwrap_or(selling_price);
+    let _amount_remaining = amount_remaining_opt.unwrap_or(0.0);
+
+    let expenses_sum: f64 = db
+        .query_row(
+            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+            [car_number],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+    let total_cogs = purchase_price + expenses_sum;
+    let _total_profit = selling_price - total_cogs;
+
+    if payment_type == "كاش" {
+        record_ledger_entry(
+            db,
+            &s_date,
+            &s_time,
+            "revenue",
+            Some(car_number),
+            0.0,
+            selling_price,
+            &sale_currency,
+            "car",
+            car_number,
+            "بيع سيارة",
+            &format!("إيراد بيع سيارة {} ({}) إلى {}", car_name, car_number, buyer_name),
+            None,
+        )?;
+
+        record_ledger_entry(
+            db,
+            &s_date,
+            &s_time,
+            "cash",
+            Some("قاصه"),
+            selling_price,
+            0.0,
+            &sale_currency,
+            "car",
+            car_number,
+            "بيع سيارة كاش",
+            &format!("استلام نقدي بيع سيارة {} ({})", car_name, car_number),
+            None,
+        )?;
+    } else {
+        record_ledger_entry(
+            db,
+            &s_date,
+            &s_time,
+            "receivable",
+            Some(&buyer_name),
+            selling_price,
+            0.0,
+            &sale_currency,
+            "car",
+            car_number,
+            "مدينون بيع سيارة",
+            &format!(
+                "ذمة مدينة كاملة بيع سيارة {} ({}) على {}",
+                car_name, car_number, buyer_name
+            ),
+            None,
+        )?;
+
+        record_ledger_entry(
+            db,
+            &s_date,
+            &s_time,
+            "deferred_revenue",
+            Some(car_number),
+            0.0,
+            selling_price,
+            &sale_currency,
+            "car",
+            car_number,
+            "إيراد مؤجل بيع سيارة",
+            &format!(
+                "إيراد مؤجل بيع سيارة {} ({}) إلى {}",
+                car_name, car_number, buyer_name
+            ),
+            None,
+        )?;
+    }
+
+    if total_cogs > 0.0 {
+        record_ledger_entry(
+            db,
+            &s_date,
+            &s_time,
+            "expense",
+            Some(car_number),
+            total_cogs,
+            0.0,
+            &currency,
+            "car",
+            car_number,
+            "تكلفة المبيعات",
+            &format!("تكلفة بيع سيارة {} ({})", car_name, car_number),
+            None,
+        )?;
+    }
+
+    record_ledger_entry(
+        db,
+        &s_date,
+        &s_time,
+        "inventory",
+        Some(car_number),
+        0.0,
+        total_cogs,
+        &currency,
+        "car",
+        car_number,
+        "تخفيض المخزون بيع سيارة",
+        &format!("إخراج سيارة {} ({}) من المخزون", car_name, car_number),
+        None,
+    )?;
+
+    Ok(())
+}
+
 fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), String> {
     let car_number = car_number.trim();
 
@@ -3105,146 +3319,157 @@ fn record_car_ledger_entries(db: &Connection, car_number: &str) -> Result<(), St
     }
 
     if status == "مبيوعة" {
-        let s_date = if sale_date.is_empty() {
-            "2026-06-12".to_string()
-        } else {
-            sale_date
-        };
-        let s_time = sale_time;
-        let buyer_name = buyer_name_opt.unwrap_or_else(|| "مشتري مجهول".to_string());
-        let payment_type = payment_type_opt.unwrap_or_else(|| "كاش".to_string());
-        let _amount_paid = amount_paid_opt.unwrap_or(selling_price);
-        let _amount_remaining = amount_remaining_opt.unwrap_or(0.0);
+        record_car_sale_ledger_entries_from_vars(
+            db, car_number, &car_name, purchase_price, &currency,
+            &selling_price, &sale_currency, &sale_date, &sale_time,
+            &payment_type_opt, &amount_paid_opt, &amount_remaining_opt,
+            &buyer_name_opt,
+        )?;
+    }
 
-        let expenses_sum: f64 = db
-            .query_row(
-                "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
-                [car_number],
-                |row| row.get(0),
-            )
-            .unwrap_or(0.0);
-        let total_cogs = purchase_price + expenses_sum;
-        let _total_profit = selling_price - total_cogs;
+    Ok(())
+}
 
-        if payment_type == "كاش" {
-            // Phase 17: Cash sale — recognize revenue and profit immediately
-            record_ledger_entry(
-                db,
-                &s_date,
-                &s_time,
-                "revenue",
-                Some(car_number),
-                0.0,
-                selling_price,
-                &sale_currency,
-                "car",
-                car_number,
-                "بيع سيارة",
-                &format!(
-                    "إيراد بيع سيارة {} ({}) إلى {}",
-                    car_name, car_number, buyer_name
-                ),
-                None,
-            )?;
+fn record_car_sale_ledger_entries_from_vars(
+    db: &Connection,
+    car_number: &str,
+    car_name: &str,
+    purchase_price: f64,
+    currency: &str,
+    selling_price: &f64,
+    sale_currency: &str,
+    sale_date: &str,
+    sale_time: &str,
+    payment_type_opt: &Option<String>,
+    amount_paid_opt: &Option<f64>,
+    amount_remaining_opt: &Option<f64>,
+    buyer_name_opt: &Option<String>,
+) -> Result<(), String> {
+    let s_date = if sale_date.is_empty() {
+        "2026-06-12".to_string()
+    } else {
+        sale_date.to_string()
+    };
+    let s_time = sale_time.to_string();
+    let buyer_name = buyer_name_opt.clone().unwrap_or_else(|| "مشتري مجهول".to_string());
+    let payment_type = payment_type_opt.clone().unwrap_or_else(|| "كاش".to_string());
+    let _amount_paid = amount_paid_opt.unwrap_or(*selling_price);
+    let _amount_remaining = amount_remaining_opt.unwrap_or(0.0);
 
-            record_ledger_entry(
-                db,
-                &s_date,
-                &s_time,
-                "cash",
-                Some("قاصه"),
-                selling_price,
-                0.0,
-                &sale_currency,
-                "car",
-                car_number,
-                "بيع سيارة كاش",
-                &format!("استلام نقدي بيع سيارة {} ({})", car_name, car_number),
-                None,
-            )?;
-        } else {
-            // Installment/term sale — gradual profit recognition
-            // Cash is recorded through customer_payment rows to avoid double-counting.
-            // The frontend creates a customer payment row for amount_paid which generates
-            // cash_movement partner rows. The car ledger must NOT also debit cash.
-            // Record receivable for the FULL selling price (customer owes this amount).
-            // Customer payment rows will credit receivable as they pay.
-            record_ledger_entry(
-                db,
-                &s_date,
-                &s_time,
-                "receivable",
-                Some(&buyer_name),
-                selling_price,
-                0.0,
-                &sale_currency,
-                "car",
-                car_number,
-                "مدينون بيع سيارة",
-                &format!(
-                    "ذمة مدينة كاملة بيع سيارة {} ({}) على {}",
-                    car_name, car_number, buyer_name
-                ),
-                None,
-            )?;
+    let expenses_sum: f64 = db
+        .query_row(
+            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
+            [car_number],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+    let total_cogs = purchase_price + expenses_sum;
 
-            // Matching credit: deferred revenue (balances the receivable debit)
-            record_ledger_entry(
-                db,
-                &s_date,
-                &s_time,
-                "deferred_revenue",
-                Some(car_number),
-                0.0,
-                selling_price,
-                &sale_currency,
-                "car",
-                car_number,
-                "إيراد مؤجل بيع سيارة",
-                &format!(
-                    "إيراد مؤجل بيع سيارة {} ({}) إلى {}",
-                    car_name, car_number, buyer_name
-                ),
-                None,
-            )?;
-        }
-
-        // COGS and inventory reduction (same for both cash and installment)
-        if total_cogs > 0.0 {
-            record_ledger_entry(
-                db,
-                &s_date,
-                &s_time,
-                "expense",
-                Some(car_number),
-                total_cogs,
-                0.0,
-                &currency,
-                "car",
-                car_number,
-                "تكلفة المبيعات",
-                &format!("تكلفة بيع سيارة {} ({})", car_name, car_number),
-                None,
-            )?;
-        }
-
-        // Credit inventory by total_cost (not selling_price)
+    if payment_type == "كاش" {
         record_ledger_entry(
             db,
             &s_date,
             &s_time,
-            "inventory",
+            "revenue",
             Some(car_number),
             0.0,
-            total_cogs,
-            &currency,
+            *selling_price,
+            sale_currency,
             "car",
             car_number,
-            "تخفيض المخزون بيع سيارة",
-            &format!("إخراج سيارة {} ({}) من المخزون", car_name, car_number),
+            "بيع سيارة",
+            &format!("إيراد بيع سيارة {} ({}) إلى {}", car_name, car_number, buyer_name),
+            None,
+        )?;
+
+        record_ledger_entry(
+            db,
+            &s_date,
+            &s_time,
+            "cash",
+            Some("قاصه"),
+            *selling_price,
+            0.0,
+            sale_currency,
+            "car",
+            car_number,
+            "بيع سيارة كاش",
+            &format!("استلام نقدي بيع سيارة {} ({})", car_name, car_number),
+            None,
+        )?;
+    } else {
+        record_ledger_entry(
+            db,
+            &s_date,
+            &s_time,
+            "receivable",
+            Some(&buyer_name),
+            *selling_price,
+            0.0,
+            sale_currency,
+            "car",
+            car_number,
+            "مدينون بيع سيارة",
+            &format!(
+                "ذمة مدينة كاملة بيع سيارة {} ({}) على {}",
+                car_name, car_number, buyer_name
+            ),
+            None,
+        )?;
+
+        record_ledger_entry(
+            db,
+            &s_date,
+            &s_time,
+            "deferred_revenue",
+            Some(car_number),
+            0.0,
+            *selling_price,
+            sale_currency,
+            "car",
+            car_number,
+            "إيراد مؤجل بيع سيارة",
+            &format!(
+                "إيراد مؤجل بيع سيارة {} ({}) إلى {}",
+                car_name, car_number, buyer_name
+            ),
             None,
         )?;
     }
+
+    if total_cogs > 0.0 {
+        record_ledger_entry(
+            db,
+            &s_date,
+            &s_time,
+            "expense",
+            Some(car_number),
+            total_cogs,
+            0.0,
+            currency,
+            "car",
+            car_number,
+            "تكلفة المبيعات",
+            &format!("تكلفة بيع سيارة {} ({})", car_name, car_number),
+            None,
+        )?;
+    }
+
+    record_ledger_entry(
+        db,
+        &s_date,
+        &s_time,
+        "inventory",
+        Some(car_number),
+        0.0,
+        total_cogs,
+        currency,
+        "car",
+        car_number,
+        "تخفيض المخزون بيع سيارة",
+        &format!("إخراج سيارة {} ({}) من المخزون", car_name, car_number),
+        None,
+    )?;
 
     Ok(())
 }
@@ -3284,6 +3509,7 @@ fn add_car(
     commission_type: Option<String>,
     commission_value: Option<f64>,
     _car_partners: Option<Vec<CarPartner>>,
+    skip_sale_accounting: Option<bool>,
 ) -> Result<(), String> {
     // ============================================================
     // VALIDATION (before any write)
@@ -3344,16 +3570,36 @@ fn add_car(
     } else {
         car_number.as_str()
     };
-    let (existing_purchase_time, existing_sale_time, old_name, _old_chassis, _old_model, _old_year, old_status): (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = db
+    let old_car_data: (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<f64>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = db
         .query_row(
-            "SELECT purchase_time, sale_time, car_name, chassis_number, car_model, car_year, status FROM cars WHERE car_number = ?1",
+            "SELECT purchase_time, sale_time, car_name, chassis_number, car_model, car_year, status,
+                    purchase_price, COALESCE(purchase_type, 'كاش'), financer_name, currency,
+                    COALESCE(purchase_date, ''), purchase_payment_type
+             FROM cars WHERE car_number = ?1",
             [query_num],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
+            |row| Ok((
+                row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
+                row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?,
+                row.get(10)?, row.get(11)?, row.get(12)?,
+            )),
         )
-        .unwrap_or((None, None, None, None, None, None, None));
+        .unwrap_or((None, None, None, None, None, None, None, None, None, None, None, None, None));
+    let (
+        existing_purchase_time, existing_sale_time, old_name, _old_chassis, _old_model, _old_year,
+        old_status, old_purchase_price, old_purchase_type, old_financer_name, old_currency,
+        _old_purchase_date, _old_purchase_payment_type,
+    ) = old_car_data;
     let is_existing_car = old_name.is_some();
     let should_create_purchase_transactions = !is_existing_car;
     let should_create_sale_transactions = status == "مبيوعة" && old_status.as_deref() != Some("مبيوعة");
+
+    let purchase_changed = is_existing_car && (
+        old_purchase_price.map_or(true, |v| (v - purchase).abs() > 0.001)
+        || old_purchase_type.as_deref() != purchase_type.as_deref()
+        || old_financer_name.as_deref() != financer_name.as_deref()
+        || old_currency.as_deref() != currency.as_deref()
+    );
+    let should_rebuild_purchase = should_create_purchase_transactions || purchase_changed;
 
     if !old_num.is_empty() {
         // نقوم بحذف قيود دفتر الأستاذ القديمة للسيارة لتجنب التكرار والعكس في القاصة وسجل المعاملات
@@ -3497,8 +3743,7 @@ fn add_car(
     }
 
     // حذف حركات الشراء القديمة ثم إعادة إنشائها حسب نوع الشراء الحالي (باستخدام حقول المصدر)
-    // Also rebuild when purchase data changes for existing cars
-    let should_rebuild_purchase = should_create_purchase_transactions || is_existing_car;
+    // Only rebuild when purchase-impacting fields actually change
     if should_rebuild_purchase {
         // Delete only car purchase generated rows (not sale rows)
         delete_generated_car_purchase_partner_transactions(&db, &car_number)?;
@@ -3564,6 +3809,8 @@ fn add_car(
         }
     }
 
+    let skip_sale = skip_sale_accounting.unwrap_or(false);
+
     // حذف وإعادة توزيع الأرباح والكاش عند البيع
     let sale_note = format!("ايداع بيع سيارة {} {}", name.trim(), chassis.trim())
         .trim()
@@ -3572,7 +3819,7 @@ fn add_car(
         .trim()
         .replace("  ", " ");
 
-    if should_create_sale_transactions {
+    if should_create_sale_transactions && !skip_sale {
         // Delete only car sale generated rows (not purchase rows)
         delete_generated_car_sale_partner_transactions(&db, &car_number)?;
 
@@ -3591,7 +3838,7 @@ fn add_car(
         }
     }
 
-    if should_create_sale_transactions {
+    if should_create_sale_transactions && !skip_sale {
         // Currency policy: block mixed-currency sales without explicit fx_rate
         let purchase_curr = currency.as_deref().unwrap_or("IQD");
         let sale_curr = sale_currency.as_deref().unwrap_or("IQD");
@@ -3701,7 +3948,10 @@ fn add_car(
     )
     .map_err(|e| e.to_string())?;
 
-    record_car_ledger_entries(&db, car_number.as_str())?;
+    record_car_purchase_ledger_entries(&db, car_number.as_str())?;
+    if should_create_sale_transactions && !skip_sale {
+        record_car_sale_ledger_entries(&db, car_number.as_str())?;
+    }
 
     db.commit().map_err(|e| e.to_string())?;
     Ok(())
@@ -3782,15 +4032,27 @@ fn sell_car_with_accounting(
     }
 
     // ============================================================
-    // STEP 1: Update car sale fields in cars table
+    // STEP 1: Check car exists, then update sale fields
     // ============================================================
+    let car_exists: bool = db
+        .query_row(
+            "SELECT COUNT(*) FROM cars WHERE car_number = ?1",
+            [&car_number],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| e.to_string())?
+        > 0;
+    if !car_exists {
+        return Err(format!("السيارة رقم {} غير موجودة", car_number));
+    }
+
     let now_time = db
         .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
             row.get::<_, String>(0)
         })
         .unwrap_or_else(|_| "00:00".to_string());
 
-    db.execute(
+    let rows_affected = db.execute(
         "UPDATE cars SET
             status = 'مبيوعة',
             selling_price = ?1,
@@ -3822,25 +4084,18 @@ fn sell_car_with_accounting(
             car_number,
         ],
     ).map_err(|e| e.to_string())?;
+    if rows_affected == 0 {
+        return Err(format!("السيارة رقم {} غير موجودة", car_number));
+    }
 
     // ============================================================
-    // STEP 2: Delete existing sale-related ledger and partner rows (safe rebuild)
+    // STEP 2: Delete existing sale-related customer rows, partner rows, splits, and ledger entries before rebuilding
     // ============================================================
+    // Delete customer rows and their splits linked to this car (down payment, installment schedule)
+    delete_sale_generated_customer_rows_for_car(&db, &car_number)?;
+
     // Delete sale partner rows (not purchase rows)
     delete_generated_car_sale_partner_transactions(&db, &car_number)?;
-
-    // Delete customer payment splits linked to this car
-    let car_payment_ids: Vec<i64> = db
-        .prepare("SELECT id FROM partner_transactions WHERE kind = 'زبون' AND ((related_source_type = 'car' AND related_source_id = ?1) OR (related_source_type IS NULL AND notes LIKE ?2))")
-        .map_err(|e| e.to_string())?
-        .query_map(params![car_number, format!("%#بيع_سيارة_{}%", car_number)], |row| row.get(0))
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-    for pid in car_payment_ids {
-        delete_customer_payment_partner_splits(&db, pid)?;
-        delete_customer_payment_profit_splits(&db, pid)?;
-    }
 
     // Delete sale-related car ledger entries (receivable, deferred_revenue, revenue, COGS, inventory credit)
     // But keep purchase entries
@@ -3956,9 +4211,9 @@ fn sell_car_with_accounting(
     }
 
     // ============================================================
-    // STEP 6: Record car sale ledger entries (now safe — old sale entries deleted)
+    // STEP 6: Record car sale ledger entries only (old entries already deleted above)
     // ============================================================
-    record_car_ledger_entries(&db, &car_number)?;
+    record_car_sale_ledger_entries(&db, &car_number)?;
 
     // ============================================================
     // STEP 7: Recalculate and commit
@@ -3969,7 +4224,21 @@ fn sell_car_with_accounting(
     Ok(())
 }
 
-/// Helper to add months to a date string (YYYY-MM-DD).
+fn days_in_month(year: i32, month: i32) -> i32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 30,
+    }
+}
+
 fn add_months_to_date(date_str: &str, months: i32) -> String {
     let parts: Vec<&str> = date_str.split('-').collect();
     if parts.len() != 3 {
@@ -3977,13 +4246,16 @@ fn add_months_to_date(date_str: &str, months: i32) -> String {
     }
     let year: i32 = parts[0].parse().unwrap_or(2026);
     let month: i32 = parts[1].parse().unwrap_or(1);
-    let day: &str = parts[2];
+    let day: i32 = parts[2].parse().unwrap_or(1);
 
     let total_months = (year * 12 + month - 1) + months;
     let new_year = total_months / 12;
     let new_month = (total_months % 12) + 1;
 
-    format!("{:04}-{:02}-{}", new_year, new_month, day)
+    let max_day = days_in_month(new_year, new_month);
+    let clamped_day = day.min(max_day);
+
+    format!("{:04}-{:02}-{:02}", new_year, new_month, clamped_day)
 }
 
 #[tauri::command]
@@ -4690,6 +4962,13 @@ fn update_partner(
         (&name, &kind, &old_name, &old_kind),
     )
     .map_err(|e| e.to_string())?;
+    if old_name != name {
+        db.execute(
+            "UPDATE financial_ledger SET account_id = ?1 WHERE account_id = ?2",
+            (&name, &old_name),
+        )
+        .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -4938,6 +5217,38 @@ fn delete_generated_car_sale_partner_transactions(db: &Connection, car_number: &
         db.execute("DELETE FROM partner_transactions WHERE id = ?1", [tx_id])
             .map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+fn delete_sale_generated_customer_rows_for_car(db: &Connection, car_number: &str) -> Result<(), String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT id, partner_name FROM partner_transactions
+             WHERE kind = 'زبون'
+               AND related_source_type = 'car' AND related_source_id = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let customer_rows: Vec<(i64, String)> = stmt
+        .query_map([car_number], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    let mut buyers_to_recalc = std::collections::HashSet::new();
+    for (cust_id, buyer_name) in &customer_rows {
+        delete_customer_payment_partner_splits(db, *cust_id)?;
+        delete_customer_payment_profit_splits(db, *cust_id)?;
+        delete_ledger_entries(db, "partner_transaction", &cust_id.to_string())?;
+        db.execute("DELETE FROM partner_transactions WHERE id = ?1", [cust_id])
+            .map_err(|e| e.to_string())?;
+        buyers_to_recalc.insert(buyer_name.clone());
+    }
+
+    for buyer_name in buyers_to_recalc {
+        recalculate_partner_total(db, &buyer_name, "زبون")?;
+    }
+
     Ok(())
 }
 
