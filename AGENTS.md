@@ -1,12 +1,28 @@
 # AGENTS.md — Fajr Alwadi Accounting System
 
-## Session Status (2026-06-22)
+## Session Status (2026-06-22) — ✅ VERIFICATION COMPLETE
 
-### Verification Commands
-- `cargo check` — 0 errors, 5 pre-existing unused function warnings
-- `npx tsc --noEmit` — exit 0
-- `python3 scripts/accounting_audit.py static` — S1–S71 all PASS
-- Runtime DB tests require `fajr_alwadi.db` in project root or `data/` or `src-tauri/`
+### Final Verification Results
+
+| Check | Result |
+|---|---|
+| `cargo check` | ✅ PASS — 0 errors, 5 unused fn warnings |
+| `npx tsc --noEmit` | ✅ PASS — exit 0 |
+| `python3 scripts/accounting_audit.py static` | ✅ PASS — S1–S71 |
+| `python3 scripts/accounting_runtime_scenarios.py` | ✅ PASS — 25/25, 120/120 assertions |
+| `python3 scripts/accounting_audit.py "<fresh_db>"` | ✅ PASS — clean pre/post smoke |
+| `python3 scripts/check_installment_profit.py "<fresh_db>"` | ✅ PASS — 37/37 |
+| `python3 scripts/smoke_test_real_db.py` | ✅ PASS — 9/9 workflows, 51/51 assertions |
+| `python3 scripts/accounting_audit.py "<fresh_db>"` (post-smoke) | ✅ PASS — clean |
+
+### Tags
+- `accounting-verified-v1`
+- `fajr-alwadi-accounting-stable-2026-06-22`
+
+### Key Files
+- `AUDIT_RESULTS.md` — Full verification report
+- `src-tauri/fjr_alwadi_data.clean_verified_2026-06-22.db` — Clean DB backup
+- `scripts/smoke_test_real_db.py` — Real fresh DB smoke test suite
 
 ### Phase 3 Completed — 11 Defects Fixed (Rounds 1 + 2 + 3)
 
@@ -45,6 +61,6 @@
   - `add_expense`, `delete_car_expense_record`, `add_car_expense_record`: use rebuild helper
 - `src/components/CarsTab.tsx` — 3 helpers: sale, cost, identity; dispatch: sale→update_sold_car, cost/identity→add_car, mixed edits→Arabic error
 - `scripts/accounting_audit.py` — S1–S71 static checks
-
-### Pending
-- Runtime DB tests (scenarios 50–52) — need a seeded `fajr_alwadi.db`
+- `scripts/accounting_runtime_scenarios.py` — 25-scenario seeded runtime tests
+- `scripts/smoke_test_real_db.py` — 9-workflow real fresh DB smoke tests
+- `scripts/check_installment_profit.py` — 37 practical accounting tests
