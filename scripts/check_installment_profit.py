@@ -574,6 +574,83 @@ def check(db_path):
     test("DB version >= 11 (v11 migration applied)",
          db_ver >= 11, f"version={db_ver}")
 
+    # ===== Scenario 23: Customer balance vs ledger receivable net =====
+    print("\n[23] CUSTOMER BALANCE VS LEDGER")
+    customers_bal = conn.execute("""
+        SELECT partner_name, COALESCE(iqd_balance, 0.0) as iqd_bal, COALESCE(usd_balance, 0.0) as usd_bal
+        FROM partners WHERE kind = 'زبون'
+    """).fetchall()
+    for cust in customers_bal:
+        cname = cust['partner_name']
+        iqd_bal = cust['iqd_bal']
+        usd_bal = cust['usd_bal']
+        iqd_ledger = conn.execute("""
+            SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
+            WHERE account_type = 'receivable' AND account_id = ? AND currency = 'IQD'
+        """, [cname]).fetchone()[0]
+        usd_ledger = conn.execute("""
+            SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
+            WHERE account_type = 'receivable' AND account_id = ? AND currency = 'USD'
+        """, [cname]).fetchone()[0]
+        test(f"Customer {cname}: IQD balance matches ledger",
+             abs(iqd_bal - iqd_ledger) < 0.01,
+             f"balance={iqd_bal:,.0f} ledger={iqd_ledger:,.0f}")
+        test(f"Customer {cname}: USD balance matches ledger",
+             abs(usd_bal - usd_ledger) < 0.01,
+             f"balance={usd_bal:,.0f} ledger={usd_ledger:,.0f}")
+
+    # ===== Scenario 24: related_source_id migration completeness =====
+    print("\n[24] RELATED_SOURCE_ID MIGRATION")
+    if has_related_col:
+        bad_related = conn.execute("""
+            SELECT COUNT(*) FROM partner_transactions
+            WHERE notes LIKE '%#بيع_سيارة_%'
+              AND (related_source_id IS NULL OR related_source_id = '' OR related_source_id LIKE '% %')
+        """).fetchone()[0]
+        test("All car-linked rows have clean related_source_id",
+             bad_related == 0, f"bad count={bad_related}")
+    else:
+        test("related_source_id column exists", False, "column not found")
+
+    # ===== Scenario 25: Mixed currency check =====
+    print("\n[25] MIXED CURRENCY CHECK")
+    mixed_cars = conn.execute("""
+        SELECT car_number, COALESCE(currency, 'IQD') as purchase_curr, COALESCE(sale_currency, 'IQD') as sale_curr
+        FROM cars WHERE status = 'مبيوعة'
+          AND COALESCE(currency, 'IQD') != COALESCE(sale_currency, 'IQD')
+    """).fetchall()
+    test("No sold cars with mixed purchase/sale currencies",
+         len(mixed_cars) == 0,
+         f"mixed count={len(mixed_cars)}")
+
+    # ===== Scenario 26: Orphan ledger check =====
+    print("\n[26] ORPHAN LEDGER CHECK")
+    orphan_count = conn.execute("""
+        SELECT COUNT(*) FROM financial_ledger fl
+        WHERE fl.reference_type = 'partner_transaction'
+          AND fl.reference_id NOT IN (SELECT CAST(id AS TEXT) FROM partner_transactions)
+    """).fetchone()[0]
+    test("No orphan partner_transaction ledger entries",
+         orphan_count == 0, f"orphan count={orphan_count}")
+
+    # ===== Scenario 27: Expense deletion safety =====
+    print("\n[27] EXPENSE DELETION SAFETY")
+    # Check that expense-related partner transactions have matching ledger entries
+    expense_splits = conn.execute("""
+        SELECT id FROM partner_transactions
+        WHERE source_type = 'expense' AND source_role = 'cash_payment'
+    """).fetchall()
+    orphans_exp = 0
+    for es in expense_splits:
+        has_ledger = conn.execute("""
+            SELECT COUNT(*) > 0 FROM financial_ledger
+            WHERE reference_type = 'partner_transaction' AND reference_id = ?
+        """, [str(es['id'])]).fetchone()[0]
+        if not has_ledger:
+            orphans_exp += 1
+    test("Expense partner transactions have matching ledger entries",
+         orphans_exp == 0, f"missing ledger count={orphans_exp}")
+
     # ===== Summary =====
     print("\n" + "=" * 60)
     passed_count = sum(1 for _, p, _ in results if p)

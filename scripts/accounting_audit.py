@@ -609,6 +609,67 @@ def audit_db(db_path):
     # 30. No notes-based DELETE/UPDATE in runtime car flows (static check)
     # This is checked in audit_source below
 
+    # 31. Customer balance vs ledger receivable net
+    print("\n[31] Customer balance vs ledger receivable net...")
+    customers_bal = conn.execute("""
+        SELECT partner_name, COALESCE(iqd_balance, 0.0) as iqd_bal, COALESCE(usd_balance, 0.0) as usd_bal
+        FROM partners WHERE kind = 'زبون'
+    """).fetchall()
+    for cust in customers_bal:
+        cname = cust['partner_name']
+        iqd_bal = cust['iqd_bal']
+        usd_bal = cust['usd_bal']
+        # Get ledger receivable net
+        iqd_ledger = conn.execute("""
+            SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
+            WHERE account_type = 'receivable' AND account_id = ? AND currency = 'IQD'
+        """, [cname]).fetchone()[0]
+        usd_ledger = conn.execute("""
+            SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
+            WHERE account_type = 'receivable' AND account_id = ? AND currency = 'USD'
+        """, [cname]).fetchone()[0]
+        if abs(iqd_bal - iqd_ledger) > 0.01:
+            errors.append(f"FAIL: Customer {cname} IQD balance={iqd_bal:,.0f} != ledger={iqd_ledger:,.0f}")
+        if abs(usd_bal - usd_ledger) > 0.01:
+            errors.append(f"FAIL: Customer {cname} USD balance={usd_bal:,.0f} != ledger={usd_ledger:,.0f}")
+
+    # 32. related_source_id migration completeness
+    print("\n[32] related_source_id migration completeness...")
+    if has_related_col:
+        bad_related = conn.execute("""
+            SELECT COUNT(*) FROM partner_transactions
+            WHERE notes LIKE '%#بيع_سيارة_%'
+              AND (related_source_id IS NULL OR related_source_id = '' OR related_source_id LIKE '% %')
+        """).fetchone()[0]
+        if bad_related > 0:
+            errors.append(f"FAIL: {bad_related} rows with car marker but bad related_source_id (v12 migration needed)")
+        else:
+            print("  PASS")
+    else:
+        errors.append("FAIL: related_source_id column not found (v11/v12 migration needed)")
+
+    # 33. Mixed currency check
+    print("\n[33] Mixed currency check...")
+    mixed_cars = conn.execute("""
+        SELECT car_number, COALESCE(currency, 'IQD') as purchase_curr, COALESCE(sale_currency, 'IQD') as sale_curr
+        FROM cars WHERE status = 'مبيوعة'
+          AND COALESCE(currency, 'IQD') != COALESCE(sale_currency, 'IQD')
+    """).fetchall()
+    for mc in mixed_cars:
+        errors.append(f"FAIL: Car {mc['car_number']} mixed currency: purchase={mc['purchase_curr']} sale={mc['sale_curr']}")
+
+    # 34. Orphan partner_transaction ledger entries (detailed)
+    print("\n[34] Orphan partner_transaction ledger entries (detailed)...")
+    orphan_ledger = conn.execute("""
+        SELECT COUNT(*) FROM financial_ledger fl
+        WHERE fl.reference_type = 'partner_transaction'
+          AND fl.reference_id NOT IN (SELECT CAST(id AS TEXT) FROM partner_transactions)
+    """).fetchone()[0]
+    if orphan_ledger > 0:
+        errors.append(f"FAIL: {orphan_ledger} orphan partner_transaction ledger entries")
+    else:
+        print("  PASS")
+
     # Summary
     print("\n" + "=" * 60)
     if errors:
@@ -878,6 +939,41 @@ def audit_source(lib_path):
     else:
         print("  PASS")
 
+    # 16. Expense deletion safety - DELETE by source_type must use centralized helper
+    print("\n[S16] Expense deletion safety...")
+    for i, line in enumerate(lines, 1):
+        stripped = line.split('//')[0] if '//' in line else line
+        if 'DELETE FROM partner_transactions WHERE source_type' in stripped:
+            context = '\n'.join(lines[max(0,i-10):i+5])
+            if 'delete_partner_transactions_by_source_with_ledger' not in context:
+                errors.append(f"FAIL: Line {i} — DELETE by source_type without centralized helper: {stripped.strip()[:80]}")
+
+    # 17. v12 migration exists
+    print("\n[S17] v12 migration exists...")
+    if 'version < 12' in content and 'VALUES (12)' in content:
+        print("  PASS")
+    else:
+        errors.append("FAIL: v12 migration not found in lib.rs")
+
+    # 18. Mixed currency blocked in add_car
+    print("\n[S18] Mixed currency blocked in add_car...")
+    in_add_car = False
+    has_currency_check = False
+    for i, line in enumerate(lines, 1):
+        if 'fn add_car' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_add_car = True
+        if in_add_car:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'purchase_curr' in stripped and 'sale_curr' in stripped and ('!=' in stripped or 'return Err' in stripped):
+                has_currency_check = True
+                break
+            if 'fn delete_car' in line or 'fn update_car' in line:
+                in_add_car = False
+    if has_currency_check:
+        print("  PASS")
+    else:
+        errors.append("FAIL: No mixed-currency check found in add_car")
+
     # Summary
     print("\n" + "=" * 60)
     if errors:
@@ -895,23 +991,33 @@ def audit_source(lib_path):
     return len(errors) == 0
 
 if __name__ == "__main__":
-    db = sys.argv[1] if len(sys.argv) > 1 else find_db()
+    arg = sys.argv[1] if len(sys.argv) > 1 else None
     lib = find_lib_rs()
 
     db_ok = True
     src_ok = True
 
-    if db:
-        print(f"Database: {db}")
-        db_ok = audit_db(db)
+    if arg == "static":
+        # Static-only mode: skip runtime DB checks
+        print("Mode: STATIC ONLY")
+        if lib:
+            print(f"Source: {lib}")
+            src_ok = audit_source(lib)
+        else:
+            print("WARNING: lib.rs not found, skipping static checks")
     else:
-        print("WARNING: Database not found, skipping runtime checks")
+        db = arg if arg and arg != "static" else find_db()
+        if db:
+            print(f"Database: {db}")
+            db_ok = audit_db(db)
+        else:
+            print("WARNING: Database not found, skipping runtime checks")
 
-    if lib:
-        print(f"Source: {lib}")
-        src_ok = audit_source(lib)
-    else:
-        print("WARNING: lib.rs not found, skipping static checks")
+        if lib:
+            print(f"Source: {lib}")
+            src_ok = audit_source(lib)
+        else:
+            print("WARNING: lib.rs not found, skipping static checks")
 
     print("\n" + "=" * 60)
     if db_ok and src_ok:

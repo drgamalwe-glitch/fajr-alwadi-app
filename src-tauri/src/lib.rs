@@ -818,6 +818,62 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         let _ = conn.execute("INSERT INTO db_version (version) VALUES (11)", []);
     }
 
+    // Version 12: Fix related_source_id cleanup and populate for generated rows
+    if version < 12 {
+        // 1. Ensure columns exist safely
+        let _ = conn.execute("ALTER TABLE partner_transactions ADD COLUMN related_source_type TEXT", []);
+        let _ = conn.execute("ALTER TABLE partner_transactions ADD COLUMN related_source_id TEXT", []);
+
+        // 2. Populate related_source_id for ALL car-linked rows using Rust-side extraction
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT id, notes FROM partner_transactions WHERE notes LIKE '%#بيع_سيارة_%' AND (related_source_id IS NULL OR related_source_id = '' OR related_source_id LIKE '% %')"
+        ) {
+            let rows: Vec<(i64, String)> = {
+                let mut result = Vec::new();
+                if let Ok(mut rows) = stmt.query([]) {
+                    while let Ok(Some(row)) = rows.next() {
+                        if let (Ok(id), Ok(notes)) = (row.get::<_, i64>(0), row.get::<_, String>(1)) {
+                            result.push((id, notes));
+                        }
+                    }
+                }
+                result
+            };
+            drop(stmt);
+
+            for (id, notes) in rows {
+                if let Some(car_num) = extract_car_number_from_notes(&notes) {
+                    let _ = conn.execute(
+                        "UPDATE partner_transactions SET related_source_type = 'car', related_source_id = ?1 WHERE id = ?2",
+                        params![car_num, id],
+                    );
+                }
+            }
+        }
+
+        // 3. Repair rows with bad related_source_id containing spaces
+        let _ = conn.execute(
+            "UPDATE partner_transactions
+             SET related_source_id = SUBSTR(related_source_id, 1, INSTR(related_source_id || ' ', ' ') - 1)
+             WHERE related_source_id IS NOT NULL AND related_source_id LIKE '% %'",
+            [],
+        );
+
+        // 4. Populate for generated customer_payment rows that have car reference in notes
+        let _ = conn.execute(
+            "UPDATE partner_transactions
+             SET related_source_type = 'car',
+                 related_source_id = SUBSTR(notes, INSTR(notes, '#بيع_سيارة_') + 11, INSTR(SUBSTR(notes, INSTR(notes, '#بيع_سيارة_') + 11) || ' ', ' ') - 1)
+             WHERE source_type = 'customer_payment'
+               AND source_role IN ('cash_movement', 'profit_recognition')
+               AND notes LIKE '%#بيع_سيارة_%'
+               AND (related_source_id IS NULL OR related_source_id = '')",
+            [],
+        );
+
+        let _ = conn.execute("INSERT INTO db_version (version) VALUES (12)", []);
+    }
+
     // Performance indexes
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cars_status ON cars(status)",
@@ -1266,6 +1322,57 @@ fn delete_ledger_entries(conn: &Connection, reference_type: &str, reference_id: 
         params![reference_type.trim(), reference_id.trim()],
     )
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Central helper: Delete partner_transactions by source fields WITH their ledger entries.
+/// This prevents orphan financial_ledger rows.
+fn delete_partner_transactions_by_source_with_ledger(
+    db: &Connection,
+    source_type: &str,
+    source_id: &str,
+    source_role: Option<&str>,
+) -> Result<(), String> {
+    let sql = match source_role {
+        Some(_) => "SELECT id, partner_name, kind FROM partner_transactions WHERE source_type = ?1 AND source_id = ?2 AND source_role = ?3",
+        None => "SELECT id, partner_name, kind FROM partner_transactions WHERE source_type = ?1 AND source_id = ?2",
+    };
+    let mut stmt = db.prepare(sql).map_err(|e| e.to_string())?;
+
+    let mut rows: Vec<(i64, String, String)> = Vec::new();
+    if let Some(role) = source_role {
+        let mut query_rows = stmt.query_map(params![source_type, source_id, role], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        }).map_err(|e| e.to_string())?;
+        while let Some(r) = query_rows.next() {
+            if let Ok(row) = r {
+                rows.push(row);
+            }
+        }
+    } else {
+        let mut query_rows = stmt.query_map(params![source_type, source_id], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        }).map_err(|e| e.to_string())?;
+        while let Some(r) = query_rows.next() {
+            if let Ok(row) = r {
+                rows.push(row);
+            }
+        }
+    }
+    drop(stmt);
+
+    let mut partners_to_recalc: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    for (id, partner_name, kind) in &rows {
+        delete_ledger_entries(db, "partner_transaction", &id.to_string())?;
+        db.execute("DELETE FROM partner_transactions WHERE id = ?1", [id])
+            .map_err(|e| e.to_string())?;
+        partners_to_recalc.insert((partner_name.clone(), kind.clone()));
+    }
+
+    for (p_name, p_kind) in partners_to_recalc {
+        recalculate_partner_total(db, &p_name, &p_kind)?;
+    }
+
     Ok(())
 }
 
@@ -3301,6 +3408,13 @@ fn add_car(
     }
 
     if should_create_sale_transactions {
+        // Currency policy: block mixed-currency sales without explicit fx_rate
+        let purchase_curr = currency.as_deref().unwrap_or("IQD");
+        let sale_curr = sale_currency.as_deref().unwrap_or("IQD");
+        if purchase_curr != sale_curr {
+            return Err("لا يمكن بيع السيارة بعملة مختلفة عن عملة الشراء بدون سعر صرف مثبت".to_string());
+        }
+
         let expenses_sum_for_profit: f64 = db
             .query_row(
                 "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
@@ -3311,8 +3425,6 @@ fn add_car(
         let total_cost_for_profit = purchase + expenses_sum_for_profit;
 
         // توزيع 50% للشركاء عند بيع السيارة
-        let purchase_curr = currency.as_deref().unwrap_or("IQD");
-        let sale_curr = sale_currency.as_deref().unwrap_or("IQD");
         let sale_payment_type = payment_type.as_deref().unwrap_or("قاصه");
         let sale_date_str = sale_date.as_deref().unwrap_or("");
 
@@ -3572,14 +3684,8 @@ fn delete_car(state: State<AppState>, num: String, admin_name: Option<String>) -
         .collect::<Result<Vec<_>, rusqlite::Error>>()
         .map_err(|e| e.to_string())?;
     for ce_id in ce_ids {
-        db.execute(
-            "DELETE FROM financial_ledger WHERE reference_type = 'car_expense' AND reference_id = ?1",
-            [ce_id.to_string()],
-        ).map_err(|e| e.to_string())?;
-        db.execute(
-            "DELETE FROM partner_transactions WHERE source_type = 'car_expense' AND source_id = ?1",
-            [ce_id.to_string()],
-        ).map_err(|e| e.to_string())?;
+        delete_ledger_entries(&db, "car_expense", &ce_id.to_string())?;
+        delete_partner_transactions_by_source_with_ledger(&db, "car_expense", &ce_id.to_string(), Some("cash_payment"))?;
     }
 
     let mut ge_stmt = db
@@ -3755,71 +3861,75 @@ fn get_unified_accounts(state: State<AppState>) -> Result<Vec<UnifiedAccount>, S
     let mut accounts = Vec::new();
 
     for (name, phone, kind) in partners_list {
-        let mut tx_stmt = db.prepare(
-            "SELECT type, amount, currency, notes FROM partner_transactions WHERE partner_name = ?1 AND kind = ?2"
-        ).map_err(|e| e.to_string())?;
+        let (iqd_balance, usd_balance) = if kind == "زبون" {
+            // Customer: use financial_ledger receivable net as single source of truth
+            let iqd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
+                 WHERE account_type = 'receivable' AND account_id = ?1 AND currency = 'IQD'",
+                params![name],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            let usd: f64 = db.query_row(
+                "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
+                 WHERE account_type = 'receivable' AND account_id = ?1 AND currency = 'USD'",
+                params![name],
+                |row| row.get(0),
+            ).unwrap_or(0.0);
+            (iqd, usd)
+        } else {
+            // Non-customer: use partner_transactions logic
+            let mut tx_stmt = db.prepare(
+                "SELECT type, amount, currency, notes FROM partner_transactions WHERE partner_name = ?1 AND kind = ?2"
+            ).map_err(|e| e.to_string())?;
 
-        let rows = tx_stmt
-            .query_map(params![name, kind], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, f64>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                ))
-            })
-            .map_err(|e| e.to_string())?;
+            let rows = tx_stmt
+                .query_map(params![name, kind], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, f64>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                })
+                .map_err(|e| e.to_string())?;
 
-        let mut iqd_balance = 0.0;
-        let mut usd_balance = 0.0;
+            let mut iqd_balance = 0.0;
+            let mut usd_balance = 0.0;
 
-        for r in rows {
-            let (tx_type, amount, currency_opt, _notes_opt) = r.map_err(|e| e.to_string())?;
-            let curr = currency_opt.unwrap_or_else(|| "IQD".to_string());
-            let is_usd = curr == "USD";
+            for r in rows {
+                let (tx_type, amount, currency_opt, _notes_opt) = r.map_err(|e| e.to_string())?;
+                let curr = currency_opt.unwrap_or_else(|| "IQD".to_string());
+                let is_usd = curr == "USD";
 
-            let signed = match kind.as_str() {
-                "زبون" => {
-                    if is_customer_remaining_type(&tx_type) {
-                        amount
-                    } else if tx_type.starts_with("ايداع")
-                        || tx_type.starts_with("إيداع")
-                        || tx_type.starts_with("مقدمة")
-                        || tx_type.starts_with("استلام")
-                        || tx_type.starts_with("إستلام")
-                        || tx_type.starts_with("تسديد")
-                    {
-                        -amount
-                    } else {
-                        continue;
+                let signed = match kind.as_str() {
+                    "مستثمر" | "ممول" | "شركة" => {
+                        if tx_type.starts_with("ايداع")
+                            || tx_type.starts_with("إيداع")
+                            || tx_type.starts_with("مقدمة")
+                            || tx_type.starts_with("استلام")
+                            || tx_type.starts_with("إستلام")
+                            || tx_type.starts_with("إعادة استثمار")
+                            || tx_type.starts_with("تسوية")
+                            || tx_type.starts_with("تسديد")
+                        {
+                            -amount
+                        } else if tx_type.starts_with("سحب") || tx_type.starts_with("باقي") {
+                            amount
+                        } else {
+                            continue;
+                        }
                     }
-                }
-                "مستثمر" | "ممول" | "شركة" => {
-                    if tx_type.starts_with("ايداع")
-                        || tx_type.starts_with("إيداع")
-                        || tx_type.starts_with("مقدمة")
-                        || tx_type.starts_with("استلام")
-                        || tx_type.starts_with("إستلام")
-                        || tx_type.starts_with("إعادة استثمار")
-                        || tx_type.starts_with("تسوية")
-                        || tx_type.starts_with("تسديد")
-                    {
-                        -amount
-                    } else if tx_type.starts_with("سحب") || tx_type.starts_with("باقي") {
-                        amount
-                    } else {
-                        continue;
-                    }
-                }
-                _ => continue,
-            };
+                    _ => continue,
+                };
 
-            if is_usd {
-                usd_balance += signed;
-            } else {
-                iqd_balance += signed;
+                if is_usd {
+                    usd_balance += signed;
+                } else {
+                    iqd_balance += signed;
+                }
             }
-        }
+            (iqd_balance, usd_balance)
+        };
 
         accounts.push(UnifiedAccount {
             partner_name: name,
@@ -3866,42 +3976,20 @@ fn recalculate_partner_total(
 ) -> Result<(), String> {
     let (iqd_balance, usd_balance) = {
         if kind == "زبون" {
-            // Customer: use remaining/debt logic
-            let debt_iqd: f64 = db.query_row(
-                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-                 WHERE partner_name = ?1 AND kind = 'زبون' AND COALESCE(currency, 'IQD') = 'IQD'
-                 AND (type LIKE 'باقي%' OR type LIKE 'سحب%')
-                 AND type NOT LIKE 'واصل%' AND type NOT LIKE 'تحويل%'",
+            // Customer: use financial_ledger receivable net as single source of truth
+            let iqd_balance: f64 = db.query_row(
+                "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
+                 WHERE account_type = 'receivable' AND account_id = ?1 AND currency = 'IQD'",
                 params![partner_name.trim()],
                 |row| row.get(0),
             ).unwrap_or(0.0);
-            let paid_iqd: f64 = db.query_row(
-                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-                 WHERE partner_name = ?1 AND kind = 'زبون' AND COALESCE(currency, 'IQD') = 'IQD'
-                 AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
-                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
-                 AND type NOT LIKE 'تحويل%'",
+            let usd_balance: f64 = db.query_row(
+                "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
+                 WHERE account_type = 'receivable' AND account_id = ?1 AND currency = 'USD'",
                 params![partner_name.trim()],
                 |row| row.get(0),
             ).unwrap_or(0.0);
-            let debt_usd: f64 = db.query_row(
-                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-                 WHERE partner_name = ?1 AND kind = 'زبون' AND COALESCE(currency, 'IQD') = 'USD'
-                 AND (type LIKE 'باقي%' OR type LIKE 'سحب%')
-                 AND type NOT LIKE 'واصل%' AND type NOT LIKE 'تحويل%'",
-                params![partner_name.trim()],
-                |row| row.get(0),
-            ).unwrap_or(0.0);
-            let paid_usd: f64 = db.query_row(
-                "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-                 WHERE partner_name = ?1 AND kind = 'زبون' AND COALESCE(currency, 'IQD') = 'USD'
-                 AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
-                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
-                 AND type NOT LIKE 'تحويل%'",
-                params![partner_name.trim()],
-                |row| row.get(0),
-            ).unwrap_or(0.0);
-            (debt_iqd - paid_iqd, debt_usd - paid_usd)
+            (iqd_balance, usd_balance)
         } else if kind == "شريك" {
             // Partner: use affects_partner_cash = 1 only
             let deposits_iqd: f64 = db.query_row(
@@ -4382,8 +4470,11 @@ fn calculate_customer_payment_profit(
         Err(e) => return Err(e.to_string()),
     };
 
-    if purchase_currency != sale_currency || purchase_currency != payment_currency {
-        return Ok(0.0);
+    if purchase_currency != sale_currency {
+        return Err("لا يمكن حساب ربح الدفعة: عملة الشراءختلف عن عملة البيع بدون سعر صرف مثبت".to_string());
+    }
+    if payment_currency != sale_currency {
+        return Err("لا يمكن تسجيل دفعة بعملة مختلفة عن عملة البيع بدون سعر صرف مثبت".to_string());
     }
 
     let expenses_sum: f64 = db.query_row(
@@ -5625,12 +5716,8 @@ fn get_expenses(state: State<AppState>) -> Result<Vec<ExpenseEntry>, String> {
 fn delete_expense(state: State<AppState>, id: i64) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    // Phase 13: Delete partner transactions by source fields, not by description
-    db.execute(
-        "DELETE FROM partner_transactions WHERE source_type = 'expense' AND source_id = ?1 AND source_role = 'cash_payment'",
-        [id.to_string()],
-    )
-    .map_err(|e| e.to_string())?;
+    // Delete partner transactions WITH their ledger entries (prevents orphan ledger rows)
+    delete_partner_transactions_by_source_with_ledger(&db, "expense", &id.to_string(), Some("cash_payment"))?;
 
     // حذف حركات القيد في دفتر الأستاذ
     delete_ledger_entries(&db, "expense", &id.to_string())?;
@@ -5658,12 +5745,8 @@ fn update_expense(
     let currency_val = currency.unwrap_or_else(|| "IQD".to_string());
     let (_, current_time) = now_datetime();
 
-    // Phase 13: Delete old partner transactions by source fields
-    db.execute(
-        "DELETE FROM partner_transactions WHERE source_type = 'expense' AND source_id = ?1 AND source_role = 'cash_payment'",
-        [id.to_string()],
-    )
-    .map_err(|e| e.to_string())?;
+    // Delete old partner transactions WITH their ledger entries (prevents orphan ledger rows)
+    delete_partner_transactions_by_source_with_ledger(&db, "expense", &id.to_string(), Some("cash_payment"))?;
 
     // 2. عكس القيد القديم
     reverse_ledger_entries(&db, "expense", &id.to_string())?;
@@ -5884,12 +5967,8 @@ fn delete_car_expense_record(state: State<AppState>, id: i64) -> Result<(), Stri
     );
 
     if let Ok((car_number, _expense_amount)) = row_result {
-        // Phase 13: Delete partner transactions by source fields, not by notes
-        db.execute(
-            "DELETE FROM partner_transactions WHERE source_type = 'car_expense' AND source_id = ?1 AND source_role = 'cash_payment'",
-            [id.to_string()],
-        )
-        .map_err(|e| e.to_string())?;
+        // Delete partner transactions WITH their ledger entries (prevents orphan ledger rows)
+        delete_partner_transactions_by_source_with_ledger(&db, "car_expense", &id.to_string(), Some("cash_payment"))?;
 
         // Phase 12: Use "car_expense" reference type
         delete_ledger_entries(&db, "car_expense", &id.to_string())?;
@@ -6060,11 +6139,7 @@ fn delete_agency_profit_distributions(
     agency_id: i64,
 ) -> Result<(), String> {
     // Phase 14: Delete by source fields instead of name/date/notes
-    db.execute(
-        "DELETE FROM partner_transactions WHERE source_type = 'agency' AND source_id = ?1 AND source_role = 'profit_recognition'",
-        [agency_id.to_string()],
-    )
-    .map_err(|e| e.to_string())?;
+    delete_partner_transactions_by_source_with_ledger(db, "agency", &agency_id.to_string(), Some("profit_recognition"))?;
     Ok(())
 }
 
@@ -6264,11 +6339,8 @@ fn delete_agency(state: State<AppState>, id: i64) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
     // Issue 9: Delete only by source fields, not by names/notes
-    // 1. Delete agency base profit rows
-    db.execute(
-        "DELETE FROM partner_transactions WHERE source_type = 'agency' AND source_id = ?1",
-        [id.to_string()],
-    ).map_err(|e| e.to_string())?;
+    // 1. Delete agency base profit rows with their ledger entries
+    delete_partner_transactions_by_source_with_ledger(&db, "agency", &id.to_string(), None)?;
 
     // 2. Delete ledger entries for the agency itself
     delete_ledger_entries(&db, "agency", &id.to_string())?;
@@ -6284,11 +6356,8 @@ fn delete_agency(state: State<AppState>, id: i64) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     drop(stmt);
     for tx_id in &tx_ids {
+        delete_partner_transactions_by_source_with_ledger(&db, "agency_transaction", &tx_id.to_string(), None)?;
         delete_ledger_entries(&db, "agency_transaction", &tx_id.to_string())?;
-        db.execute(
-            "DELETE FROM partner_transactions WHERE source_type = 'agency_transaction' AND source_id = ?1",
-            [tx_id.to_string()],
-        ).map_err(|e| e.to_string())?;
     }
 
     // 4. Delete agency transactions and agency record
@@ -6421,12 +6490,8 @@ fn delete_agency_transaction(state: State<AppState>, id: i64) -> Result<(), Stri
     // 1. Delete ledger entries for this transaction
     delete_ledger_entries(&db, "agency_transaction", &id.to_string())?;
 
-    // 2. Delete profit rows for this specific transaction by source fields
-    db.execute(
-        "DELETE FROM partner_transactions WHERE source_type = 'agency_transaction' AND source_id = ?1",
-        [id.to_string()],
-    )
-    .map_err(|e| e.to_string())?;
+    // 2. Delete profit rows for this specific transaction by source fields with ledger entries
+    delete_partner_transactions_by_source_with_ledger(&db, "agency_transaction", &id.to_string(), None)?;
 
     // 3. Delete the agency transaction record itself
     db.execute("DELETE FROM agency_transactions WHERE id = ?1", [id])
@@ -6695,15 +6760,10 @@ fn get_partners_totals(state: State<AppState>, kind: String) -> Result<(f64, f64
              WHERE kind = 'مستثمر' AND type NOT LIKE 'تحويل%'
              GROUP BY currency", false)
         } else if *k == "زبون" {
-            ("SELECT
-                COALESCE(SUM(CASE
-                    WHEN (type LIKE 'سحب%' OR type LIKE 'باقي%')
-                         AND type NOT LIKE 'واصل%' AND type NOT LIKE 'تحويل%' THEN amount
-                    ELSE 0
-                END), 0.0),
-                COALESCE(currency, 'IQD')
-             FROM partner_transactions
-             WHERE kind = 'زبون' AND type NOT LIKE 'تحويل%'
+            // Customer: use financial_ledger receivable net as single source of truth
+            ("SELECT COALESCE(SUM(debit - credit), 0.0), currency
+             FROM financial_ledger
+             WHERE account_type = 'receivable'
              GROUP BY currency", false)
         } else {
             ("SELECT
