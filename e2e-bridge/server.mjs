@@ -863,6 +863,18 @@ function cmdGetFinancialSummary(args) {
        WHERE COALESCE(currency,'IQD')='IQD' AND (car_number IS NULL OR car_number='')`,
     )
     .get().v;
+  const profitUsd = db
+    .prepare(
+      `SELECT COALESCE(SUM(amount),0) AS v FROM partner_transactions
+       WHERE kind='شريك' AND COALESCE(currency,'IQD')='USD' AND affects_profit=1`,
+    )
+    .get().v;
+  const genExpUsd = db
+    .prepare(
+      `SELECT COALESCE(SUM(amount),0) AS v FROM expenses
+       WHERE COALESCE(currency,'IQD')='USD' AND (car_number IS NULL OR car_number='')`,
+    )
+    .get().v;
 
   const netCap = cashIqd + invIqd + debtIqd - invtIqd;
 
@@ -884,7 +896,7 @@ function cmdGetFinancialSummary(args) {
     net_capital_iqd: netCap,
     net_capital_usd: 0,
     monthly_profits_iqd: profitIqd - genExpIqd,
-    monthly_profits_usd: 0,
+    monthly_profits_usd: profitUsd - genExpUsd,
   };
 }
 
@@ -1180,27 +1192,50 @@ function cmdGetAgencies() {
 
 function cmdAddExpense(args) {
   const carNumber = args.carNumber || args.car_number || null;
+  const amount = Number(args.amount) || 0;
+  const currency = String(args.currency || "IQD");
+  const date = String(args.date || todayIso());
   if (carNumber) {
     db.prepare(
       "INSERT INTO car_expenses (car_number, description, amount, date, currency) VALUES (?,?,?,?,?)",
     ).run(
       String(carNumber),
       String(args.description || ""),
-      Number(args.amount) || 0,
-      String(args.date || ""),
-      String(args.currency || "IQD"),
+      amount,
+      date,
+      currency,
     );
+    const expId = db.prepare("SELECT last_insert_rowid() AS id").get().id;
+    if (amount > 0) {
+      distribute50(
+        amount, currency, date, "قاصه",
+        "سحب مصروف سيارة", `مصروف سيارة ${carNumber}`,
+        "car_expense", String(expId), "cash_payment",
+        true, true, false,
+        "car", String(carNumber),
+      );
+    }
   } else {
     db.prepare(
       "INSERT INTO expenses (description, amount, date, time, notes, currency) VALUES (?,?,?,?,?,?)",
     ).run(
       String(args.description || ""),
-      Number(args.amount) || 0,
-      String(args.date || ""),
+      amount,
+      date,
       nowTime(),
       args.notes ? String(args.notes) : null,
-      String(args.currency || "IQD"),
+      currency,
     );
+    const expId = db.prepare("SELECT last_insert_rowid() AS id").get().id;
+    if (amount > 0) {
+      distribute50(
+        amount, currency, date, "قاصه",
+        "سحب مصروف عام", String(args.description || ""),
+        "expense", String(expId), "cash_payment",
+        true, true, false,
+        "expense", String(expId),
+      );
+    }
   }
   return undefined;
 }
@@ -1319,15 +1354,24 @@ function cmdUpdatePartnerTransaction(args) {
 
 function cmdDeleteCar(args) {
   const num = String(args.num || "").trim();
+  db.prepare("DELETE FROM partner_transactions WHERE source_type IN ('car_purchase','car_sale') AND source_id=?").run(num);
+  const carExpenses = db.prepare("SELECT id FROM car_expenses WHERE car_number=?").all(num);
+  for (const exp of carExpenses) {
+    db.prepare("DELETE FROM partner_transactions WHERE source_type='car_expense' AND source_id=?").run(String(exp.id));
+  }
   db.prepare("DELETE FROM cars WHERE car_number=?").run(num);
   db.prepare("DELETE FROM car_expenses WHERE car_number=?").run(num);
+  recalcAllPartners();
   return undefined;
 }
 
 // ─── command: delete_expense / update_expense ──────────────────────
 
 function cmdDeleteExpense(args) {
-  db.prepare("DELETE FROM expenses WHERE id=?").run(Number(args.id));
+  const id = Number(args.id);
+  db.prepare("DELETE FROM partner_transactions WHERE source_type='expense' AND source_id=?").run(String(id));
+  db.prepare("DELETE FROM expenses WHERE id=?").run(id);
+  recalcAllPartners();
   return undefined;
 }
 
@@ -1349,20 +1393,36 @@ function cmdUpdateExpense(args) {
 
 function cmdAddCarExpenseRecord(args) {
   const cn = String(args.carNumber || args.car_number || "");
+  const amount = Number(args.amount) || 0;
+  const currency = String(args.currency || "IQD");
+  const date = String(args.date || todayIso());
   db.prepare(
     "INSERT INTO car_expenses (car_number, description, amount, date, currency) VALUES (?,?,?,?,?)",
   ).run(
     cn,
     String(args.description || ""),
-    Number(args.amount) || 0,
-    String(args.date || ""),
-    String(args.currency || "IQD"),
+    amount,
+    date,
+    currency,
   );
-  return db.prepare("SELECT last_insert_rowid() AS id").get().id;
+  const expId = db.prepare("SELECT last_insert_rowid() AS id").get().id;
+  if (amount > 0) {
+    distribute50(
+      amount, currency, date, "قاصه",
+      "سحب مصروف سيارة", `مصروف سيارة ${cn}`,
+      "car_expense", String(expId), "cash_payment",
+      true, true, false,
+      "car", cn,
+    );
+  }
+  return expId;
 }
 
 function cmdDeleteCarExpenseRecord(args) {
-  db.prepare("DELETE FROM car_expenses WHERE id=?").run(Number(args.id));
+  const id = Number(args.id);
+  db.prepare("DELETE FROM partner_transactions WHERE source_type='car_expense' AND source_id=?").run(String(id));
+  db.prepare("DELETE FROM car_expenses WHERE id=?").run(id);
+  recalcAllPartners();
   return undefined;
 }
 
