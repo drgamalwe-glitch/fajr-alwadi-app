@@ -76,13 +76,13 @@ async function setupAndLogin(page: Page) {
 // ─── Scenario A: Cash Sale UI ─────────────────────────────────────
 
 test.describe("السيناريو أ: بيع كاش — فحص الواجهة", () => {
-  test("بيع كاش: التحقق من لوحة التحكم والقاصة", async ({ page }) => {
+  test("بيع كاش: شراء ثم بيع — التحقق من لوحة التحكم والقاصة", async ({ page }) => {
     test.setTimeout(120_000);
     const t0 = Date.now();
     const uiChecks: UiCheck[] = [];
     let failureReason = "";
 
-    // Seed via bridge
+    // Step 1: Purchase car (available, not sold)
     await bridgeReset();
     await bridgeInvoke("add_car", {
       num: "UI-CASH-001",
@@ -93,31 +93,123 @@ test.describe("السيناريو أ: بيع كاش — فحص الواجهة", 
       color: "أبيض",
       details: "",
       purchase: 10_000,
-      selling: 20_000,
-      status: "مبيوعة",
-      paymentType: "كاش",
-      cashPrice: 20_000,
-      amountPaid: 20_000,
-      amountRemaining: 0,
-      buyerName: "زبون كاش UI",
-      buyerPhone: "07800000000",
+      status: "متوفرة",
       purchaseDate: "2024-01-01",
-      saleDate: "2024-01-15",
       currency: "IQD",
-      saleCurrency: "IQD",
       purchasePaymentType: "قاصه",
       purchaseType: "كاش",
     });
 
-    // Get backend values for comparison
-    const summary = await bridgeInvoke<any>("get_financial_summary", {});
-    const expectedQasa = summary.qasa_iqd;
-    const expectedInventory = summary.inventory_value_iqd;
+    // Verify after purchase
+    const afterPurchase = await bridgeInvoke<any>("get_financial_summary", {});
+    uiChecks.push({
+      tab: "بعد الشراء",
+      element: "قيمة المخزون",
+      expected: "10000",
+      actual: String(afterPurchase.inventory_value_iqd),
+      pass: afterPurchase.inventory_value_iqd === 10_000,
+    });
+    uiChecks.push({
+      tab: "بعد الشراء",
+      element: "القاصة",
+      expected: "-10000",
+      actual: String(afterPurchase.qasa_iqd),
+      pass: afterPurchase.qasa_iqd === -10_000,
+    });
+    uiChecks.push({
+      tab: "بعد الشراء",
+      element: "الربح",
+      expected: "0",
+      actual: String(afterPurchase.monthly_profits_iqd),
+      pass: afterPurchase.monthly_profits_iqd === 0,
+    });
 
-    // Login
+    // Step 2: Sell car for cash
+    await bridgeInvoke("sell_car_with_accounting", {
+      carNumber: "UI-CASH-001",
+      sellingPrice: 20_000,
+      paymentType: "كاش",
+      amountPaid: 20_000,
+      amountRemaining: 0,
+      buyerName: "زبون كاش UI",
+      buyerPhone: "07800000000",
+      saleDate: "2024-01-15",
+      saleCurrency: "IQD",
+    });
+
+    // Verify after sale
+    const afterSale = await bridgeInvoke<any>("get_financial_summary", {});
+    const expectedQasa = 10_000;
+    const expectedInventory = 0;
+    const expectedProfit = 10_000;
+
+    uiChecks.push({
+      tab: "بعد البيع",
+      element: "قيمة المخزون",
+      expected: String(expectedInventory),
+      actual: String(afterSale.inventory_value_iqd),
+      pass: afterSale.inventory_value_iqd === expectedInventory,
+    });
+    uiChecks.push({
+      tab: "بعد البيع",
+      element: "القاصة الصافية",
+      expected: String(expectedQasa),
+      actual: String(afterSale.qasa_iqd),
+      pass: afterSale.qasa_iqd === expectedQasa,
+    });
+    uiChecks.push({
+      tab: "بعد البيع",
+      element: "الربح",
+      expected: String(expectedProfit),
+      actual: String(afterSale.monthly_profits_iqd),
+      pass: afterSale.monthly_profits_iqd === expectedProfit,
+    });
+
+    // Verify partner profits (5000 each)
+    const profitDist = await bridgeInvoke<any>("get_profit_distribution_summary", {});
+    const amirProfit = profitDist.partners.find((p: any) => p.partner_name === "أمير");
+    const muntasirProfit = profitDist.partners.find((p: any) => p.partner_name === "منتصر");
+    uiChecks.push({
+      tab: "بعد البيع",
+      element: "ربح أمير",
+      expected: "5000",
+      actual: String(amirProfit?.profit_iqd ?? 0),
+      pass: (amirProfit?.profit_iqd ?? 0) === 5_000,
+    });
+    uiChecks.push({
+      tab: "بعد البيع",
+      element: "ربح منتصر",
+      expected: "5000",
+      actual: String(muntasirProfit?.profit_iqd ?? 0),
+      pass: (muntasirProfit?.profit_iqd ?? 0) === 5_000,
+    });
+
+    // Verify no duplicate rows
+    const amirTx: any[] = await bridgeInvoke("get_partner_transactions", {
+      partner_name: "أمير",
+      kind: "شريك",
+    });
+    const amirCashRows = amirTx.filter((tx: any) => tx.source_type === "car_sale" && tx.source_role === "cash_movement");
+    const amirProfitRows = amirTx.filter((tx: any) => tx.source_type === "car_sale" && tx.source_role === "profit_recognition");
+    uiChecks.push({
+      tab: "بعد البيع",
+      element: "صفوف حركة النقد (لا تكرار)",
+      expected: "1",
+      actual: String(amirCashRows.length),
+      pass: amirCashRows.length === 1,
+    });
+    uiChecks.push({
+      tab: "بعد البيع",
+      element: "صفوف الربح (لا تكرار)",
+      expected: "1",
+      actual: String(amirProfitRows.length),
+      pass: amirProfitRows.length === 1,
+    });
+
+    // Login and verify UI values
     await setupAndLogin(page);
 
-    // 1. Dashboard — Qasa card
+    // Dashboard — Qasa card
     const qasaText = await safeText(page.locator(".qasa-iqd span").first());
     const qasaVal = parseMoney(qasaText);
     uiChecks.push({
@@ -128,7 +220,7 @@ test.describe("السيناريو أ: بيع كاش — فحص الواجهة", 
       pass: !isNaN(qasaVal) && Math.abs(qasaVal - expectedQasa) < 1,
     });
 
-    // 2. Dashboard — Inventory
+    // Dashboard — Inventory
     const invText = await safeText(page.locator(".inventory-iqd span").first());
     const invVal = parseMoney(invText);
     uiChecks.push({
@@ -139,10 +231,9 @@ test.describe("السيناريو أ: بيع كاش — فحص الواجهة", 
       pass: !isNaN(invVal) && Math.abs(invVal - expectedInventory) < 1,
     });
 
-    // 3. Dashboard — Profit card
+    // Dashboard — Profit card
     const profitText = await safeText(page.locator(".profit-iqd span").first());
     const profitVal = parseMoney(profitText);
-    const expectedProfit = summary.monthly_profits_iqd;
     uiChecks.push({
       tab: "لوحة التحكم",
       element: "بطاقة الربح (IQD)",
@@ -159,14 +250,14 @@ test.describe("السيناريو أ: بيع كاش — فحص الواجهة", 
 
     appendResult({
       scenarioId: "A",
-      scenarioName: "بيع سيارة كاش",
+      scenarioName: "بيع سيارة كاش (شراء ثم بيع)",
       layer: "CHROMIUM_UI",
       backendMode: "E2E_BRIDGE",
       executionTimeMs: Date.now() - t0,
       pass,
       failureReason,
       uiChecks,
-      expected: { qasa: expectedQasa, inventory: expectedInventory, profit: expectedProfit },
+      expected: { qasa: expectedQasa, inventory: expectedInventory, profit: expectedProfit, partner1Profit: 5_000, partner2Profit: 5_000 },
       actual: { qasa: qasaVal, inventory: invVal, profit: profitVal },
       rows: [],
     });

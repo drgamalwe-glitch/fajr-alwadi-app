@@ -309,7 +309,9 @@ function main() {
   failLines.push("# تقرير حالات الفشل\n");
   failLines.push(`**التاريخ:** ${new Date().toISOString()}\n`);
   const failures = results.filter((r) => !r.pass);
-  if (failures.length === 0) {
+  if (verdictStatus === "PARTIAL") {
+    failLines.push("الفحص غير مكتمل لأن طبقة Chromium UI لم تعمل أو لم تسجل نتائجها.\n");
+  } else if (failures.length === 0) {
     failLines.push("لا توجد حالات فشل. جميع الاختبارات ناجحة.\n");
   } else {
     for (const r of failures) {

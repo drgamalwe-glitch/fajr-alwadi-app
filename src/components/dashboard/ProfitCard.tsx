@@ -25,7 +25,7 @@ export function ProfitCard({ profitIqd, profitUsd, monthName }: ProfitCardProps)
 
         <div className="profit-values-frame">
           <div className="profit-iqd">
-            <PriceDisplay amount={Math.abs(profitIqd)} noColor />
+            <PriceDisplay amount={profitIqd} noColor />
           </div>
 
           <div className="profit-divider-line" />

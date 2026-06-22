@@ -217,11 +217,78 @@
     ]
   },
   {
+    "scenarioId": "A",
+    "scenarioName": "بيع سيارة كاش (شراء ثم بيع)",
+    "layer": "BACKEND_DB",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 5,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "purchaseInventory": 10000,
+      "purchaseQasa": -10000,
+      "purchaseProfit": 0,
+      "amirCashMovementRows": 1,
+      "amirProfitRows": 1,
+      "cashAffectsQasa": 1,
+      "cashAffectsPartnerCash": 1,
+      "cashAffectsProfit": 0,
+      "amirCashAmount": 10000,
+      "profitAffectsQasa": 0,
+      "profitAffectsPartnerCash": 0,
+      "profitAffectsProfit": 1,
+      "amirProfitAmount": 5000,
+      "amirProfitIqd": 5000,
+      "muntasirProfitIqd": 5000,
+      "qasaIqd": 10000,
+      "inventory": 0
+    },
+    "actual": {
+      "purchaseInventory": 10000,
+      "purchaseQasa": -10000,
+      "purchaseProfit": 0,
+      "amirCashMovementRows": 1,
+      "amirProfitRows": 1,
+      "cashAffectsQasa": 1,
+      "cashAffectsPartnerCash": 1,
+      "cashAffectsProfit": 0,
+      "amirCashAmount": 10000,
+      "profitAffectsQasa": 0,
+      "profitAffectsPartnerCash": 0,
+      "profitAffectsProfit": 1,
+      "amirProfitAmount": 5000,
+      "amirProfitIqd": 5000,
+      "muntasirProfitIqd": 5000,
+      "qasaIqd": 10000,
+      "inventory": 0
+    },
+    "rows": [
+      {
+        "sourceType": "car_sale",
+        "sourceRole": "cash_movement",
+        "affectsQasa": true,
+        "affectsPartnerCash": true,
+        "affectsProfit": false,
+        "amount": 20000,
+        "description": "Cash car sale - cash movement"
+      },
+      {
+        "sourceType": "car_sale",
+        "sourceRole": "profit_recognition",
+        "affectsQasa": false,
+        "affectsPartnerCash": false,
+        "affectsProfit": true,
+        "amount": 10000,
+        "description": "Cash car sale - profit recognition"
+      }
+    ]
+  },
+  {
     "scenarioId": "B",
     "scenarioName": "B1: Installment - After Down Payment",
     "layer": "BACKEND_DB",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 6,
+    "executionTimeMs": 4,
     "pass": true,
     "failureReason": "",
     "expected": {
@@ -262,67 +329,6 @@
     ]
   },
   {
-    "scenarioId": "A",
-    "scenarioName": "A: Cash Car Sale",
-    "layer": "BACKEND_DB",
-    "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 5,
-    "pass": true,
-    "failureReason": "",
-    "expected": {
-      "amirCashMovementRows": 1,
-      "amirProfitRows": 1,
-      "cashAffectsQasa": 1,
-      "cashAffectsPartnerCash": 1,
-      "cashAffectsProfit": 0,
-      "amirCashAmount": 10000,
-      "profitAffectsQasa": 0,
-      "profitAffectsPartnerCash": 0,
-      "profitAffectsProfit": 1,
-      "amirProfitAmount": 5000,
-      "amirProfitIqd": 5000,
-      "muntasirProfitIqd": 5000,
-      "qasaIqd": 10000,
-      "inventory": 0
-    },
-    "actual": {
-      "amirCashMovementRows": 1,
-      "amirProfitRows": 1,
-      "cashAffectsQasa": 1,
-      "cashAffectsPartnerCash": 1,
-      "cashAffectsProfit": 0,
-      "amirCashAmount": 10000,
-      "profitAffectsQasa": 0,
-      "profitAffectsPartnerCash": 0,
-      "profitAffectsProfit": 1,
-      "amirProfitAmount": 5000,
-      "amirProfitIqd": 5000,
-      "muntasirProfitIqd": 5000,
-      "qasaIqd": 10000,
-      "inventory": 0
-    },
-    "rows": [
-      {
-        "sourceType": "car_sale",
-        "sourceRole": "cash_movement",
-        "affectsQasa": true,
-        "affectsPartnerCash": true,
-        "affectsProfit": false,
-        "amount": 20000,
-        "description": "Cash car sale - cash movement"
-      },
-      {
-        "sourceType": "car_sale",
-        "sourceRole": "profit_recognition",
-        "affectsQasa": false,
-        "affectsPartnerCash": false,
-        "affectsProfit": true,
-        "amount": 10000,
-        "description": "Cash car sale - profit recognition"
-      }
-    ]
-  },
-  {
     "scenarioId": "C",
     "scenarioName": "C: General Expense",
     "layer": "BACKEND_DB",
@@ -353,5 +359,186 @@
         "description": "General expense (rent) - cash movement"
       }
     ]
+  },
+  {
+    "scenarioId": "A",
+    "scenarioName": "بيع سيارة كاش (شراء ثم بيع)",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 3101,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "بعد الشراء",
+        "element": "قيمة المخزون",
+        "expected": "10000",
+        "actual": "10000",
+        "pass": true
+      },
+      {
+        "tab": "بعد الشراء",
+        "element": "القاصة",
+        "expected": "-10000",
+        "actual": "-10000",
+        "pass": true
+      },
+      {
+        "tab": "بعد الشراء",
+        "element": "الربح",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      },
+      {
+        "tab": "بعد البيع",
+        "element": "قيمة المخزون",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      },
+      {
+        "tab": "بعد البيع",
+        "element": "القاصة الصافية",
+        "expected": "10000",
+        "actual": "10000",
+        "pass": true
+      },
+      {
+        "tab": "بعد البيع",
+        "element": "الربح",
+        "expected": "10000",
+        "actual": "10000",
+        "pass": true
+      },
+      {
+        "tab": "بعد البيع",
+        "element": "ربح أمير",
+        "expected": "5000",
+        "actual": "5000",
+        "pass": true
+      },
+      {
+        "tab": "بعد البيع",
+        "element": "ربح منتصر",
+        "expected": "5000",
+        "actual": "5000",
+        "pass": true
+      },
+      {
+        "tab": "بعد البيع",
+        "element": "صفوف حركة النقد (لا تكرار)",
+        "expected": "1",
+        "actual": "1",
+        "pass": true
+      },
+      {
+        "tab": "بعد البيع",
+        "element": "صفوف الربح (لا تكرار)",
+        "expected": "1",
+        "actual": "1",
+        "pass": true
+      },
+      {
+        "tab": "لوحة التحكم",
+        "element": "بطاقة القاصة (IQD)",
+        "expected": "10000",
+        "actual": "10000",
+        "pass": true
+      },
+      {
+        "tab": "لوحة التحكم",
+        "element": "قيمة المخزون (IQD)",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      },
+      {
+        "tab": "لوحة التحكم",
+        "element": "بطاقة الربح (IQD)",
+        "expected": "10000",
+        "actual": "10000",
+        "pass": true
+      }
+    ],
+    "expected": {
+      "qasa": 10000,
+      "inventory": 0,
+      "profit": 10000,
+      "partner1Profit": 5000,
+      "partner2Profit": 5000
+    },
+    "actual": {
+      "qasa": 10000,
+      "inventory": 0,
+      "profit": 10000
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "B",
+    "scenarioName": "بيع بالاقساط — مقدمة وقسط واحد",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 5220,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "لوحة التحكم",
+        "element": "بطاقة الربح (IQD)",
+        "expected": "3000000",
+        "actual": "3000000",
+        "pass": true
+      },
+      {
+        "tab": "توزيع الارباح",
+        "element": "اجمالي الارباح (IQD)",
+        "expected": "3000000",
+        "actual": "3000000",
+        "pass": true
+      }
+    ],
+    "expected": {
+      "profitTotal": 3000000
+    },
+    "actual": {
+      "profitTotal": 3000000
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "C",
+    "scenarioName": "مصروف عام — ايجار",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 3210,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "لوحة التحكم",
+        "element": "بطاقة القاصة (IQD)",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      },
+      {
+        "tab": "لوحة التحكم",
+        "element": "بطاقة الربح (IQD)",
+        "expected": "-1000000",
+        "actual": "-1000000",
+        "pass": true
+      }
+    ],
+    "expected": {
+      "qasa": 0,
+      "profit": -1000000
+    },
+    "actual": {
+      "qasa": 0,
+      "profit": -1000000
+    },
+    "rows": []
   }
 ]

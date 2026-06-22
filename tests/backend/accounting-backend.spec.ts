@@ -96,7 +96,7 @@ describe("Scenario A — Cash Sale Backend Verification", () => {
     await bridgeReset();
   });
 
-  it("cash sale: qasa, cash, profit, partners match oracle", async () => {
+  it("cash sale: purchase then sell — qasa, cash, profit, partners match oracle", async () => {
     const t0 = startTimer();
     const oracle = scenarioCashSaleOracle();
     const expected: Record<string, number> = {};
@@ -104,7 +104,7 @@ describe("Scenario A — Cash Sale Backend Verification", () => {
     const assertions: AssertionResult[] = [];
     let failureReason = "";
 
-    // Seed: add car and sell for cash
+    // Step 1: Purchase car (available, not sold)
     await bridgeInvoke("add_car", {
       num: "TEST-A-001",
       chassis: "CHASSIS-A-001",
@@ -114,29 +114,43 @@ describe("Scenario A — Cash Sale Backend Verification", () => {
       color: "أبيض",
       details: "",
       purchase: 10_000,
-      selling: 20_000,
-      status: "مبيوعة",
+      status: "متوفرة",
+      purchaseDate: "2024-01-01",
+      currency: "IQD",
+      purchasePaymentType: "قاصه",
+      purchaseType: "كاش",
+    });
+
+    // Verify after purchase
+    const afterPurchase: FinancialSummary = await bridgeInvoke("get_financial_summary", {});
+    expected["purchaseInventory"] = 10_000;
+    actual["purchaseInventory"] = afterPurchase.inventory_value_iqd;
+    assertions.push(assertExact("inventory after purchase", 10_000, afterPurchase.inventory_value_iqd));
+
+    expected["purchaseQasa"] = -10_000;
+    actual["purchaseQasa"] = afterPurchase.qasa_iqd;
+    assertions.push(assertNear("qasa after purchase", -10_000, afterPurchase.qasa_iqd));
+
+    expected["purchaseProfit"] = 0;
+    actual["purchaseProfit"] = afterPurchase.monthly_profits_iqd;
+    assertions.push(assertExact("profit after purchase", 0, afterPurchase.monthly_profits_iqd));
+
+    // Step 2: Sell car for cash
+    await bridgeInvoke("sell_car_with_accounting", {
+      carNumber: "TEST-A-001",
+      sellingPrice: 20_000,
       paymentType: "كاش",
-      cashPrice: 20_000,
       amountPaid: 20_000,
       amountRemaining: 0,
       buyerName: "زبون كاش",
       buyerPhone: "07800000000",
-      purchaseDate: "2024-01-01",
       saleDate: "2024-01-15",
-      currency: "IQD",
       saleCurrency: "IQD",
-      purchasePaymentType: "قاصه",
-      purchaseType: "كاش",
     });
 
     // Get partner transactions
     const amirTx: PartnerTx[] = await bridgeInvoke("get_partner_transactions", {
       partner_name: "أمير",
-      kind: "شريك",
-    });
-    const muntasirTx: PartnerTx[] = await bridgeInvoke("get_partner_transactions", {
-      partner_name: "منتصر",
       kind: "شريك",
     });
 
@@ -210,9 +224,8 @@ describe("Scenario A — Cash Sale Backend Verification", () => {
 
     // Verify no double counting in qasa
     const summary: FinancialSummary = await bridgeInvoke("get_financial_summary", {});
-    expected["qasaIqd"] = oracle.qasa - 10_000; // net = sale - purchase
+    expected["qasaIqd"] = 10_000; // net = sale (+20,000) - purchase (-10,000)
     actual["qasaIqd"] = summary.qasa_iqd;
-    // Qasa = sale cash movement (+20,000) - purchase cash movement (-10,000) = 10,000
     assertions.push(assertNear("qasa net", 10_000, summary.qasa_iqd));
 
     // Inventory should be 0
@@ -227,7 +240,7 @@ describe("Scenario A — Cash Sale Backend Verification", () => {
         .join("; ");
     }
 
-    const result = buildResult("A", oracle.label, oracle, expected, actual, assertions, elapsed(t0), oracle.rows, failureReason);
+    const result = buildResult("A", "بيع سيارة كاش (شراء ثم بيع)", oracle, expected, actual, assertions, elapsed(t0), oracle.rows, failureReason);
     allResults.push(result);
     expect(allPassed(assertions)).toBe(true);
   });

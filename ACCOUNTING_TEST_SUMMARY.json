@@ -1,16 +1,16 @@
 {
-  "timestamp": "2026-06-22T14:10:41.248Z",
+  "timestamp": "2026-06-22T14:37:31.985Z",
   "totalScenarios": 3,
-  "passedScenarios": 0,
+  "passedScenarios": 3,
   "failedScenarios": 0,
-  "partialScenarios": 3,
-  "finalVerdict": "PARTIAL",
+  "partialScenarios": 0,
+  "finalVerdict": "NOT_VALID_FOR_REAL_ACCOUNTING",
   "backendMode": "E2E_BRIDGE",
   "backendNote": "E2E_BRIDGE uses Node.js SQLite mock, not real Tauri backend",
   "scenarios": [
     {
       "id": "A",
-      "verdict": "PARTIAL",
+      "verdict": "PASS",
       "oracle": [
         {
           "pass": true,
@@ -24,11 +24,109 @@
           "backendMode": "E2E_BRIDGE"
         }
       ],
-      "chromiumUi": []
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "بعد الشراء",
+              "element": "قيمة المخزون",
+              "expected": "10000",
+              "actual": "10000",
+              "pass": true
+            },
+            {
+              "tab": "بعد الشراء",
+              "element": "القاصة",
+              "expected": "-10000",
+              "actual": "-10000",
+              "pass": true
+            },
+            {
+              "tab": "بعد الشراء",
+              "element": "الربح",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "قيمة المخزون",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "القاصة الصافية",
+              "expected": "10000",
+              "actual": "10000",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "الربح",
+              "expected": "10000",
+              "actual": "10000",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "ربح أمير",
+              "expected": "5000",
+              "actual": "5000",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "ربح منتصر",
+              "expected": "5000",
+              "actual": "5000",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "صفوف حركة النقد (لا تكرار)",
+              "expected": "1",
+              "actual": "1",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "صفوف الربح (لا تكرار)",
+              "expected": "1",
+              "actual": "1",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "بطاقة القاصة (IQD)",
+              "expected": "10000",
+              "actual": "10000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "قيمة المخزون (IQD)",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "بطاقة الربح (IQD)",
+              "expected": "10000",
+              "actual": "10000",
+              "pass": true
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "B",
-      "verdict": "PARTIAL",
+      "verdict": "PASS",
       "oracle": [
         {
           "pass": true,
@@ -50,11 +148,32 @@
           "backendMode": "E2E_BRIDGE"
         }
       ],
-      "chromiumUi": []
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "بطاقة الربح (IQD)",
+              "expected": "3000000",
+              "actual": "3000000",
+              "pass": true
+            },
+            {
+              "tab": "توزيع الارباح",
+              "element": "اجمالي الارباح (IQD)",
+              "expected": "3000000",
+              "actual": "3000000",
+              "pass": true
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "C",
-      "verdict": "PARTIAL",
+      "verdict": "PASS",
       "oracle": [
         {
           "pass": true,
@@ -68,7 +187,28 @@
           "backendMode": "E2E_BRIDGE"
         }
       ],
-      "chromiumUi": []
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "بطاقة القاصة (IQD)",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "بطاقة الربح (IQD)",
+              "expected": "-1000000",
+              "actual": "-1000000",
+              "pass": true
+            }
+          ]
+        }
+      ]
     }
   ]
 }
