@@ -221,13 +221,16 @@
     "scenarioName": "بيع سيارة كاش (شراء ثم بيع)",
     "layer": "BACKEND_DB",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 5,
+    "executionTimeMs": 7,
     "pass": true,
     "failureReason": "",
     "expected": {
       "purchaseInventory": 10000,
       "purchaseQasa": -10000,
       "purchaseProfit": 0,
+      "purchasePartnerCash": -10000,
+      "saleRowsAfterPurchase": 0,
+      "profitRowsAfterPurchase": 0,
       "amirCashMovementRows": 1,
       "amirProfitRows": 1,
       "cashAffectsQasa": 1,
@@ -241,12 +244,16 @@
       "amirProfitIqd": 5000,
       "muntasirProfitIqd": 5000,
       "qasaIqd": 10000,
+      "partnerCashNet": 10000,
       "inventory": 0
     },
     "actual": {
       "purchaseInventory": 10000,
       "purchaseQasa": -10000,
       "purchaseProfit": 0,
+      "purchasePartnerCash": -10000,
+      "saleRowsAfterPurchase": 0,
+      "profitRowsAfterPurchase": 0,
       "amirCashMovementRows": 1,
       "amirProfitRows": 1,
       "cashAffectsQasa": 1,
@@ -260,6 +267,7 @@
       "amirProfitIqd": 5000,
       "muntasirProfitIqd": 5000,
       "qasaIqd": 10000,
+      "partnerCashNet": 10000,
       "inventory": 0
     },
     "rows": [
@@ -288,7 +296,7 @@
     "scenarioName": "B1: Installment - After Down Payment",
     "layer": "BACKEND_DB",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 4,
+    "executionTimeMs": 3,
     "pass": true,
     "failureReason": "",
     "expected": {
@@ -365,7 +373,7 @@
     "scenarioName": "بيع سيارة كاش (شراء ثم بيع)",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 3101,
+    "executionTimeMs": 3480,
     "pass": true,
     "failureReason": "",
     "uiChecks": [
@@ -385,7 +393,21 @@
       },
       {
         "tab": "بعد الشراء",
+        "element": "رأس مال الشركاء",
+        "expected": "-10000",
+        "actual": "-10000",
+        "pass": true
+      },
+      {
+        "tab": "بعد الشراء",
         "element": "الربح",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      },
+      {
+        "tab": "بعد الشراء",
+        "element": "صفوف البيع",
         "expected": "0",
         "actual": "0",
         "pass": true
@@ -440,6 +462,20 @@
         "pass": true
       },
       {
+        "tab": "بعد البيع",
+        "element": "صف الربح لا يؤثر على القاصة",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      },
+      {
+        "tab": "بعد البيع",
+        "element": "صف الربح لا يؤثر على رأس المال",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      },
+      {
         "tab": "لوحة التحكم",
         "element": "بطاقة القاصة (IQD)",
         "expected": "10000",
@@ -480,7 +516,7 @@
     "scenarioName": "بيع بالاقساط — مقدمة وقسط واحد",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 5220,
+    "executionTimeMs": 5272,
     "pass": true,
     "failureReason": "",
     "uiChecks": [
@@ -512,7 +548,7 @@
     "scenarioName": "مصروف عام — ايجار",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 3210,
+    "executionTimeMs": 3230,
     "pass": true,
     "failureReason": "",
     "uiChecks": [

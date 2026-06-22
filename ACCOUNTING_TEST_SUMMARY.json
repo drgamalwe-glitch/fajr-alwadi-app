@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-06-22T14:37:31.985Z",
+  "timestamp": "2026-06-22T14:50:04.099Z",
   "totalScenarios": 3,
   "passedScenarios": 3,
   "failedScenarios": 0,
   "partialScenarios": 0,
-  "finalVerdict": "NOT_VALID_FOR_REAL_ACCOUNTING",
+  "finalVerdict": "PASS",
   "backendMode": "E2E_BRIDGE",
   "backendNote": "E2E_BRIDGE uses Node.js SQLite mock, not real Tauri backend",
   "scenarios": [
@@ -45,7 +45,21 @@
             },
             {
               "tab": "بعد الشراء",
+              "element": "رأس مال الشركاء",
+              "expected": "-10000",
+              "actual": "-10000",
+              "pass": true
+            },
+            {
+              "tab": "بعد الشراء",
               "element": "الربح",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "بعد الشراء",
+              "element": "صفوف البيع",
               "expected": "0",
               "actual": "0",
               "pass": true
@@ -97,6 +111,20 @@
               "element": "صفوف الربح (لا تكرار)",
               "expected": "1",
               "actual": "1",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "صف الربح لا يؤثر على القاصة",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "بعد البيع",
+              "element": "صف الربح لا يؤثر على رأس المال",
+              "expected": "0",
+              "actual": "0",
               "pass": true
             },
             {

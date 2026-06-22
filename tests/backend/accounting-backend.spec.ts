@@ -135,6 +135,25 @@ describe("Scenario A — Cash Sale Backend Verification", () => {
     actual["purchaseProfit"] = afterPurchase.monthly_profits_iqd;
     assertions.push(assertExact("profit after purchase", 0, afterPurchase.monthly_profits_iqd));
 
+    // Verify partner cash after purchase
+    expected["purchasePartnerCash"] = -10_000;
+    actual["purchasePartnerCash"] = afterPurchase.total_partner_capital_iqd;
+    assertions.push(assertNear("partner cash after purchase", -10_000, afterPurchase.total_partner_capital_iqd));
+
+    // Verify no sale rows or profit rows after purchase
+    const amirTxPurchase: PartnerTx[] = await bridgeInvoke("get_partner_transactions", {
+      partner_name: "أمير",
+      kind: "شريك",
+    });
+    const saleRowsAfterPurchase = amirTxPurchase.filter((tx) => tx.source_type === "car_sale");
+    const profitRowsAfterPurchase = amirTxPurchase.filter((tx) => tx.source_type === "car_sale" && tx.source_role === "profit_recognition");
+    expected["saleRowsAfterPurchase"] = 0;
+    actual["saleRowsAfterPurchase"] = saleRowsAfterPurchase.length;
+    assertions.push(assertExact("no sale rows after purchase", 0, saleRowsAfterPurchase.length));
+    expected["profitRowsAfterPurchase"] = 0;
+    actual["profitRowsAfterPurchase"] = profitRowsAfterPurchase.length;
+    assertions.push(assertExact("no profit rows after purchase", 0, profitRowsAfterPurchase.length));
+
     // Step 2: Sell car for cash
     await bridgeInvoke("sell_car_with_accounting", {
       carNumber: "TEST-A-001",
@@ -227,6 +246,11 @@ describe("Scenario A — Cash Sale Backend Verification", () => {
     expected["qasaIqd"] = 10_000; // net = sale (+20,000) - purchase (-10,000)
     actual["qasaIqd"] = summary.qasa_iqd;
     assertions.push(assertNear("qasa net", 10_000, summary.qasa_iqd));
+
+    // Verify partner cash net after sale
+    expected["partnerCashNet"] = 10_000;
+    actual["partnerCashNet"] = summary.total_partner_capital_iqd;
+    assertions.push(assertNear("partner cash net after sale", 10_000, summary.total_partner_capital_iqd));
 
     // Inventory should be 0
     expected["inventory"] = 0;

@@ -57,7 +57,7 @@ function main() {
   }
 
   // Overall pass/fail
-  const scenarioVerdicts = new Map<string, { overall: boolean; hasAllLayers: boolean; anyFail: boolean }>();
+  const scenarioVerdicts = new Map<string, { overall: boolean; hasAllLayers: boolean; anyFail: boolean; missingLayers: string[] }>();
   for (const [sid, layerMap] of scenarioMap) {
     const oracleResults = layerMap.get("ORACLE") ?? [];
     const backendResults = layerMap.get("BACKEND_DB") ?? [];
@@ -68,24 +68,32 @@ function main() {
     const uiPass = uiResults.length > 0 && uiResults.every((r) => r.pass);
     const hasAllLayers = oracleResults.length > 0 && backendResults.length > 0 && uiResults.length > 0;
     const anyFail = !oraclePass || !backendPass || (uiResults.length > 0 && !uiPass);
-    const allRunLayersPass = oraclePass && backendPass && (uiResults.length === 0 || uiPass);
 
-    scenarioVerdicts.set(sid, { overall: allRunLayersPass && hasAllLayers, hasAllLayers, anyFail });
+    const missingLayers: string[] = [];
+    if (oracleResults.length === 0) missingLayers.push("ORACLE");
+    if (backendResults.length === 0) missingLayers.push("BACKEND_DB");
+    if (uiResults.length === 0) missingLayers.push("CHROMIUM_UI");
+
+    scenarioVerdicts.set(sid, { overall: hasAllLayers && !anyFail, hasAllLayers, anyFail, missingLayers });
   }
 
   const allPass = [...scenarioVerdicts.values()].every((v) => v.overall);
-  const anyFail = [...scenarioVerdicts.values()].some((v) => v.anyFail);
+  const anyFailGlobal = [...scenarioVerdicts.values()].some((v) => v.anyFail);
   const anyMissingLayers = [...scenarioVerdicts.values()].some((v) => !v.hasAllLayers);
+  const usesMock = results.some((r) => r.backendMode === "MOCK");
 
   let verdictLabel: string;
   let verdictStatus: string;
-  if (allPass) {
-    verdictLabel = "ناجح";
-    verdictStatus = "PASS";
-  } else if (anyFail) {
+  if (usesMock) {
+    verdictLabel = "غير صالح — وضع MOCK لا يصلح للتحقق المحاسبي";
+    verdictStatus = "NOT_VALID_FOR_REAL_ACCOUNTING";
+  } else if (anyFailGlobal) {
     verdictLabel = "فشل";
     verdictStatus = "FAIL";
-  } else if (anyMissingLayers && !anyFail) {
+  } else if (allPass) {
+    verdictLabel = "ناجح";
+    verdictStatus = "PASS";
+  } else if (anyMissingLayers) {
     verdictLabel = "ناجح جزئياً (طبقات ناقصة)";
     verdictStatus = "PARTIAL";
   } else {
@@ -93,13 +101,11 @@ function main() {
     verdictStatus = "NOT_VALID_FOR_REAL_ACCOUNTING";
   }
 
-  if (usesBridge && verdictStatus === "PASS") {
-    verdictStatus = "NOT_VALID_FOR_REAL_ACCOUNTING";
-    verdictLabel = "ناجح — لكن غير صالح للتحقق المحاسبي النهائي (E2E_BRIDGE فقط)";
-  }
-
   lines.push(`## النتيجة النهائية: ${verdictLabel}\n`);
   lines.push(`**الحالة:** ${verdictStatus}\n`);
+  if (usesBridge && verdictStatus === "PASS") {
+    lines.push("> **ملاحظة:** E2E_BRIDGE ليس Tauri الحقيقي — صالح للتحقق السريع فقط، لا يكفي للتسليم النهائي.\n");
+  }
 
   // Summary table
   lines.push("## ملخص السيناريوهات\n");
@@ -251,18 +257,18 @@ function main() {
   lines.push(`- ناجح: ${[...scenarioVerdicts.values()].filter((v) => v.overall).length}`);
   lines.push(`- فشل: ${[...scenarioVerdicts.values()].filter((v) => v.anyFail).length}`);
   lines.push(`- جزئي: ${[...scenarioVerdicts.values()].filter((v) => !v.hasAllLayers && !v.anyFail).length}`);
-  if (usesBridge) {
-    lines.push(`- **ملاحظة:** وضع E2E_BRIDGE ليس Tauri الحقيقي — لا يصلح للتحقق المحاسبي النهائي`);
+  if (usesBridge && verdictStatus === "PASS") {
+    lines.push(`- **ملاحظة:** E2E_BRIDGE ليس Tauri الحقيقي — صالح للتحقق السريع فقط، لا يكفي للتسليم النهائي`);
   }
   if (anyMissingLayers) {
     lines.push(`- تحذير: لم يتم تشغيل فحص Chromium UI — النتيجة النهائية تتطلب جميع الطبقات`);
   }
   lines.push("");
 
-  if (!allPass) {
+  if (anyFailGlobal) {
     lines.push("### أسباب الفشل\n");
     for (const [sid, verdict] of scenarioVerdicts) {
-      if (!verdict.overall) {
+      if (verdict.anyFail) {
         const layerMap = scenarioMap.get(sid)!;
         for (const [layer, layerResults] of layerMap) {
           for (const r of layerResults) {
@@ -311,6 +317,39 @@ function main() {
   const failures = results.filter((r) => !r.pass);
   if (verdictStatus === "PARTIAL") {
     failLines.push("الفحص غير مكتمل لأن طبقة Chromium UI لم تعمل أو لم تسجل نتائجها.\n");
+    failLines.push("### السيناريوهات المتأثرة\n");
+    for (const [sid, verdict] of scenarioVerdicts) {
+      if (!verdict.hasAllLayers) {
+        failLines.push(`- السيناريو ${sid}: الطبقات المفقودة: ${verdict.missingLayers.join(", ")}`);
+      }
+    }
+    failLines.push("");
+  } else if (verdictStatus === "FAIL") {
+    for (const [sid, verdict] of scenarioVerdicts) {
+      if (verdict.anyFail) {
+        const layerMap = scenarioMap.get(sid)!;
+        failLines.push(`### السيناريو ${sid}\n`);
+        for (const [layer, layerResults] of layerMap) {
+          for (const r of layerResults) {
+            if (!r.pass) {
+              failLines.push(`#### ${layer}\n`);
+              failLines.push(`- **السبب:** ${r.failureReason}`);
+              if (r.uiChecks) {
+                const failedChecks = r.uiChecks.filter((c) => !c.pass);
+                if (failedChecks.length > 0) {
+                  failLines.push("\n| التبويب | العنصر | القيمة المتوقعة | القيمة الفعلية |");
+                  failLines.push("|---|---|---|---|");
+                  for (const c of failedChecks) {
+                    failLines.push(`| ${c.tab} | ${c.element} | ${c.expected} | ${c.actual} |`);
+                  }
+                }
+              }
+              failLines.push("");
+            }
+          }
+        }
+      }
+    }
   } else if (failures.length === 0) {
     failLines.push("لا توجد حالات فشل. جميع الاختبارات ناجحة.\n");
   } else {

@@ -118,10 +118,31 @@ test.describe("السيناريو أ: بيع كاش — فحص الواجهة", 
     });
     uiChecks.push({
       tab: "بعد الشراء",
+      element: "رأس مال الشركاء",
+      expected: "-10000",
+      actual: String(afterPurchase.total_partner_capital_iqd),
+      pass: afterPurchase.total_partner_capital_iqd === -10_000,
+    });
+    uiChecks.push({
+      tab: "بعد الشراء",
       element: "الربح",
       expected: "0",
       actual: String(afterPurchase.monthly_profits_iqd),
       pass: afterPurchase.monthly_profits_iqd === 0,
+    });
+
+    // Verify no sale rows after purchase
+    const amirTxPurchase: any[] = await bridgeInvoke("get_partner_transactions", {
+      partner_name: "أمير",
+      kind: "شريك",
+    });
+    const saleRowsAfterPurchase = amirTxPurchase.filter((tx: any) => tx.source_type === "car_sale");
+    uiChecks.push({
+      tab: "بعد الشراء",
+      element: "صفوف البيع",
+      expected: "0",
+      actual: String(saleRowsAfterPurchase.length),
+      pass: saleRowsAfterPurchase.length === 0,
     });
 
     // Step 2: Sell car for cash
@@ -205,6 +226,25 @@ test.describe("السيناريو أ: بيع كاش — فحص الواجهة", 
       actual: String(amirProfitRows.length),
       pass: amirProfitRows.length === 1,
     });
+
+    // Verify profit recognition rows do NOT affect qasa or partner cash
+    if (amirProfitRows.length > 0) {
+      const profRow = amirProfitRows[0];
+      uiChecks.push({
+        tab: "بعد البيع",
+        element: "صف الربح لا يؤثر على القاصة",
+        expected: "0",
+        actual: String(profRow.affects_qasa),
+        pass: profRow.affects_qasa === 0,
+      });
+      uiChecks.push({
+        tab: "بعد البيع",
+        element: "صف الربح لا يؤثر على رأس المال",
+        expected: "0",
+        actual: String(profRow.affects_partner_cash),
+        pass: profRow.affects_partner_cash === 0,
+      });
+    }
 
     // Login and verify UI values
     await setupAndLogin(page);
