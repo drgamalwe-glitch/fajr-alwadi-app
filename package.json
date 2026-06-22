@@ -9,7 +9,11 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "agent": "python3 fajir_agent.py",
-"release": "./release"
+    "release": "./release",
+    "test:e2e": "playwright test --project=chromium",
+    "test:e2e:headed": "playwright test --project=chromium --headed",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:report": "playwright show-report"
   },
   "dependencies": {
     "@radix-ui/react-select": "^2.2.6",
@@ -30,6 +34,7 @@
     "tailwindcss": "^3.4.19"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.0",
     "@tauri-apps/cli": "^2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",

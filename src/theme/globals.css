@@ -7872,6 +7872,31 @@ textarea::placeholder {
   font-size: var(--fs-base);
 }
 
+.partner-tx-row--profit {
+  background: rgba(107, 114, 128, 0.04) !important;
+  opacity: 0.75;
+}
+
+.partner-tx-row--profit td:first-child {
+  border-right: 4px solid #6b7280 !important;
+}
+
+.partner-tx-row--profit:hover {
+  background: rgba(107, 114, 128, 0.08) !important;
+}
+
+.tx-type-profit {
+  color: #6b7280 !important;
+  font-weight: var(--fw-bold) !important;
+  font-size: var(--fs-base);
+  font-style: italic;
+}
+
+.tx-amount-profit {
+  color: #6b7280 !important;
+  font-weight: var(--fw-bold) !important;
+}
+
 .partner-sidebar-input {
   background: rgba(255, 255, 255, 0.03) !important;
   border: 1px solid var(--textinputborder) !important;

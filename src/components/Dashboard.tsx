@@ -661,6 +661,7 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
             </button>
             <button
               type="button"
+              data-testid="subtab-company-status"
               className={`top-btn-two ${activeSubTab === "company-status" ? "top-btn-two--active" : ""}`}
               onClick={() => setActiveSubTab("company-status")}
             >

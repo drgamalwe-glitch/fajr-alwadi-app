@@ -875,6 +875,17 @@ export function PartnersTab({
     return new Map(visibleSortedTransactions.map((tx, index) => [tx.id, index + 1]));
   }, [visibleSortedTransactions]);
 
+  const isCashMovement = useCallback((tx: PartnerTransaction) =>
+    tx.affects_partner_cash === undefined || tx.affects_partner_cash === 1, []);
+
+  const isProfitRecognition = useCallback((tx: PartnerTransaction) =>
+    tx.affects_partner_cash === 0 && (tx.affects_profit === 1 || tx.source_role === 'profit_recognition'), []);
+
+  const cashTransactions = useMemo(
+    () => transactions.filter(isCashMovement),
+    [transactions, isCashMovement],
+  );
+
   const paidTransactionIds = useMemo(() => {
     if (form.kind !== "زبون") return new Set<number>();
     // Payments that actually settle installments (exclude down payments)
@@ -1889,31 +1900,31 @@ export function PartnersTab({
     }
   };
 
-  const totalDeposits = transactions
+  const totalDeposits = cashTransactions
     .filter((t) => t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية"))
     .reduce((sum, t) => sum + t.amount, 0);
-  const totalWithdrawals = transactions
+  const totalWithdrawals = cashTransactions
     .filter((t) => t.type_.startsWith("سحب") || t.type_.startsWith("باقي"))
     .reduce((sum, t) => sum + t.amount, 0);
 
   const partnerIqdBalance = accountsTab === "personal" && partnerToView
     ? isFinancialClientKind(form.kind)
-      ? transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
-      - transactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      ? cashTransactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      - cashTransactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       : form.kind === "زبون"
         ? transactions.filter((t) => isCustomerRemainingBalanceTx(t) && (t.currency || "IQD") === "IQD").reduce((s, t) => s + t.amount, 0)
-        : transactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
-      - transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+        : cashTransactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      - cashTransactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
     : currencyTotals[0];
 
   const partnerUsdBalance = accountsTab === "personal" && partnerToView
     ? isFinancialClientKind(form.kind)
-      ? transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
-      - transactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      ? cashTransactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      - cashTransactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       : form.kind === "زبون"
         ? transactions.filter((t) => isCustomerRemainingBalanceTx(t) && t.currency === "USD").reduce((s, t) => s + t.amount, 0)
-        : transactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
-      - transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+        : cashTransactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      - cashTransactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
     : currencyTotals[1];
 
 
@@ -1939,7 +1950,7 @@ export function PartnersTab({
         .reduce((sum, t) => (isCustomerRemainingBalanceTx(t) ? sum + t.amount : sum), 0);
     }
     if (isFinancialClientKind(form.kind)) {
-      return transactions
+      return cashTransactions
         .filter((t) => (t.currency || "IQD") === currency && !t.type_.startsWith("تحويل"))
         .reduce((sum, t) => {
           if (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("تسوية") || t.type_.startsWith("مقدمة") || t.type_.startsWith("إعادة استثمار")) return sum - t.amount;
@@ -2406,30 +2417,31 @@ export function PartnersTab({
                   <tbody>
                     {pageTransactions.map((tx) => {
                       const isPaidBorrowerInst = form.kind === "زبون" && isCustomerInstallmentRecord(tx) && paidTransactionIds.has(tx.id);
-                      const isWithdraw = (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) && !isPaidBorrowerInst;
-                      const isDeposit = tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة") || tx.type_.startsWith("إعادة استثمار") || tx.type_.startsWith("تسوية") || isPaidBorrowerInst;
+                      const isProfitRow = isProfitRecognition(tx);
+                      const isWithdraw = !isProfitRow && (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) && !isPaidBorrowerInst;
+                      const isDeposit = !isProfitRow && (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة") || tx.type_.startsWith("إعادة استثمار") || tx.type_.startsWith("تسوية") || isPaidBorrowerInst);
                       const direction = transactionDirection(form.kind, isWithdraw);
                       return (
                         <tr
                           key={tx.id}
-                          className={`partner-tx-row ${isFinancialClientKind(form.kind) || form.kind === "زبون"
+                          className={`partner-tx-row ${isProfitRow ? "partner-tx-row--profit" : isFinancialClientKind(form.kind) || form.kind === "زبون"
                             ? direction.rowClass
                             : (isDeposit ? "partner-tx-row--deposit" : "partner-tx-row--withdraw")
                             }`}
-                          title="اضغط لتعديل المعاملة"
-                          onClick={() => beginEditTransaction(tx)}
+                          title={isProfitRow ? "أرباح (تسجيل أرباح ولا تؤثر على الرصيد النقدي)" : "اضغط لتعديل المعاملة"}
+                          onClick={() => !isProfitRow && beginEditTransaction(tx)}
                         >
                           <td className="cell-num col-seq">{sequenceByTransactionId.get(tx.id) ?? tx.id}</td>
                           <td className="col-date">{tx.date}</td>
                           <td className="col-time">{tx.time || "00:00"}</td>
                           <td className="col-type">
-                            <span className={isFinancialClientKind(form.kind) || form.kind === "زبون" ? `${direction.colorClass} font-bold` : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
-                              {isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.label : isSaleInstallmentTx(tx) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
+                            <span className={isProfitRow ? "tx-type-profit" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? `${direction.colorClass} font-bold` : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
+                              {isProfitRow ? "ارباح" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.label : isSaleInstallmentTx(tx) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
                             </span>
                           </td>
                           <td className={cn(
                             "col-amount font-bold",
-                            isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.colorClass : isSaleInstallmentTx(tx) ? "text-green" : (isWithdraw ? "text-red" : "text-green")
+                            isProfitRow ? "tx-amount-profit" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.colorClass : isSaleInstallmentTx(tx) ? "text-green" : (isWithdraw ? "text-red" : "text-green")
                           )}>
                             <PriceDisplay
                               amount={tx.amount}
@@ -2441,17 +2453,19 @@ export function PartnersTab({
                             {formatNotesText(tx.notes) || "—"}
                           </td>
                           <td className="col-actions">
-                            <button
-                              type="button"
-                              className="partner-tx-delete-btn"
-                              title="حذف المعاملة"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDeleteTxConfirm(tx);
-                              }}
-                            >
-                              ✕
-                            </button>
+                            {!isProfitRow && (
+                              <button
+                                type="button"
+                                className="partner-tx-delete-btn"
+                                title="حذف المعاملة"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteTxConfirm(tx);
+                                }}
+                              >
+                                ✕
+                              </button>
+                            )}
                           </td>
                         </tr>
                       );
@@ -2862,27 +2876,28 @@ export function PartnersTab({
                                     const paymentTypeLabel = (rawPaymentType === "مصرف" || rawPaymentType === "قاصه") ? rawPaymentType : "قاصه";
                                     const badgeClass = paymentTypeLabel === "مصرف" ? "account-badge--bank" : "account-badge--qasa";
                                     const isPaidBorrowerInst = form.kind === "زبون" && isCustomerInstallmentRecord(tx) && paidTransactionIds.has(tx.id);
-                                    const isWithdraw = (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) && !isPaidBorrowerInst;
-                                    const isDeposit = tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة") || isPaidBorrowerInst;
+                                    const isProfitRow = isProfitRecognition(tx);
+                                    const isWithdraw = !isProfitRow && (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) && !isPaidBorrowerInst;
+                                    const isDeposit = !isProfitRow && (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة") || isPaidBorrowerInst);
                                     const direction = transactionDirection(form.kind, isWithdraw);
                                     return (
                                       <tr
                                         key={tx.id}
-                                        className={`partner-tx-row ${isFinancialClientKind(form.kind) || form.kind === "زبون"
+                                        className={`partner-tx-row ${isProfitRow ? "partner-tx-row--profit" : isFinancialClientKind(form.kind) || form.kind === "زبون"
                                           ? direction.rowClass
                                           : form.kind === "ممول"
                                           ? (isWithdraw ? "partner-tx-row--deposit" : "partner-tx-row--withdraw")
                                           : (isDeposit ? "partner-tx-row--deposit" : "partner-tx-row--withdraw")
                                           }`}
-                                        title="اضغط لتعديل المعاملة"
-                                        onClick={() => beginEditTransaction(tx)}
+                                        title={isProfitRow ? "أرباح (تسجيل أرباح ولا تؤثر على الرصيد النقدي)" : "اضغط لتعديل المعاملة"}
+                                        onClick={() => !isProfitRow && beginEditTransaction(tx)}
                                       >
                                         <td className="cell-num col-seq">{sequenceByTransactionId.get(tx.id) ?? tx.id}</td>
                                         <td className="col-date">{tx.date}</td>
                                         <td className="col-time">{tx.time || "00:00"}</td>
                                         <td className="col-type">
-                                          <span className={isFinancialClientKind(form.kind) || form.kind === "زبون" ? `${direction.colorClass} font-bold` : form.kind === "ممول" ? (isWithdraw ? "text-green font-bold" : "text-red font-bold") : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
-                                            {isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.label : isSaleInstallmentTx(tx) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
+                                          <span className={isProfitRow ? "tx-type-profit" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? `${direction.colorClass} font-bold` : form.kind === "ممول" ? (isWithdraw ? "text-green font-bold" : "text-red font-bold") : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
+                                            {isProfitRow ? "ارباح" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.label : isSaleInstallmentTx(tx) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
                                           </span>
                                         </td>
                                         <td className="col-account">
@@ -2892,7 +2907,7 @@ export function PartnersTab({
                                         </td>
                                         <td className={cn(
                                           "col-amount font-bold",
-                                          isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.colorClass :
+                                          isProfitRow ? "tx-amount-profit" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.colorClass :
                                           form.kind === "ممول" ? (isWithdraw ? "text-red" : "text-green") :
                                               isSaleInstallmentTx(tx) ? "text-green" :
                                                 (isWithdraw ? "text-red" : "text-green")
@@ -2923,17 +2938,19 @@ export function PartnersTab({
                                           </div>
                                         </td>
                                         <td className="col-actions">
-                                          <button
-                                            type="button"
-                                            className="partner-tx-delete-btn"
-                                            title="حذف المعاملة"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              setDeleteTxConfirm(tx);
-                                            }}
-                                          >
-                                            ✕
-                                          </button>
+                                          {!isProfitRow && (
+                                            <button
+                                              type="button"
+                                              className="partner-tx-delete-btn"
+                                              title="حذف المعاملة"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setDeleteTxConfirm(tx);
+                                              }}
+                                            >
+                                              ✕
+                                            </button>
+                                          )}
                                         </td>
                                       </tr>
                                     );

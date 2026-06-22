@@ -1159,6 +1159,7 @@ export function CarsTab({
                 <button
                   key={tab.id}
                   type="button"
+                  data-testid={`cars-subtab-${tab.id}`}
                   className={`${tab.id === "available" ? "top-btn-one" : "top-btn-two"} ${isActive ? (tab.id === "available" ? "top-btn-one--active" : "top-btn-two--active") : ""}`.trim()}
                   onClick={() => {
                     if (tab.id === "available") {
@@ -1276,6 +1277,7 @@ export function CarsTab({
                       return (
                         <tr
                           key={car.car_number}
+                          data-testid={`car-row-${car.car_number}`}
                           className={`cars-tr${isSelected ? " cars-tr--selected" : ""}`}
                           onClick={() => handleSingleClick(car)}
                           title="اضغط لعرض التفاصيل"

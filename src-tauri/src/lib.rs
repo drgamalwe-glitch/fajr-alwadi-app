@@ -82,6 +82,14 @@ pub struct PartnerTransaction {
     pub currency: Option<String>,
     pub payment_type: Option<String>,
     pub time: Option<String>,
+    pub source_type: Option<String>,
+    pub source_id: Option<String>,
+    pub source_role: Option<String>,
+    pub affects_qasa: i32,
+    pub affects_partner_cash: i32,
+    pub affects_profit: i32,
+    pub related_source_type: Option<String>,
+    pub related_source_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -872,6 +880,66 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         );
 
         let _ = conn.execute("INSERT INTO db_version (version) VALUES (12)", []);
+    }
+
+    // Version 13: Fix partner transaction flags for profit recognition vs cash movement
+    // Ensure ايداع بيع سيارة (car sale cash movement) has correct flags
+    // Ensure ايداع ارباح سيارة (profit recognition) does not affect partner cash
+    if version < 13 {
+        // Fix cash sale deposit rows: ايداع بيع سيارة should affect qasa/cash only, not profit
+        let _ = conn.execute(
+            "UPDATE partner_transactions
+             SET affects_qasa = 1,
+                 affects_partner_cash = 1,
+                 affects_profit = 0,
+                 source_type = COALESCE(source_type, 'car_sale'),
+                 source_role = 'cash_movement'
+             WHERE kind = 'شريك'
+               AND type = 'ايداع بيع سيارة'",
+            [],
+        );
+
+        // Fix profit recognition rows: ايداع ارباح سيارة must NOT affect qasa/cash
+        let _ = conn.execute(
+            "UPDATE partner_transactions
+             SET affects_qasa = 0,
+                 affects_partner_cash = 0,
+                 affects_profit = 1,
+                 source_type = COALESCE(source_type, 'car_sale'),
+                 source_role = 'profit_recognition'
+             WHERE kind = 'شريك'
+               AND type = 'ايداع ارباح سيارة'",
+            [],
+        );
+
+        // Also fix agency profit rows (ايداع ارباح وكالة) — not a cash movement
+        let _ = conn.execute(
+            "UPDATE partner_transactions
+             SET affects_qasa = 0,
+                 affects_partner_cash = 0,
+                 affects_profit = 1,
+                 source_role = 'profit_recognition'
+             WHERE kind = 'شريك'
+               AND type IN ('ايداع ارباح وكالة', 'ارباح وكالة')",
+            [],
+        );
+
+        // Recalculate all partners to reflect corrected balances
+        if let Ok(mut partners_stmt) = conn.prepare(
+            "SELECT partner_name, kind FROM partners"
+        ) {
+            if let Ok(rows) = partners_stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            }) {
+                for row in rows {
+                    if let Ok((p_name, p_kind)) = row {
+                        let _ = recalculate_partner_total(conn, &p_name, &p_kind);
+                    }
+                }
+            }
+        }
+
+        let _ = conn.execute("INSERT INTO db_version (version) VALUES (13)", []);
     }
 
     // Performance indexes
@@ -6808,7 +6876,11 @@ fn get_partner_transactions(
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let mut stmt = db
         .prepare(
-            "SELECT id, partner_name, kind, type, amount, date, notes, currency, COALESCE(payment_type, 'قاصه'), COALESCE(time, '00:00')
+            "SELECT id, partner_name, kind, type, amount, date, notes, currency,
+                    COALESCE(payment_type, 'قاصه'), COALESCE(time, '00:00'),
+                    source_type, source_id, source_role,
+                    COALESCE(affects_qasa, 1), COALESCE(affects_partner_cash, 1), COALESCE(affects_profit, 0),
+                    related_source_type, related_source_id
              FROM partner_transactions WHERE partner_name = ?1 AND kind = ?2 ORDER BY id ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -6826,6 +6898,14 @@ fn get_partner_transactions(
                 currency: row.get(7)?,
                 payment_type: row.get(8)?,
                 time: row.get(9)?,
+                source_type: row.get(10)?,
+                source_id: row.get(11)?,
+                source_role: row.get(12)?,
+                affects_qasa: row.get(13)?,
+                affects_partner_cash: row.get(14)?,
+                affects_profit: row.get(15)?,
+                related_source_type: row.get(16)?,
+                related_source_id: row.get(17)?,
             })
         })
         .map_err(|e| e.to_string())?

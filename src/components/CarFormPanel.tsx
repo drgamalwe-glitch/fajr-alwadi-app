@@ -376,6 +376,7 @@ export function CarFormPanel({
         <div className="absolute right-4 top-10 -translate-y-1/2 z-20">
           <button
             type="button"
+            data-testid="status-toggle"
             className={`status-toggle ${isSold ? "status-toggle--sold" : "status-toggle--available"}`}
             onClick={() => {
               if (isSold) {
@@ -717,6 +718,7 @@ export function CarFormPanel({
                   <button
                     key={opt.value}
                     type="button"
+                    data-testid={`payment-type-${opt.value}`}
                     onClick={() => onChange({ paymentType: opt.value })}
                     className={`flex-1 h-10 rounded-lg text-[var(--car-fs-button)] font-bold transition-all ${form.paymentType === opt.value
                       ? opt.color === "emerald"

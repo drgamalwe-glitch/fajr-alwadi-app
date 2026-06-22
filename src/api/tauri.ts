@@ -381,7 +381,14 @@ async function mockInvoke<T>(
     const allTx: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
     const partnerName = String(args.partner_name ?? args.partnerName ?? "").trim();
     const kind = String(args.kind ?? "شريك").trim();
-    return allTx.filter((tx) => tx.partner_name === partnerName && tx.kind === kind) as T;
+    return allTx
+      .filter((tx) => tx.partner_name === partnerName && tx.kind === kind)
+      .map((tx) => ({
+        ...tx,
+        affects_qasa: tx.affects_qasa ?? 1,
+        affects_partner_cash: tx.affects_partner_cash ?? 1,
+        affects_profit: tx.affects_profit ?? 0,
+      })) as T;
   }
 
   if (command === "add_partner_transaction") {
@@ -574,6 +581,8 @@ async function mockInvoke<T>(
       for (const tx of allTx) {
         if (tx.kind !== "شريك") continue;
         if (tx.type_.includes("تحويل")) continue;
+        const affectsPartnerCash = tx.affects_partner_cash ?? 1;
+        if (affectsPartnerCash !== 1) continue;
 
         const isDeposit = tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة") || tx.type_.startsWith("استلام") || tx.type_.startsWith("إستلام") || tx.type_.startsWith("إعادة استثمار") || tx.type_.startsWith("تسوية") || tx.type_.startsWith("تسديد");
         const isWithdrawal = tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي");
@@ -706,6 +715,11 @@ async function mockInvoke<T>(
         let amount: number;
         switch (tx.kind) {
           case "شريك":
+            if (filterType) {
+              const isQasaFilter = filterType === "قاصه" || filterType === "قاصة";
+              if (isQasaFilter && (tx.affects_qasa ?? 1) !== 1) continue;
+              if (!isQasaFilter && (tx.affects_partner_cash ?? 1) !== 1) continue;
+            }
             type_ = (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع")) ? "ايداع شريك" : "سحب شريك";
             amount = (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع")) ? tx.amount : -tx.amount;
             break;

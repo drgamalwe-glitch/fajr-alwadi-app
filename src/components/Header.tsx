@@ -116,6 +116,7 @@ export function Header({
             key={tab.id}
             type="button"
             data-tab={tab.id}
+            data-testid={`nav-${tab.id}`}
             className={`nav-btn ${activeTab === tab.id ? "nav-btn--active" : ""}`}
             onClick={() => handleTabClick(tab.id)}
             aria-current={activeTab === tab.id ? "page" : undefined}
@@ -167,6 +168,7 @@ export function Header({
                 type="button"
                 variant="gold"
                 onClick={onAddCar}
+                data-testid="btn-add-car"
               >
                 <span className="gold-fx-btn__icon">+</span>
                 <span className="gold-fx-btn__label">إضافة سيارة</span>
@@ -189,6 +191,7 @@ export function Header({
                 type="button"
                 variant="green"
                 onClick={onSaveCar}
+                data-testid="btn-save-car"
               >
 
                 <span className="gold-fx-btn__label">حفظ</span>
@@ -197,6 +200,7 @@ export function Header({
                 type="button"
                 variant="red"
                 onClick={onCancelCar}
+                data-testid="btn-cancel-car"
               >
                 <span className="gold-fx-btn__label">إلغاء الأمر</span>
               </GoldFxButton>

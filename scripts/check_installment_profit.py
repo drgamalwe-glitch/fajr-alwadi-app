@@ -1021,6 +1021,68 @@ def check(db_path):
     if not customers:
         test("Update_partner unrelated account types (no customers)", True, "SKIP")
 
+    # ===== Scenario 53: Cash sale profit does not double-count in partner balances =====
+    print("\n[53] CASH SALE PROFIT NOT DOUBLE-COUNTED IN PARTNER BALANCE")
+    cash_sale_cars = conn.execute("""
+        SELECT car_number, selling_price FROM cars WHERE status = 'مبيوعة' AND payment_type = 'كاش'
+    """).fetchall()
+    for car in cash_sale_cars:
+        cn = car['car_number']
+        sp = car['selling_price']
+        # Get cash movement rows for this car
+        cash_movement_total = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+            WHERE source_type = 'car_sale' AND source_id = ?
+              AND source_role = 'cash_movement'
+        """, [cn]).fetchone()[0]
+        # Get profit recognition rows for this car
+        profit_recognition_total = conn.execute("""
+            SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+            WHERE source_type = 'car_sale' AND source_id = ?
+              AND source_role = 'profit_recognition'
+        """, [cn]).fetchone()[0]
+        # Only test if cash movement rows exist (skip for pre-migration data)
+        if cash_movement_total < 0.01:
+            test(f"Car {cn}: cash movement rows exist (pre-migration data)",
+                 False, "SKIP — no cash_movement rows found (pre-v13 data)")
+            continue
+        # Cash movement should equal selling price (full amount split between partners)
+        test(f"Car {cn}: cash movement = selling price",
+             abs(cash_movement_total - sp) < 0.01,
+             f"cash_movement={cash_movement_total:,.0f} selling_price={sp:,.0f}")
+        for p_name in ['أمير', 'منتصر']:
+            half_sale = sp / 2
+            profit_recognition_partner = conn.execute("""
+                SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                WHERE kind = 'شريك' AND partner_name = ?
+                  AND source_type = 'car_sale' AND source_id = ?
+                  AND source_role = 'profit_recognition'
+            """, [p_name, cn]).fetchone()[0]
+            # Partner's cash movement for this car should equal half selling price (not inflated by profit)
+            partner_cash_movement = conn.execute("""
+                SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
+                WHERE kind = 'شريك' AND partner_name = ?
+                  AND source_type = 'car_sale' AND source_id = ?
+                  AND source_role = 'cash_movement'
+            """, [p_name, cn]).fetchone()[0]
+            test(f"Partner {p_name}: cash_movement={partner_cash_movement:,.0f} == half sale ({half_sale:,.0f}), profit={profit_recognition_partner:,.0f} separate",
+                 abs(partner_cash_movement - half_sale) < 0.01 and profit_recognition_partner > 0,
+                 f"cash_movement={partner_cash_movement:,.0f} half_sale={half_sale:,.0f} profit_recognition={profit_recognition_partner:,.0f}")
+            # Verify profit recognition has affects_partner_cash = 0
+            profit_flags = conn.execute("""
+                SELECT affects_partner_cash, affects_qasa, affects_profit FROM partner_transactions
+                WHERE kind = 'شريك' AND partner_name = ?
+                  AND source_type = 'car_sale' AND source_id = ?
+                  AND source_role = 'profit_recognition'
+                LIMIT 1
+            """, [p_name, cn]).fetchone()
+            if profit_flags:
+                test(f"Partner {p_name}: profit row flags correct (cash=0, qasa=0, profit=1)",
+                     profit_flags[0] == 0 and profit_flags[1] == 0 and profit_flags[2] == 1,
+                     f"affects_partner_cash={profit_flags[0]} affects_qasa={profit_flags[1]} affects_profit={profit_flags[2]}")
+    if not cash_sale_cars:
+        test("Cash sale profit not double-counted (no cash sales)", True, "SKIP")
+
     # ===== Summary =====
     print("\n" + "=" * 60)
     passed_count = sum(1 for _, p, _ in results if p)

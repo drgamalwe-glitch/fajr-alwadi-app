@@ -134,6 +134,9 @@ export function PartnerStatementPrint({
     return tx.type_;
   };
 
+  const isCashMovement = (tx: PartnerTransaction) =>
+    tx.affects_partner_cash === undefined || tx.affects_partner_cash === 1;
+
   const statementTransactions = useMemo(() => {
     return transactions
       .filter((tx) => {
@@ -145,6 +148,10 @@ export function PartnerStatementPrint({
       })
       .sort((a, b) => a.date.localeCompare(b.date) || (a.id ?? 0) - (b.id ?? 0));
   }, [transactions, printMode, printFromDate, printToDate, partner.kind]);
+
+  const cashStatementTransactions = useMemo(() => {
+    return statementTransactions.filter(isCashMovement);
+  }, [statementTransactions]);
 
   const ledgerRows = useMemo(() => {
     return statementTransactions.map((tx, idx) => {
@@ -174,18 +181,18 @@ export function PartnerStatementPrint({
   }, [ledgerRows]);
 
   const customerSummary = useMemo(() => {
-    return calculateCustomerPrintSummary(statementTransactions, paidTransactionIds);
-  }, [statementTransactions, paidTransactionIds]);
+    return calculateCustomerPrintSummary(cashStatementTransactions, paidTransactionIds);
+  }, [cashStatementTransactions, paidTransactionIds]);
 
   const otherSummary = useMemo(() => {
     if (partner.kind === "مستثمر") {
-      return calculateInvestorPrintSummary(statementTransactions);
+      return calculateInvestorPrintSummary(cashStatementTransactions);
     } else if (partner.kind === "شركة") {
-      return calculateCompanyPrintSummary(statementTransactions);
+      return calculateCompanyPrintSummary(cashStatementTransactions);
     } else {
-      return calculateFunderPrintSummary(statementTransactions);
+      return calculateFunderPrintSummary(cashStatementTransactions);
     }
-  }, [statementTransactions, partner.kind]);
+  }, [cashStatementTransactions, partner.kind]);
 
   const periodLabel = printMode === "range"
     ? `الفترة من ${printFromDate || "البداية"} إلى ${printToDate || "النهاية"}`

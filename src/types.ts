@@ -77,6 +77,14 @@ export interface PartnerTransaction {
   paymentType?: string | null;
   payment_type?: string | null;
   time?: string | null;
+  source_type?: string | null;
+  source_id?: string | null;
+  source_role?: string | null;
+  affects_qasa?: number;
+  affects_partner_cash?: number;
+  affects_profit?: number;
+  related_source_type?: string | null;
+  related_source_id?: string | null;
 }
 
 export interface ExpenseEntry {

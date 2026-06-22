@@ -103,7 +103,7 @@ export function CompanyStatusTab({
     if (!partner) return null;
     const imgSrc = getPartnerImage(partner.partner_name);
     return (
-      <div className={`partner-capital-card ${colorClass}`}>
+      <div className={`partner-capital-card ${colorClass}`} data-testid={`partner-card-${partner.partner_name}`}>
         <div className="partner-capital-card__header">
           <div className="partner-capital-card__icon">
             {imgSrc ? (
@@ -134,9 +134,9 @@ export function CompanyStatusTab({
           {renderPartnerCard(partner1, p1CapitalIqd, p1CapitalUsd, "partner-card--right")}
 
           <div className="company-value-center">
-            <div className="company-value">
+            <div className="company-value" data-testid="company-value">
               <h2>قيمة الشركة</h2>
-              <div className="value">{companyValueIqd.toLocaleString("en-US")}</div>
+              <div className="value" data-testid="company-value-iqd">{companyValueIqd.toLocaleString("en-US")}</div>
               <div className="currency">دينار عراقي</div>
               {companyValueUsd !== 0 && (
                 <>
@@ -195,6 +195,7 @@ export function CompanyStatusTab({
         <div className="stats">
           <div
             className="card capital"
+            data-testid="card-cash"
             style={{ cursor: "pointer" }}
             role="button"
             tabIndex={0}
@@ -218,6 +219,7 @@ export function CompanyStatusTab({
 
           <div
             className="card cars"
+            data-testid="card-inventory"
             style={{ cursor: "pointer" }}
             role="button"
             tabIndex={0}
@@ -240,6 +242,7 @@ export function CompanyStatusTab({
           </div>
           <div
             className="card payable"
+            data-testid="card-receivables"
             style={{ cursor: "pointer" }}
             role="button"
             tabIndex={0}
@@ -262,6 +265,7 @@ export function CompanyStatusTab({
           </div>
           <div
             className="card receivable"
+            data-testid="card-liabilities"
             style={{ cursor: "pointer" }}
             role="button"
             tabIndex={0}

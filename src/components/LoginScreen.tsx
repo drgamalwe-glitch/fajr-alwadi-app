@@ -89,6 +89,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
               autoFocus
               autoComplete="username"
               dir="auto"
+              data-testid="login-username"
             />
           </div>
           <div className="login-screen__field">
@@ -101,6 +102,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
               placeholder="أدخل كلمة المرور"
               autoComplete="current-password"
               dir="auto"
+              data-testid="login-password"
             />
           </div>
           {error && <div className="login-screen__error">{error}</div>}
@@ -108,6 +110,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
             type="submit"
             className="login-screen__button"
             disabled={loading}
+            data-testid="login-submit"
           >
             {loading ? "جاري تسجيل الدخول..." : "تسجيل الدخول"}
           </button>
