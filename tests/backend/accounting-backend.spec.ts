@@ -301,37 +301,110 @@ describe("Scenario B — Installment Sale Backend Verification", () => {
       assertions.push(assertNear("amir down payment profit", expectedDpProfit, amirProfitRows[0].amount));
     }
 
-    // Verify flags
+    // Now pay one installment
+    await bridgeInvoke("add_partner_transaction", {
+      partner_name: "زبون اقساط",
+      kind: "زبون",
+      type_: "تسديد قسط سيارة",
+      amount: monthlyPayment,
+      date: "2024-02-15",
+      notes: `تسديد قسط سيارة ${carNum}`,
+      currency: "IQD",
+      payment_type: "قاصه",
+    });
+
+    // Re-fetch transactions after installment payment
+    const amirTxAfter: PartnerTx[] = await bridgeInvoke("get_partner_transactions", {
+      partner_name: "أمير",
+      kind: "شريك",
+    });
+
+    const amirInstallmentProfitRows = amirTxAfter.filter(
+      (tx) => tx.source_type === "customer_installment" && tx.source_role === "profit_recognition",
+    );
+    const amirInstallmentCashRows = amirTxAfter.filter(
+      (tx) => tx.source_type === "customer_installment" && tx.source_role === "cash_movement",
+    );
+
+    // Verify installment created profit_recognition row
+    expected["amirInstallmentProfitRows"] = 1;
+    actual["amirInstallmentProfitRows"] = amirInstallmentProfitRows.length;
+    assertions.push(assertExact("amir installment profit rows", 1, amirInstallmentProfitRows.length));
+
+    // Verify installment created cash_movement row
+    expected["amirInstallmentCashRows"] = 1;
+    actual["amirInstallmentCashRows"] = amirInstallmentCashRows.length;
+    assertions.push(assertExact("amir installment cash rows", 1, amirInstallmentCashRows.length));
+
+    // Verify installment profit amount = 500,000 (1,000,000 * 50%)
+    const expectedInstProfit = afterOneInstallment.partner1Profit - afterDownPayment.partner1Profit;
+    if (amirInstallmentProfitRows.length > 0) {
+      expected["amirInstallmentProfit"] = expectedInstProfit;
+      actual["amirInstallmentProfit"] = amirInstallmentProfitRows[0].amount;
+      assertions.push(assertNear("amir installment profit", expectedInstProfit, amirInstallmentProfitRows[0].amount));
+    }
+
+    // Verify installment cash amount = 500,000 (1,000,000 / 2)
+    if (amirInstallmentCashRows.length > 0) {
+      expected["amirInstallmentCash"] = monthlyPayment / 2;
+      actual["amirInstallmentCash"] = amirInstallmentCashRows[0].amount;
+      assertions.push(assertNear("amir installment cash", monthlyPayment / 2, amirInstallmentCashRows[0].amount));
+    }
+
+    // Verify total recognized profit after installment = 3,000,000
+    const profitDistAfter: ProfitDist = await bridgeInvoke("get_profit_distribution_summary", {});
+    const totalProfitAfter = profitDistAfter.partners.reduce((sum, p) => sum + p.profit_iqd, 0);
+    expected["totalProfitAfterInstallment"] = afterOneInstallment.profitTotal;
+    actual["totalProfitAfterInstallment"] = totalProfitAfter;
+    assertions.push(assertNear("total profit after installment", afterOneInstallment.profitTotal, totalProfitAfter));
+
+    // Verify flags for down payment rows
     for (const row of amirProfitRows) {
       if (row.affects_qasa !== 0) {
-        failureReason += `Profit row has affects_qasa=${row.affects_qasa}; `;
+        failureReason += `DP Profit row has affects_qasa=${row.affects_qasa}; `;
       }
       if (row.affects_partner_cash !== 0) {
-        failureReason += `Profit row has affects_partner_cash=${row.affects_partner_cash}; `;
+        failureReason += `DP Profit row has affects_partner_cash=${row.affects_partner_cash}; `;
       }
       if (row.affects_profit !== 1) {
-        failureReason += `Profit row has affects_profit=${row.affects_profit}; `;
+        failureReason += `DP Profit row has affects_profit=${row.affects_profit}; `;
       }
     }
 
     for (const row of amirCashRows) {
       if (row.affects_qasa !== 1) {
-        failureReason += `Cash row has affects_qasa=${row.affects_qasa}; `;
+        failureReason += `DP Cash row has affects_qasa=${row.affects_qasa}; `;
       }
       if (row.affects_profit !== 0) {
-        failureReason += `Cash row has affects_profit=${row.affects_profit}; `;
+        failureReason += `DP Cash row has affects_profit=${row.affects_profit}; `;
+      }
+    }
+
+    // Verify flags for installment rows
+    for (const row of amirInstallmentProfitRows) {
+      if (row.affects_qasa !== 0) {
+        failureReason += `Inst Profit row has affects_qasa=${row.affects_qasa}; `;
+      }
+      if (row.affects_partner_cash !== 0) {
+        failureReason += `Inst Profit row has affects_partner_cash=${row.affects_partner_cash}; `;
+      }
+      if (row.affects_profit !== 1) {
+        failureReason += `Inst Profit row has affects_profit=${row.affects_profit}; `;
+      }
+    }
+
+    for (const row of amirInstallmentCashRows) {
+      if (row.affects_qasa !== 1) {
+        failureReason += `Inst Cash row has affects_qasa=${row.affects_qasa}; `;
+      }
+      if (row.affects_profit !== 0) {
+        failureReason += `Inst Cash row has affects_profit=${row.affects_profit}; `;
       }
     }
 
     // Verify total profit does not exceed cap
-    const profitDist: ProfitDist = await bridgeInvoke("get_profit_distribution_summary", {});
-    const totalProfit = profitDist.partners.reduce((sum, p) => sum + p.profit_iqd, 0);
-    expected["totalProfit"] = afterDownPayment.profitTotal;
-    actual["totalProfit"] = totalProfit;
-    assertions.push(assertNear("total profit", afterDownPayment.profitTotal, totalProfit));
-
-    if (totalProfit > 10_000_000) {
-      failureReason += `Total profit ${totalProfit} exceeds cap 10,000,000; `;
+    if (totalProfitAfter > 10_000_000) {
+      failureReason += `Total profit ${totalProfitAfter} exceeds cap 10,000,000; `;
     }
 
     if (!allPassed(assertions) && !failureReason) {

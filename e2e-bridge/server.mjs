@@ -1239,11 +1239,53 @@ function cmdAddPartnerTransaction(args) {
   const currency = String(args.currency || "IQD");
   const paymentType = String(args.payment_type || args.paymentType || "قاصه");
 
+  // Record the customer transaction
   insertPartnerTx(
     name, kind, type, amount, date, paymentType, notes, currency,
     "", "", "",
     true, true, false, "", "",
   );
+
+  // If this is a customer installment payment, create partner cash_movement + profit_recognition
+  if (kind === "زبون" && type.startsWith("تسديد قسط") && amount > 0) {
+    // Extract car number from notes (format: "تسديد قسط سيارة <carNum>")
+    const match = notes?.match(/تسديد قسط سيارة\s+(.+)/);
+    if (match) {
+      const carNum = match[1].trim();
+      const car = db.prepare("SELECT * FROM cars WHERE car_number = ?").get(carNum);
+      if (car) {
+        const purchasePrice = Number(car.purchase_price) || 0;
+        const sellingPrice = Number(car.selling_price) || 0;
+        const expensesSum = (db.prepare(
+          "SELECT COALESCE(SUM(amount), 0) AS v FROM car_expenses WHERE car_number = ?"
+        ).get(carNum)).v || 0;
+        const fullProfit = sellingPrice - purchasePrice - expensesSum;
+        const profitRatio = sellingPrice > 0 ? fullProfit / sellingPrice : 0;
+
+        // Partner cash movement (the payment enters partner cash)
+        distribute50(
+          amount, currency, date, "قاصه",
+          "ايداع بيع سيارة", `تسديد قسط من ${name} — سيارة ${carNum}`,
+          "customer_installment", carNum, "cash_movement",
+          true, true, false,
+          "car", carNum,
+        );
+
+        // Partner profit recognition
+        const profit = amount * profitRatio;
+        if (profit > 0) {
+          distribute50(
+            profit, currency, date, "قاصه",
+            "ايداع ارباح سيارة", `ارباح قسط من ${name} — سيارة ${carNum}`,
+            "customer_installment", carNum, "profit_recognition",
+            false, false, true,
+            "car", carNum,
+          );
+        }
+      }
+    }
+  }
+
   return undefined;
 }
 

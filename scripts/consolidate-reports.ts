@@ -40,9 +40,24 @@ function main() {
   lines.push("# نتائج اختبارات المحاسبة — فجر الوادي\n");
   lines.push(`**التاريخ:** ${new Date().toISOString()}\n`);
 
-  // Overall pass/fail: all layers that were run must pass
-  // If CHROMIUM_UI was not run, verdict is partial (not full PASS)
-  const scenarioVerdicts = new Map<string, { overall: boolean; hasAllLayers: boolean }>();
+  // Detect backend mode
+  const usesBridge = results.some((r) => r.backendMode === "E2E_BRIDGE");
+  const usesRealBackend = results.some((r) => r.backendMode === "REAL_BACKEND");
+  const backendLabel = usesRealBackend
+    ? "REAL_BACKEND (Tauri)"
+    : usesBridge
+      ? "E2E_BRIDGE (ليس Tauri الحقيقي — محاكاة Node.js فقط)"
+      : "MOCK";
+
+  lines.push(`**وضع الخلفية:** ${backendLabel}\n`);
+
+  if (usesBridge) {
+    lines.push("> **تحذير:** وضع E2E_BRIDGE يستخدم محاكاة Node.js مع SQLite ولا يمثل تشغيل Tauri الحقيقي.");
+    lines.push("> النتائج مفيدة للاختبار السريع لكنها ليست مصدراً نهائياً للتحقق المحاسبي.\n");
+  }
+
+  // Overall pass/fail
+  const scenarioVerdicts = new Map<string, { overall: boolean; hasAllLayers: boolean; anyFail: boolean }>();
   for (const [sid, layerMap] of scenarioMap) {
     const oracleResults = layerMap.get("ORACLE") ?? [];
     const backendResults = layerMap.get("BACKEND_DB") ?? [];
@@ -52,15 +67,39 @@ function main() {
     const backendPass = backendResults.length > 0 && backendResults.every((r) => r.pass);
     const uiPass = uiResults.length > 0 && uiResults.every((r) => r.pass);
     const hasAllLayers = oracleResults.length > 0 && backendResults.length > 0 && uiResults.length > 0;
+    const anyFail = !oraclePass || !backendPass || (uiResults.length > 0 && !uiPass);
     const allRunLayersPass = oraclePass && backendPass && (uiResults.length === 0 || uiPass);
 
-    scenarioVerdicts.set(sid, { overall: allRunLayersPass && hasAllLayers, hasAllLayers });
+    scenarioVerdicts.set(sid, { overall: allRunLayersPass && hasAllLayers, hasAllLayers, anyFail });
   }
 
   const allPass = [...scenarioVerdicts.values()].every((v) => v.overall);
+  const anyFail = [...scenarioVerdicts.values()].some((v) => v.anyFail);
   const anyMissingLayers = [...scenarioVerdicts.values()].some((v) => !v.hasAllLayers);
-  const verdictLabel = allPass ? "ناجح" : anyMissingLayers ? "ناجح (بدون فحص الواجهة)" : "فشل";
+
+  let verdictLabel: string;
+  let verdictStatus: string;
+  if (allPass) {
+    verdictLabel = "ناجح";
+    verdictStatus = "PASS";
+  } else if (anyFail) {
+    verdictLabel = "فشل";
+    verdictStatus = "FAIL";
+  } else if (anyMissingLayers && !anyFail) {
+    verdictLabel = "ناجح جزئياً (طبقات ناقصة)";
+    verdictStatus = "PARTIAL";
+  } else {
+    verdictLabel = "غير صالح للتحقق المحاسبي";
+    verdictStatus = "NOT_VALID_FOR_REAL_ACCOUNTING";
+  }
+
+  if (usesBridge && verdictStatus === "PASS") {
+    verdictStatus = "NOT_VALID_FOR_REAL_ACCOUNTING";
+    verdictLabel = "ناجح — لكن غير صالح للتحقق المحاسبي النهائي (E2E_BRIDGE فقط)";
+  }
+
   lines.push(`## النتيجة النهائية: ${verdictLabel}\n`);
+  lines.push(`**الحالة:** ${verdictStatus}\n`);
 
   // Summary table
   lines.push("## ملخص السيناريوهات\n");
@@ -75,14 +114,25 @@ function main() {
     const oraclePass = oracleResults.length > 0 && oracleResults.every((r) => r.pass);
     const backendPass = backendResults.length > 0 && backendResults.every((r) => r.pass);
     const uiPass = uiResults.length > 0 && uiResults.every((r) => r.pass);
-    const overall = scenarioVerdicts.get(sid)?.overall ?? false;
+    const verdict = scenarioVerdicts.get(sid)!;
 
     const oracleStatus = oracleResults.length === 0 ? "لم يتم التشغيل" : statusIcon(oraclePass);
     const backendStatus = backendResults.length === 0 ? "لم يتم التشغيل" : statusIcon(backendPass);
     const uiStatus = uiResults.length === 0 ? "لم يتم تشغيل فحص Chromium UI لهذا السيناريو" : statusIcon(uiPass);
 
+    let scenarioStatus: string;
+    if (verdict.overall) {
+      scenarioStatus = "ناجح";
+    } else if (verdict.anyFail) {
+      scenarioStatus = "فشل";
+    } else if (!verdict.hasAllLayers) {
+      scenarioStatus = "جزئي";
+    } else {
+      scenarioStatus = "غير صالح";
+    }
+
     const scenarioName = (oracleResults[0] ?? backendResults[0] ?? uiResults[0])?.scenarioName ?? sid;
-    lines.push(`| ${sid}: ${scenarioName} | ${oracleStatus} | ${backendStatus} | ${uiStatus} | ${statusIcon(overall)} |`);
+    lines.push(`| ${sid}: ${scenarioName} | ${oracleStatus} | ${backendStatus} | ${uiStatus} | ${scenarioStatus} |`);
   }
 
   lines.push("");
@@ -196,18 +246,14 @@ function main() {
   // Final verdict
   lines.push("## النتيجة النهائية\n");
   lines.push(`### النتيجة: ${verdictLabel}\n`);
-  const passedCount = [...scenarioVerdicts.values()].filter((v) => v.overall || (!v.hasAllLayers && [...scenarioVerdicts.values()].length > 0)).length;
-  const allRunPass = [...scenarioVerdicts.values()].every((v) => {
-    const layerMap = scenarioMap.get([...scenarioMap.keys()][[...scenarioVerdicts.values()].indexOf(v)])!;
-    const oracleResults = layerMap.get("ORACLE") ?? [];
-    const backendResults = layerMap.get("BACKEND_DB") ?? [];
-    const uiResults = layerMap.get("CHROMIUM_UI") ?? [];
-    return (oracleResults.length === 0 || oracleResults.every(r => r.pass)) &&
-           (backendResults.length === 0 || backendResults.every(r => r.pass)) &&
-           (uiResults.length === 0 || uiResults.every(r => r.pass));
-  });
+  lines.push(`**الحالة:** ${verdictStatus}\n`);
   lines.push(`- إجمالي السيناريوهات: ${scenarioIds.length}`);
-  lines.push(`- ناجح (طبقات التشغيل): ${allRunPass ? scenarioIds.length : 0}`);
+  lines.push(`- ناجح: ${[...scenarioVerdicts.values()].filter((v) => v.overall).length}`);
+  lines.push(`- فشل: ${[...scenarioVerdicts.values()].filter((v) => v.anyFail).length}`);
+  lines.push(`- جزئي: ${[...scenarioVerdicts.values()].filter((v) => !v.hasAllLayers && !v.anyFail).length}`);
+  if (usesBridge) {
+    lines.push(`- **ملاحظة:** وضع E2E_BRIDGE ليس Tauri الحقيقي — لا يصلح للتحقق المحاسبي النهائي`);
+  }
   if (anyMissingLayers) {
     lines.push(`- تحذير: لم يتم تشغيل فحص Chromium UI — النتيجة النهائية تتطلب جميع الطبقات`);
   }
@@ -239,12 +285,17 @@ function main() {
     timestamp: new Date().toISOString(),
     totalScenarios: scenarioIds.length,
     passedScenarios: [...scenarioVerdicts.values()].filter((v) => v.overall).length,
-    failedScenarios: [...scenarioVerdicts.values()].filter((v) => !v.overall).length,
-    finalVerdict: allPass ? "PASS" : anyMissingLayers ? "PARTIAL" : "FAIL",
+    failedScenarios: [...scenarioVerdicts.values()].filter((v) => v.anyFail).length,
+    partialScenarios: [...scenarioVerdicts.values()].filter((v) => !v.hasAllLayers && !v.anyFail).length,
+    finalVerdict: verdictStatus,
+    backendMode: usesRealBackend ? "REAL_BACKEND" : usesBridge ? "E2E_BRIDGE" : "MOCK",
+    backendNote: usesBridge ? "E2E_BRIDGE uses Node.js SQLite mock, not real Tauri backend" : undefined,
     scenarios: scenarioIds.map((sid) => {
       const layerMap = scenarioMap.get(sid)!;
+      const v = scenarioVerdicts.get(sid)!;
       return {
         id: sid,
+        verdict: v.overall ? "PASS" : v.anyFail ? "FAIL" : "PARTIAL",
         oracle: (layerMap.get("ORACLE") ?? []).map((r) => ({ pass: r.pass, failureReason: r.failureReason })),
         backend: (layerMap.get("BACKEND_DB") ?? []).map((r) => ({ pass: r.pass, failureReason: r.failureReason, backendMode: r.backendMode })),
         chromiumUi: (layerMap.get("CHROMIUM_UI") ?? []).map((r) => ({ pass: r.pass, failureReason: r.failureReason, uiChecks: r.uiChecks })),
@@ -278,10 +329,13 @@ function main() {
   console.log(`\n${"═".repeat(60)}`);
   console.log("  تقرير اختبارات المحاسبة — فجر الوادي");
   console.log(`${"═".repeat(60)}`);
+  console.log(`الوضع: ${backendLabel}`);
   console.log(`السيناريوهات: ${scenarioIds.length}`);
   console.log(`ناجح: ${[...scenarioVerdicts.values()].filter((v) => v.overall).length}`);
-  console.log(`فشل: ${[...scenarioVerdicts.values()].filter((v) => !v.overall).length}`);
+  console.log(`فشل: ${[...scenarioVerdicts.values()].filter((v) => v.anyFail).length}`);
+  console.log(`جزئي: ${[...scenarioVerdicts.values()].filter((v) => !v.hasAllLayers && !v.anyFail).length}`);
   console.log(`النتيجة: ${verdictLabel}`);
+  console.log(`الحالة: ${verdictStatus}`);
   console.log(`${"═".repeat(60)}\n`);
 }
 
