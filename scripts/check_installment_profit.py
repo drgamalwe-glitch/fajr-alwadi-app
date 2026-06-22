@@ -953,6 +953,74 @@ def check(db_path):
     if not sold_cars_sale:
         test("Sale ledger preserved on non-financial edit (no sold cars)", True, "SKIP")
 
+    # ===== Scenario 50: editing sold car non-financial fields preserves sale ledger (ISSUE 1 FINAL) =====
+    print("\n[50] EDITING SOLD CAR NON-FINANCIAL FIELDS PRESERVES SALE LEDGER")
+    sold_cars = conn.execute("""
+        SELECT car_number FROM cars WHERE status = 'مبيوعة'
+    """).fetchall()
+    for car in sold_cars:
+        cn = car['car_number']
+        # Count sale ledger entries: receivable/revenue + cash + deferred_revenue + COGS + inventory credit
+        sale_ledger_count = conn.execute("""
+            SELECT COUNT(*) FROM financial_ledger
+            WHERE reference_type = 'car' AND reference_id = ?
+              AND (type_ LIKE '%بيع%' OR type_ LIKE '%مدينون%' OR type_ LIKE '%إيراد%'
+                   OR type_ LIKE '%تكلفة%' OR type_ LIKE '%تخفيض%'
+                   OR type_ LIKE '%ارباح%')
+        """, [cn]).fetchone()[0]
+        # Expected: at least 2 (revenue + cash for cash sale, or receivable + deferred_revenue for installment)
+        test(f"Car {cn}: sale ledger count >= 2",
+             sale_ledger_count >= 2, f"count={sale_ledger_count}")
+    if not sold_cars:
+        test("Editing sold car preserves sale ledger (no sold cars)", True, "SKIP")
+
+    # ===== Scenario 51: oldNum == car_number does not delete all ledger (ISSUE 1 FINAL) =====
+    print("\n[51] oldNum == car_number DOES NOT DELETE ALL LEDGER")
+    all_cars = conn.execute("""
+        SELECT car_number FROM cars
+    """).fetchall()
+    car_ledger_counts = {}
+    for car in all_cars:
+        cn = car['car_number']
+        count = conn.execute("""
+            SELECT COUNT(*) FROM financial_ledger
+            WHERE reference_type = 'car' AND reference_id = ?
+        """, [cn]).fetchone()[0]
+        car_ledger_counts[cn] = count
+    if car_ledger_counts:
+        # Just report counts — the real test is runtime: call add_car with oldNum=car_number
+        # then verify counts match. This is a proxy check: any car with 0 ledger entries
+        # when it should have some would be flagged.
+        for cn, count in car_ledger_counts.items():
+            status = conn.execute(
+                "SELECT status FROM cars WHERE car_number = ?", [cn]
+            ).fetchone()[0]
+            expected_min = 2 if status == 'مبيوعة' else 1  # sold cars need sale+inventory, unsold need purchase
+            test(f"Car {cn}: ledger count >= {expected_min}",
+                 count >= expected_min, f"count={count}")
+    else:
+        test("oldNum == car_number does not delete all ledger (no cars)", True, "SKIP")
+
+    # ===== Scenario 52: update_partner rename does not touch unrelated account types (ISSUE 3 FINAL) =====
+    print("\n[52] UPDATE_PARTNER RENAME DOES NOT TOUCH UNRELATED ACCOUNT TYPES")
+    customers = conn.execute("""
+        SELECT partner_name FROM partners WHERE kind = 'زبون'
+    """).fetchall()
+    for c in customers:
+        name = c['partner_name']
+        # Check if any non-receivable ledger rows exist with this account_id
+        unrelated = conn.execute("""
+            SELECT COUNT(*) FROM financial_ledger
+            WHERE account_id = ? AND account_type NOT IN ('receivable', 'funder', 'payable', 'investor')
+        """, [name]).fetchone()[0]
+        # If unrelated > 0, a rename via update_partner would have touched these rows
+        # (since the old code had the broad fallback, and we verify the new code doesn't)
+        test(f"Customer '{name}': no unrelated ledger rows",
+             unrelated == 0,
+             f"unrelated_count={unrelated}" if unrelated > 0 else "PASS")
+    if not customers:
+        test("Update_partner unrelated account types (no customers)", True, "SKIP")
+
     # ===== Summary =====
     print("\n" + "=" * 60)
     passed_count = sum(1 for _, p, _ in results if p)

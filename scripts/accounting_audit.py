@@ -1773,6 +1773,75 @@ def audit_source(lib_path):
     else:
         errors.append("FAIL: update_partner missing ledger history check on kind change")
 
+    # 52. add_car oldNum branch must not broadly delete all car ledger when old_num == car_number (ISSUE 1 FINAL)
+    print("\n[S52] add_car oldNum branch distinguishes car_number change from same-number edit...")
+    in_add_car = False
+    has_car_number_changed = False
+    has_car_number_changed_guard = False
+    for i, line in enumerate(lines, 1):
+        if 'fn add_car' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_add_car = True
+        if in_add_car:
+            stripped = line.split('//')[0] if '//' in line else line
+            if 'car_number_changed' in stripped:
+                has_car_number_changed = True
+            if 'old_num != car_number' in stripped:
+                has_car_number_changed_guard = True
+            if 'fn sell_car_with_accounting' in line:
+                break
+    if has_car_number_changed and has_car_number_changed_guard:
+        print("  PASS")
+    elif has_car_number_changed:
+        errors.append("FAIL: car_number_changed defined but no old_num != car_number guard found")
+    else:
+        errors.append("FAIL: car_number_changed boolean not found in add_car")
+
+    # 53. add_car uses same_car_edit for precise deletion path
+    print("\n[S53] add_car uses same_car_edit for normal edits...")
+    if 'same_car_edit' in content:
+        print("  PASS")
+    else:
+        errors.append("FAIL: same_car_edit boolean not found in add_car")
+
+    # 54. add_car normal edit uses precise deletion helpers (ISSUE 1 FINAL)
+    print("\n[S54] add_car same-car edit calls precise deletion helpers...")
+    in_add_car = False
+    has_precise_purchase_delete = False
+    has_precise_sale_delete = False
+    for i, line in enumerate(lines, 1):
+        if 'fn add_car' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
+            in_add_car = True
+        if in_add_car:
+            if 'should_rebuild_purchase' in line:
+                # Check next few lines for delete_car_purchase_ledger_entries
+                for j in range(i, min(i+5, len(lines)+1)):
+                    if 'delete_car_purchase_ledger_entries' in lines[j-1]:
+                        has_precise_purchase_delete = True
+                        break
+            if 'should_rebuild_sale_ledger' in line and 'delete_car_sale_ledger_entries' in line:
+                has_precise_sale_delete = True
+            elif 'should_rebuild_sale_ledger' in line:
+                # Check next few lines for delete_car_sale_ledger_entries
+                for j in range(i, min(i+5, len(lines)+1)):
+                    if 'delete_car_sale_ledger_entries' in lines[j-1] and 'should_rebuild_sale_ledger' not in lines[j-1]:
+                        has_precise_sale_delete = True
+                        break
+            if 'fn sell_car_with_accounting' in line:
+                break
+    if has_precise_purchase_delete and has_precise_sale_delete:
+        print("  PASS")
+    elif has_precise_purchase_delete:
+        errors.append("FAIL: add_car same-car edit missing precise sale deletion")
+    else:
+        errors.append("FAIL: add_car same-car edit missing precise deletion helpers")
+
+    # 55. update_partner no broad fallback (ISSUE 3 FINAL)
+    print("\n[S55] update_partner no broad account_type NOT IN fallback...")
+    if 'account_type NOT IN' in content:
+        errors.append("FAIL: update_partner still contains broad account_type NOT IN fallback")
+    else:
+        print("  PASS")
+
     # Summary
     print("\n" + "=" * 60)
     if errors:

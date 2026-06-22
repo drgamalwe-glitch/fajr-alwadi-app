@@ -3570,28 +3570,39 @@ fn add_car(
     } else {
         car_number.as_str()
     };
-    let old_car_data: (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<f64>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = db
+    let old_car_data: (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<f64>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
+                       Option<f64>, Option<String>, Option<String>, Option<f64>, Option<f64>, Option<i32>, Option<f64>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = db
         .query_row(
             "SELECT purchase_time, sale_time, car_name, chassis_number, car_model, car_year, status,
                     purchase_price, COALESCE(purchase_type, 'كاش'), financer_name, currency,
-                    COALESCE(purchase_date, ''), purchase_payment_type
+                    COALESCE(purchase_date, ''), purchase_payment_type,
+                    selling_price, sale_currency, payment_type,
+                    amount_paid, amount_remaining, installment_months, monthly_payment,
+                    buyer_name, buyer_phone, sale_date, delivery_date, first_payment_date
              FROM cars WHERE car_number = ?1",
             [query_num],
             |row| Ok((
                 row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
                 row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?,
                 row.get(10)?, row.get(11)?, row.get(12)?,
+                row.get(13)?, row.get(14)?, row.get(15)?, row.get(16)?, row.get(17)?,
+                row.get(18)?, row.get(19)?, row.get(20)?, row.get(21)?, row.get(22)?,
+                row.get(23)?, row.get(24)?,
             )),
         )
-        .unwrap_or((None, None, None, None, None, None, None, None, None, None, None, None, None));
+        .unwrap_or((None, None, None, None, None, None, None, None, None, None, None, None, None,
+                    None, None, None, None, None, None, None, None, None, None, None, None));
     let (
         existing_purchase_time, existing_sale_time, old_name, _old_chassis, _old_model, _old_year,
         old_status, old_purchase_price, old_purchase_type, old_financer_name, old_currency,
         _old_purchase_date, _old_purchase_payment_type,
+        _old_selling_price, _old_sale_currency, _old_payment_type,
+        _old_amount_paid, _old_amount_remaining, _old_installment_months, _old_monthly_payment,
+        _old_buyer_name, _old_buyer_phone, _old_sale_date, _old_delivery_date, _old_first_payment_date,
     ) = old_car_data;
     let is_existing_car = old_name.is_some();
     let should_create_purchase_transactions = !is_existing_car;
-    let should_create_sale_transactions = status == "مبيوعة" && old_status.as_deref() != Some("مبيوعة");
+    let _should_create_sale_transactions = status == "مبيوعة" && old_status.as_deref() != Some("مبيوعة");
 
     let purchase_changed = is_existing_car && (
         old_purchase_price.map_or(true, |v| (v - purchase).abs() > 0.001)
@@ -3601,37 +3612,57 @@ fn add_car(
     );
     let should_rebuild_purchase = should_create_purchase_transactions || purchase_changed;
 
-    let skip_sale = skip_sale_accounting.unwrap_or(false);
+    let sale_changed = is_existing_car && status == "مبيوعة" && (
+        old_status.as_deref() != Some("مبيوعة")
+        || _old_selling_price.map_or(true, |v| (v - selling).abs() > 0.001)
+        || _old_sale_currency.as_deref() != sale_currency.as_deref()
+        || _old_payment_type.as_deref() != payment_type.as_deref()
+        || _old_amount_paid.map_or(true, |v| amount_paid.map_or(true, |a| (v - a).abs() > 0.001))
+        || _old_amount_remaining.map_or(true, |v| amount_remaining.map_or(true, |a| (v - a).abs() > 0.001))
+        || _old_installment_months != installment_months
+        || _old_monthly_payment.map_or(true, |v| monthly_payment.map_or(true, |m| (v - m).abs() > 0.001))
+        || _old_buyer_name.as_deref() != buyer_name.as_deref()
+        || _old_buyer_phone.as_deref() != buyer_phone.as_deref()
+        || _old_sale_date.as_deref() != sale_date.as_deref()
+        || _old_delivery_date.as_deref() != delivery_date.as_deref()
+        || _old_first_payment_date.as_deref() != first_payment_date.as_deref()
+    );
+    let should_rebuild_sale_ledger = sale_changed;
 
-    if !old_num.is_empty() {
-        // Car number changed — delete old car number's ledger entirely (old number will be removed)
+    let skip_sale = skip_sale_accounting.unwrap_or(false);
+    let has_old_num = !old_num.is_empty();
+    let car_number_changed = has_old_num && old_num != car_number;
+    let same_car_edit = is_existing_car && (!has_old_num || old_num == car_number);
+
+    if car_number_changed {
+        // Car number actually changed — old number is being replaced entirely.
+        // It is safe to delete all ledger for the old number since the old car_number will be removed.
         db.execute(
             "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = ?1",
             [old_num],
         )
         .map_err(|e| e.to_string())?;
 
-        if old_num != car_number {
-            db.execute(
-                "UPDATE car_expenses SET car_number = ?1 WHERE car_number = ?2",
-                params![car_number.as_str(), old_num],
-            )
+        // Update linked tables from old_num to car_number
+        db.execute(
+            "UPDATE car_expenses SET car_number = ?1 WHERE car_number = ?2",
+            params![car_number.as_str(), old_num],
+        )
+        .map_err(|e| e.to_string())?;
+        db.execute(
+            "UPDATE financial_ledger SET account_id = ?1 WHERE account_type = 'inventory' AND account_id = ?2 AND reference_type = 'expense'",
+            params![car_number.as_str(), old_num]
+        ).map_err(|e| e.to_string())?;
+        db.execute("DELETE FROM cars WHERE car_number = ?1", [old_num])
             .map_err(|e| e.to_string())?;
-            db.execute(
-                "UPDATE financial_ledger SET account_id = ?1 WHERE account_type = 'inventory' AND account_id = ?2 AND reference_type = 'expense'",
-                params![car_number.as_str(), old_num]
-            ).map_err(|e| e.to_string())?;
-            db.execute("DELETE FROM cars WHERE car_number = ?1", [old_num])
-                .map_err(|e| e.to_string())?;
-            db.execute("DELETE FROM car_partners WHERE car_number = ?1", [old_num])
-                .map_err(|e| e.to_string())?;
-        }
-    } else if is_existing_car {
-        // Existing car, same number — delete ledger precisely based on what changed
+        db.execute("DELETE FROM car_partners WHERE car_number = ?1", [old_num])
+            .map_err(|e| e.to_string())?;
+    } else if same_car_edit {
+        // Normal edit of same car — use precise type-filtered deletion only
         if should_rebuild_purchase {
             delete_car_purchase_ledger_entries(&db, car_number.as_str())?;
         }
-        if should_create_sale_transactions && !skip_sale {
+        if should_rebuild_sale_ledger && !skip_sale {
             delete_car_sale_ledger_entries(&db, car_number.as_str())?;
         }
     }
@@ -3821,7 +3852,7 @@ fn add_car(
         .trim()
         .replace("  ", " ");
 
-    if should_create_sale_transactions && !skip_sale {
+    if should_rebuild_sale_ledger && !skip_sale {
         // Delete only car sale generated rows (not purchase rows)
         delete_generated_car_sale_partner_transactions(&db, &car_number)?;
 
@@ -3840,7 +3871,7 @@ fn add_car(
         }
     }
 
-    if should_create_sale_transactions && !skip_sale {
+    if should_rebuild_sale_ledger && !skip_sale {
         // Currency policy: block mixed-currency sales without explicit fx_rate
         let purchase_curr = currency.as_deref().unwrap_or("IQD");
         let sale_curr = sale_currency.as_deref().unwrap_or("IQD");
@@ -3953,7 +3984,7 @@ fn add_car(
     if should_rebuild_purchase {
         record_car_purchase_ledger_entries(&db, car_number.as_str())?;
     }
-    if should_create_sale_transactions && !skip_sale {
+    if should_rebuild_sale_ledger && !skip_sale {
         record_car_sale_ledger_entries(&db, car_number.as_str())?;
     }
 
@@ -5007,12 +5038,6 @@ fn update_partner(
             )
             .map_err(|e| e.to_string())?;
         }
-        // For legacy rows without mapped account_type, also update by partner_name match
-        // This handles any rows that may have been created without account_type filtering
-        tx.execute(
-            "UPDATE financial_ledger SET account_id = ?1 WHERE account_id = ?2 AND account_type NOT IN ('receivable', 'funder', 'payable', 'investor')",
-            params![&name, &old_name],
-        ).map_err(|e| e.to_string())?;
     }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
