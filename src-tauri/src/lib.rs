@@ -1005,6 +1005,36 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         let _ = conn.execute("INSERT INTO db_version (version) VALUES (15)", []);
     }
 
+    // Version 16: Clean up old wrong partner split rows for investor repayments.
+    // Previously, investor withdrawals incorrectly created partner cash rows with
+    // source_type IN ('investor_payment', 'investor_transaction') AND source_role = 'partner_cash_payment'.
+    // These rows must be removed so investor transactions affect Qasa only.
+    if version < 16 {
+        // Delete financial_ledger entries for the wrong partner rows
+        let _ = conn.execute(
+            "DELETE FROM financial_ledger
+             WHERE reference_type = 'partner_transaction'
+               AND CAST(reference_id AS INTEGER) IN (
+                 SELECT id FROM partner_transactions
+                 WHERE kind = 'شريك'
+                   AND source_role = 'partner_cash_payment'
+                   AND source_type IN ('investor_payment', 'investor_transaction')
+               )",
+            [],
+        );
+        // Delete the wrong partner rows themselves
+        let _ = conn.execute(
+            "DELETE FROM partner_transactions
+             WHERE kind = 'شريك'
+               AND source_role = 'partner_cash_payment'
+               AND source_type IN ('investor_payment', 'investor_transaction')",
+            [],
+        );
+        // Recalculate all partner balances after cleanup
+        let _ = recalculate_all_partners(conn);
+        let _ = conn.execute("INSERT INTO db_version (version) VALUES (16)", []);
+    }
+
     // Performance indexes
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cars_status ON cars(status)",
@@ -1439,27 +1469,13 @@ struct TransactionClassification {
 
 fn classify_partner_transaction(kind: &str, type_: &str, tx_id: i64) -> TransactionClassification {
     match kind {
-        "مستثمر" => {
-            if type_.starts_with("سحب") {
-                // Investor repayment: partner split rows handle Qasa/Cash
-                TransactionClassification {
-                    source_type: "investor_transaction".to_string(),
-                    source_id: tx_id.to_string(),
-                    source_role: "repayment_account_movement".to_string(),
-                    affects_qasa: 0,
-                    affects_partner_cash: 0,
-                    affects_profit: 0,
-                }
-            } else {
-                TransactionClassification {
-                    source_type: "investor_transaction".to_string(),
-                    source_id: tx_id.to_string(),
-                    source_role: "account_movement".to_string(),
-                    affects_qasa: 1,
-                    affects_partner_cash: 0,
-                    affects_profit: 0,
-                }
-            }
+        "مستثمر" => TransactionClassification {
+            source_type: "investor_transaction".to_string(),
+            source_id: tx_id.to_string(),
+            source_role: "account_movement".to_string(),
+            affects_qasa: 1,
+            affects_partner_cash: 0,
+            affects_profit: 0,
         },
         "ممول" => TransactionClassification {
             source_type: "funder_transaction".to_string(),
@@ -6242,18 +6258,6 @@ fn apply_partner_transaction_splits(
         return Ok(());
     }
 
-    // === 1. Investor Repayment (سحب مستثمر) ===
-    // Partner split rows handle Qasa/Cash; the original row has affects_qasa=0.
-    let is_investor_repayment = kind == "مستثمر" && type_.starts_with("سحب");
-    if is_investor_repayment {
-        let partner_note = format!("تسديد مستثمر: {} ({})", partner_name, tx_id);
-        deduct_from_partners_5050_with_effects(
-            db, amount, currency, date, "قاصه", "سحب تسديد مستثمر", &partner_note,
-            "investor_payment", &tx_id.to_string(), "partner_cash_payment",
-            true, true, false,
-        )?;
-    }
-
     // === 2. Company Cash Withdrawal (سحب شركة) ===
     let is_company_cash_withdrawal = kind == "شركة"
         && type_.starts_with("سحب")
@@ -6863,8 +6867,10 @@ fn pay_financier_from_partners(
     let tx_id = db.last_insert_rowid();
 
     // Issue 4: Classify the original repayment row based on financier_kind
+    // Investors: affects_qasa=1, no partner splits
+    // Companies/Funders: affects_qasa=0, partner splits handle cash
     let (src_type, src_role, aq, apc, apr) = match financier_kind {
-        "مستثمر" => ("investor_transaction", "repayment_account_movement", 1, 0, 0),
+        "مستثمر" => ("investor_transaction", "account_movement", 1, 0, 0),
         "شركة" => ("company_transaction", "repayment_account_movement", 0, 0, 0),
         _ => ("funder_transaction", "repayment_account_movement", 0, 0, 0),
     };
@@ -6878,33 +6884,33 @@ fn pay_financier_from_partners(
 
     recalculate_partner_total(&db, financier_name, financier_kind)?;
 
-    let account_label = match financier_kind {
-        "مستثمر" => "المستثمر",
-        "شركة" => "الشركة",
-        _ => "الممول",
-    };
-    let partner_note = format!("سحب لتسديد {} {}", account_label, financier_name);
-    // Task 6: Use source-aware helper
-    let source_type = match financier_kind {
-        "مستثمر" => "investor_transaction",
-        "شركة" => "company_payment",
-        _ => "funder_payment",
-    };
-    deduct_from_partners_5050_with_effects(
-        &db,
-        amount,
-        &currency,
-        date,
-        "قاصه",
-        "سحب تسديد",
-        &partner_note,
-        source_type,
-        &tx_id.to_string(),
-        "partner_cash_payment",
-        true,  // affects_qasa
-        true,  // affects_partner_cash
-        false, // affects_profit
-    )?;
+    // For investors, the transaction itself handles Qasa — no partner split needed
+    if financier_kind != "مستثمر" {
+        let account_label = match financier_kind {
+            "شركة" => "الشركة",
+            _ => "الممول",
+        };
+        let partner_note = format!("سحب لتسديد {} {}", account_label, financier_name);
+        let source_type = match financier_kind {
+            "شركة" => "company_payment",
+            _ => "funder_payment",
+        };
+        deduct_from_partners_5050_with_effects(
+            &db,
+            amount,
+            &currency,
+            date,
+            "قاصه",
+            "سحب تسديد",
+            &partner_note,
+            source_type,
+            &tx_id.to_string(),
+            "partner_cash_payment",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
+            false, // affects_profit
+        )?;
+    }
 
     if commission_amount > 0.0 {
         let commission_currency = commission_currency.unwrap_or_else(|| "IQD".to_string());
@@ -8817,14 +8823,14 @@ fn get_financial_summary(
         |row| row.get(0),
     ).unwrap_or(0.0);
 
-    // 6. Total Expenses
+    // 6. Total Expenses — only general expenses from Expenses tab, not COGS or car expenses
     let total_expenses_iqd: f64 = db.query_row(
-        "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'expense' AND currency = 'IQD'",
+        "SELECT COALESCE(SUM(amount), 0.0) FROM expenses WHERE COALESCE(currency, 'IQD') = 'IQD'",
         [],
         |row| row.get(0),
     ).unwrap_or(0.0);
     let total_expenses_usd: f64 = db.query_row(
-        "SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger WHERE account_type = 'expense' AND currency = 'USD'",
+        "SELECT COALESCE(SUM(amount), 0.0) FROM expenses WHERE COALESCE(currency, 'IQD') = 'USD'",
         [],
         |row| row.get(0),
     ).unwrap_or(0.0);
@@ -9050,7 +9056,7 @@ fn calculate_profit_totals_since(
           ELSE 0
           END
         ), 0.0) FROM cars
-         WHERE status = 'مبيعة' AND payment_type = 'كاش'
+         WHERE status = 'مبيوعة' AND payment_type = 'كاش'
            AND COALESCE(sale_currency, 'IQD') = 'IQD'
            AND sale_date >= ?1",
         params![start_date],
@@ -9068,7 +9074,7 @@ fn calculate_profit_totals_since(
           ELSE 0
           END
         ), 0.0) FROM cars
-         WHERE status = 'مبيعة' AND payment_type = 'كاش'
+         WHERE status = 'مبيوعة' AND payment_type = 'كاش'
            AND COALESCE(sale_currency, 'IQD') = 'USD'
            AND sale_date >= ?1",
         params![start_date],
@@ -9377,7 +9383,7 @@ fn get_profit_distribution_summary(
           ELSE 0
           END
         ), 0.0) FROM cars
-         WHERE status = 'مبيعة' AND payment_type = 'كاش'
+         WHERE status = 'مبيوعة' AND payment_type = 'كاش'
            AND COALESCE(sale_currency, 'IQD') = 'IQD'
            AND sale_date >= ?1 AND sale_date <= ?2",
         params![&start, &end],
@@ -9395,7 +9401,7 @@ fn get_profit_distribution_summary(
           ELSE 0
           END
         ), 0.0) FROM cars
-         WHERE status = 'مبيعة' AND payment_type = 'كاش'
+         WHERE status = 'مبيوعة' AND payment_type = 'كاش'
            AND COALESCE(sale_currency, 'IQD') = 'USD'
            AND sale_date >= ?1 AND sale_date <= ?2",
         params![&start, &end],
