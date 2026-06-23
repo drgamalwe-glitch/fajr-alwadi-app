@@ -1418,13 +1418,27 @@ struct TransactionClassification {
 
 fn classify_partner_transaction(kind: &str, type_: &str, tx_id: i64) -> TransactionClassification {
     match kind {
-        "مستثمر" => TransactionClassification {
-            source_type: "investor_transaction".to_string(),
-            source_id: tx_id.to_string(),
-            source_role: "account_movement".to_string(),
-            affects_qasa: 1,
-            affects_partner_cash: 0,
-            affects_profit: 0,
+        "مستثمر" => {
+            if type_.starts_with("سحب") {
+                // Investor repayment: partner split rows handle Qasa/Cash
+                TransactionClassification {
+                    source_type: "investor_transaction".to_string(),
+                    source_id: tx_id.to_string(),
+                    source_role: "repayment_account_movement".to_string(),
+                    affects_qasa: 0,
+                    affects_partner_cash: 0,
+                    affects_profit: 0,
+                }
+            } else {
+                TransactionClassification {
+                    source_type: "investor_transaction".to_string(),
+                    source_id: tx_id.to_string(),
+                    source_role: "account_movement".to_string(),
+                    affects_qasa: 1,
+                    affects_partner_cash: 0,
+                    affects_profit: 0,
+                }
+            }
         },
         "ممول" => TransactionClassification {
             source_type: "funder_transaction".to_string(),
@@ -2062,22 +2076,24 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
                     Some(&notes),
                 )
                 .map_err(|e| e.to_string())?;
-                record_ledger_entry(
-                    conn,
-                    &tx_date,
-                    &tx_time,
-                    "cash",
-                    Some(&payment_type),
-                    0.0,
-                    amount,
-                    &curr,
-                    "partner_transaction",
-                    &ref_id,
-                    "سحب مستثمر",
-                    &format!("سحب نقدي مستثمر: {}", p_name),
-                    Some(&notes),
-                )
-                .map_err(|e| e.to_string())?;
+                if should_create_cash_entry {
+                    record_ledger_entry(
+                        conn,
+                        &tx_date,
+                        &tx_time,
+                        "cash",
+                        Some(&payment_type),
+                        0.0,
+                        amount,
+                        &curr,
+                        "partner_transaction",
+                        &ref_id,
+                        "سحب مستثمر",
+                        &format!("سحب نقدي مستثمر: {}", p_name),
+                        Some(&notes),
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
             }
         }
         "ممول" => {
@@ -6263,9 +6279,16 @@ fn apply_partner_transaction_splits(
     }
 
     // === 1. Investor Repayment (سحب مستثمر) ===
-    // Issue 2: Do NOT auto-deduct partners for investor withdrawals.
-    // The investor row itself already has affects_qasa=1 which handles the Qasa movement.
-    // Creating partner cash movements would double-count the Qasa reduction.
+    // Partner split rows handle Qasa/Cash; the original row has affects_qasa=0.
+    let is_investor_repayment = kind == "مستثمر" && type_.starts_with("سحب");
+    if is_investor_repayment {
+        let partner_note = format!("تسديد مستثمر: {} ({})", partner_name, tx_id);
+        deduct_from_partners_5050_with_effects(
+            db, amount, currency, date, "قاصه", "سحب تسديد مستثمر", &partner_note,
+            "investor_payment", &tx_id.to_string(), "partner_cash_payment",
+            true, true, false,
+        )?;
+    }
 
     // === 2. Company Cash Withdrawal (سحب شركة) ===
     let is_company_cash_withdrawal = kind == "شركة"

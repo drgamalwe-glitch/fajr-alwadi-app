@@ -825,7 +825,7 @@ export function PartnersTab({
           isOriginalCustomerInstallmentRow(tx) ||
           (
             !(isInstallmentWithdrawal(tx) && tx.amount <= 0) &&
-            !isLinkedInstallmentPayment(tx) &&
+            !(form.kind === "زبون" && isLinkedInstallmentPayment(tx)) &&
             !tx.type_.startsWith("تحويل")
           )
       ),
@@ -2007,12 +2007,12 @@ export function PartnersTab({
                           <td className="col-time">{tx.time || "00:00"}</td>
                           <td className="col-type">
                             <span className={isProfitRow ? "tx-type-profit" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? `${direction.colorClass} font-bold` : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
-                              {isProfitRow ? "ارباح" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.label : isSaleInstallmentTx(tx) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
+                              {isProfitRow ? "ارباح" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.label : (form.kind === "زبون" && isSaleInstallmentTx(tx)) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
                             </span>
                           </td>
                           <td className={cn(
                             "col-amount font-bold",
-                            isProfitRow ? "tx-amount-profit" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.colorClass : isSaleInstallmentTx(tx) ? "text-green" : (isWithdraw ? "text-red" : "text-green")
+                            isProfitRow ? "tx-amount-profit" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.colorClass : (form.kind === "زبون" && isSaleInstallmentTx(tx)) ? "text-green" : (isWithdraw ? "text-red" : "text-green")
                           )}>
                             <PriceDisplay
                               amount={tx.amount}
@@ -2468,7 +2468,7 @@ export function PartnersTab({
                                         <td className="col-time">{tx.time || "00:00"}</td>
                                         <td className="col-type">
                                           <span className={isProfitRow ? "tx-type-profit" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? `${direction.colorClass} font-bold` : form.kind === "ممول" ? (isWithdraw ? "text-green font-bold" : "text-red font-bold") : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
-                                            {isProfitRow ? "ارباح" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.label : isSaleInstallmentTx(tx) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
+                                            {isProfitRow ? "ارباح" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.label : (form.kind === "زبون" && isSaleInstallmentTx(tx)) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
                                           </span>
                                         </td>
                                         <td className="col-account">
@@ -2480,7 +2480,7 @@ export function PartnersTab({
                                           "col-amount font-bold",
                                           isProfitRow ? "tx-amount-profit" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.colorClass :
                                           form.kind === "ممول" ? (isWithdraw ? "text-red" : "text-green") :
-                                              isSaleInstallmentTx(tx) ? "text-green" :
+                                              (form.kind === "زبون" && isSaleInstallmentTx(tx)) ? "text-green" :
                                                 (isWithdraw ? "text-red" : "text-green")
                                         )}>
                                           <PriceDisplay
