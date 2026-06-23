@@ -1,13 +1,59 @@
 {
-  "timestamp": "2026-06-22T16:16:21.826Z",
-  "totalScenarios": 20,
-  "passedScenarios": 20,
+  "timestamp": "2026-06-23T02:30:31.841Z",
+  "totalScenarios": 21,
+  "passedScenarios": 21,
   "failedScenarios": 0,
   "partialScenarios": 0,
   "finalVerdict": "PASS",
   "backendMode": "E2E_BRIDGE",
   "backendNote": "E2E_BRIDGE uses Node.js SQLite mock, not real Tauri backend",
   "scenarios": [
+    {
+      "id": "S02",
+      "verdict": "PASS",
+      "oracle": [
+        {
+          "pass": true,
+          "failureReason": ""
+        }
+      ],
+      "backend": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "backendMode": "E2E_BRIDGE"
+        }
+      ],
+      "chromiumUi": [
+        {
+          "pass": true,
+          "failureReason": "",
+          "uiChecks": [
+            {
+              "tab": "لوحة التحكم",
+              "element": "قيمة المخزون",
+              "expected": "10000000",
+              "actual": "10000000",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "القاصة",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            },
+            {
+              "tab": "لوحة التحكم",
+              "element": "الربح",
+              "expected": "0",
+              "actual": "0",
+              "pass": true
+            }
+          ]
+        }
+      ]
+    },
     {
       "id": "S01",
       "verdict": "PASS",

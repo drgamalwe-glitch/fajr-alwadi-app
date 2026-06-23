@@ -185,6 +185,31 @@ describe("Accounting Oracle - Batch 1 Scenarios (S01-S23)", () => {
     clearResults();
   });
 
+  it("S02: Funded car purchase — correct values", () => {
+    const scenarios = getAllScenarios();
+    const s02 = scenarios.find((s) => s.id === "S02");
+    expect(s02).toBeDefined();
+    const o = s02!.oracle;
+    expect(o.qasa).toBe(0);
+    expect(o.partnerCash).toBe(0);
+    expect(o.profitTotal).toBe(0);
+    expect(o.partner1Profit).toBe(0);
+    expect(o.partner2Profit).toBe(0);
+    expect(o.inventory).toBe(10_000_000);
+    expect(o.carCost).toBe(10_000_000);
+    expect(o.carProfit).toBe(0);
+    expect(o.liabilities).toBe(10_000_000);
+    // Write to collector
+    appendResult({
+      scenarioId: "S02", scenarioName: o.label, layer: "ORACLE",
+      backendMode: "PURE_CALCULATION", executionTimeMs: 0,
+      pass: true, failureReason: "",
+      expected: { qasa: o.qasa, partnerCash: o.partnerCash, profitTotal: o.profitTotal, inventory: o.inventory, carCost: o.carCost, liabilities: o.liabilities },
+      actual: { qasa: o.qasa, partnerCash: o.partnerCash, profitTotal: o.profitTotal, inventory: o.inventory, carCost: o.carCost, liabilities: o.liabilities },
+      rows: o.rows,
+    });
+  });
+
   it("S01: Cash car purchase — correct values", () => {
     const scenarios = getAllScenarios();
     const s01 = scenarios.find((s) => s.id === "S01");

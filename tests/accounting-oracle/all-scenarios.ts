@@ -50,6 +50,33 @@ function purchaseRow(amount: number, desc: string): OracleRow {
   return { sourceType: "car_purchase", sourceRole: "cash_payment", affectsQasa: true, affectsPartnerCash: true, affectsProfit: false, amount: -amount, description: desc };
 }
 
+// ─── S02: Funded car purchase ──────────────────────────────────────
+function s02(): TestScenario {
+  const purchase = 10_000_000;
+  return {
+    id: "S02", group: "CAR_PURCHASE", name: "Funded car purchase", nameAr: "شراء سيارة بالتمويل",
+    description: "Purchase 10,000,000 IQD via funder financing. Status: متوفرة. No partner cash movement.",
+    oracle: {
+      label: "S02: Funded car purchase",
+      qasa: 0, partnerCash: 0, profitTotal: 0,
+      partner1Profit: 0, partner2Profit: 0,
+      inventory: purchase, receivables: 0, liabilities: purchase, generalExpenses: 0,
+      carCost: purchase, carProfit: 0, customerRemaining: 0,
+      rows: [],
+    },
+    backendChecks: [
+      { field: "inventory", label: "قيمة المخزون", compute: (c) => c.summary.inventory_value_iqd },
+      { field: "qasa", label: "القاصة", compute: (c) => c.summary.qasa_iqd },
+      { field: "partnerCash", label: "رأس مال الشركاء", compute: (c) => c.summary.total_partner_capital_iqd },
+      { field: "profit", label: "الربح", compute: (c) => c.summary.monthly_profits_iqd },
+    ],
+    uiChecks: [
+      { tab: "لوحة التحكم", element: "قيمة المخزون", compute: (c) => c.summary.inventory_value_iqd },
+      { tab: "لوحة التحكم", element: "القاصة", compute: (c) => c.summary.qasa_iqd },
+    ],
+  };
+}
+
 // ─── S01: Cash car purchase ────────────────────────────────────────
 function s01(): TestScenario {
   const purchase = 10_000_000;
@@ -562,7 +589,7 @@ function s63(): TestScenario {
 // ─── Registry ──────────────────────────────────────────────────────
 export function getAllScenarios(): TestScenario[] {
   return [
-    s01(), s05(), s08(), s09(),
+    s01(), s02(), s05(), s08(), s09(),
     s10(), s11(), s12(),
     s22(), s23(), s25(),
     s47(), s49(), s50(),

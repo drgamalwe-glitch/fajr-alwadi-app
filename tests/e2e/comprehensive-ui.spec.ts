@@ -116,6 +116,46 @@ test.describe("S01: شراء سيارة كاش — فحص الواجهة", () =>
   });
 });
 
+// ─── S02 UI: Funded car purchase ─────────────────────────────────────
+
+test.describe("S02: شراء سيارة بالتمويل — فحص الواجهة", () => {
+  test("شراء بالتمويل: التحقق من المخزون والقاصة", async ({ page }) => {
+    test.setTimeout(120_000);
+    const t0 = Date.now();
+    const uiChecks: UiCheck[] = [];
+
+    await bridgeReset();
+    await bridgeInvoke("add_car", {
+      num: "UI-S02", chassis: "CH-UI-S02", model: "سيارة S02", year: "2024",
+      name: "سيارة اختبار S02", color: "أبيض", details: "",
+      purchase: 10_000_000, status: "متوفرة",
+      purchaseDate: "2024-01-01", currency: "IQD",
+      purchasePaymentType: "قاصه", purchaseType: "تمويل",
+      financerName: "ممول S02",
+    });
+
+    await setupAndLogin(page);
+
+    // Dashboard — Inventory = 10M
+    const invText = await safeText(page.locator(".inventory-iqd span").first());
+    const invVal = parseMoney(invText);
+    uiChecks.push({ tab: "لوحة التحكم", element: "قيمة المخزون", expected: "10000000", actual: String(invVal), pass: !isNaN(invVal) && Math.abs(invVal - 10_000_000) < 1 });
+
+    // Dashboard — Qasa = 0 (no partner cash movement)
+    const qasaText = await safeText(page.locator(".qasa-iqd span").first());
+    const qasaVal = parseMoney(qasaText);
+    uiChecks.push({ tab: "لوحة التحكم", element: "القاصة", expected: "0", actual: String(qasaVal), pass: !isNaN(qasaVal) && Math.abs(qasaVal) < 1 });
+
+    // Dashboard — Profit = 0
+    const profitText = await safeText(page.locator(".profit-iqd span").first());
+    const profitVal = parseMoney(profitText);
+    uiChecks.push({ tab: "لوحة التحكم", element: "الربح", expected: "0", actual: String(profitVal), pass: !isNaN(profitVal) && Math.abs(profitVal) < 1 });
+
+    const pass = writeUiResult("S02", "شراء سيارة بالتمويل", uiChecks, t0);
+    expect(pass).toBe(true);
+  });
+});
+
 // ─── S05 UI: Cash sale ─────────────────────────────────────────────
 
 test.describe("S05: بيع كاش — فحص الواجهة", () => {
