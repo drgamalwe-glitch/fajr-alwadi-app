@@ -184,15 +184,21 @@ export function PartnerStatementPrint({
     return calculateCustomerPrintSummary(cashStatementTransactions, paidTransactionIds);
   }, [cashStatementTransactions, paidTransactionIds]);
 
+  const financialStatementTransactions = useMemo(() => {
+    return partner.kind === "مستثمر" || partner.kind === "ممول" || partner.kind === "شركة"
+      ? statementTransactions
+      : cashStatementTransactions;
+  }, [statementTransactions, cashStatementTransactions, partner.kind]);
+
   const otherSummary = useMemo(() => {
     if (partner.kind === "مستثمر") {
-      return calculateInvestorPrintSummary(cashStatementTransactions);
+      return calculateInvestorPrintSummary(financialStatementTransactions);
     } else if (partner.kind === "شركة") {
-      return calculateCompanyPrintSummary(cashStatementTransactions);
+      return calculateCompanyPrintSummary(financialStatementTransactions);
     } else {
-      return calculateFunderPrintSummary(cashStatementTransactions);
+      return calculateFunderPrintSummary(financialStatementTransactions);
     }
-  }, [cashStatementTransactions, partner.kind]);
+  }, [financialStatementTransactions, partner.kind]);
 
   const periodLabel = printMode === "range"
     ? `الفترة من ${printFromDate || "البداية"} إلى ${printToDate || "النهاية"}`

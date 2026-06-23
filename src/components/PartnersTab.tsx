@@ -1484,8 +1484,8 @@ export function PartnersTab({
 
   const partnerIqdBalance = accountsTab === "personal" && partnerToView
     ? isFinancialClientKind(form.kind)
-      ? cashTransactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
-      - cashTransactions.filter((t) => depositPrefixes(t) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      ? transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      - transactions.filter((t) => depositPrefixes(t) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       : form.kind === "زبون"
         ? transactions.filter((t) => isCustomerRemainingBalanceTx(t) && (t.currency || "IQD") === "IQD").reduce((s, t) => s + t.amount, 0)
         : cashTransactions.filter((t) => depositPrefixes(t) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
@@ -1494,8 +1494,8 @@ export function PartnersTab({
 
   const partnerUsdBalance = accountsTab === "personal" && partnerToView
     ? isFinancialClientKind(form.kind)
-      ? cashTransactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
-      - cashTransactions.filter((t) => depositPrefixes(t) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      ? transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      - transactions.filter((t) => depositPrefixes(t) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       : form.kind === "زبون"
         ? transactions.filter((t) => isCustomerRemainingBalanceTx(t) && t.currency === "USD").reduce((s, t) => s + t.amount, 0)
         : cashTransactions.filter((t) => depositPrefixes(t) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
@@ -1525,7 +1525,7 @@ export function PartnersTab({
         .reduce((sum, t) => (isCustomerRemainingBalanceTx(t) ? sum + t.amount : sum), 0);
     }
     if (isFinancialClientKind(form.kind)) {
-      return cashTransactions
+      return transactions
         .filter((t) => (t.currency || "IQD") === currency && !t.type_.startsWith("تحويل"))
         .reduce((sum, t) => {
           if (depositPrefixes(t)) return sum - t.amount;
