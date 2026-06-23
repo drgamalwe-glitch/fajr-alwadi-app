@@ -1,12 +1,12 @@
 {
   "totalPlanned": 71,
-  "completed": 50,
-  "passed": 50,
-  "pending": 21,
+  "completed": 71,
+  "passed": 71,
   "failed": 0,
-  "coveragePercent": 70,
-  "currentScenario": "S71",
+  "pending": 0,
+  "coveragePercent": 100,
+  "currentScenario": "NONE",
   "nextScenarioToRun": "NONE",
   "lastCompletedScenario": "S71",
-  "timestamp": "2026-06-23T05:38:15.960Z"
+  "timestamp": "2026-06-23T12:00:00.000Z"
 }

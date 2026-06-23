@@ -7703,8 +7703,38 @@ fn add_car_expense_record(
         > 0;
 
     if is_sold {
-        // Phase 3: Use comprehensive rebuild that also updates partner profit splits for cash sales
-        rebuild_sold_car_accounting_after_cost_change(&db, car_number.trim())?;
+        let payment_type: String = db
+            .query_row(
+                "SELECT COALESCE(payment_type, '') FROM cars WHERE car_number = ?1",
+                [car_number.trim()],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+
+        // Installment/term sales: rebuild ledger plus payment profit recognition at new cost ratio.
+        if payment_type != "كاش" {
+            rebuild_sold_car_accounting_after_cost_change(&db, car_number.trim())?;
+            let mut stmt = db
+                .prepare(
+                    "SELECT id FROM partner_transactions
+                     WHERE kind = 'زبون'
+                       AND related_source_type = 'car'
+                       AND related_source_id = ?1
+                       AND (type LIKE 'مقدمة%' OR type LIKE 'تسديد%' OR type LIKE 'ايداع%'
+                            OR type LIKE 'إيداع%' OR type LIKE 'استلام%' OR type LIKE 'إستلام%')",
+                )
+                .map_err(|e| e.to_string())?;
+            let payment_ids: Vec<i64> = stmt
+                .query_map([car_number.trim()], |row| row.get(0))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            drop(stmt);
+            for payment_id in payment_ids {
+                delete_customer_payment_profit_splits(&db, payment_id)?;
+            }
+            rebuild_customer_payment_profit_splits(&db)?;
+        }
     }
 
     db.commit().map_err(|e| e.to_string())?;
@@ -10029,6 +10059,9 @@ fn run_backup_loop(db_path: PathBuf) {
         std::thread::sleep(std::time::Duration::from_secs(3600));
     }
 }
+
+#[cfg(feature = "accounting-test-support")]
+pub mod accounting_test_support;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

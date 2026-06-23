@@ -1,6 +1,6 @@
 # Accounting Test Report — Fajr Alwadi
 
-**Generated:** 2026-06-23T05:39:52.652Z
+**Generated:** 2026-06-23T05:56:50.146Z
 
 ---
 
@@ -34,10 +34,6 @@ Final delivery requires real Tauri verification after fixes.
 
 Found 71 unique scenario IDs (S01–S71).
 No missing IDs. No duplicates.
-
-## REPORT CONSISTENCY WARNING
-
-- ⚠️ Progress says completed=50, expected 71
 
 ## Failed Scenarios
 

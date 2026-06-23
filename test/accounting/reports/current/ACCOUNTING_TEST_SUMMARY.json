@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-06-23T05:39:52.652Z",
+  "timestamp": "2026-06-23T05:56:50.146Z",
   "totalScenarios": 71,
   "completedScenarios": 71,
   "passedScenarios": 71,
@@ -12,7 +12,7 @@
   "lastCompletedScenario": "S71",
   "nextScenarioToRun": "NONE",
   "isComplete": true,
-  "isConsistent": false,
+  "isConsistent": true,
   "reportsPath": "test/accounting/reports/current",
   "statePath": "test/accounting/state/ACCOUNTING_SCAN_STATE.json",
   "fixLogPath": "test/accounting/reports/current/ACCOUNTING_FIX_LOG.md",

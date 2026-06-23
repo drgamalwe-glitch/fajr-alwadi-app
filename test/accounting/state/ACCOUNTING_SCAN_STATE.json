@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-06-23T05:39:52.651Z",
+  "timestamp": "2026-06-23T05:56:50.145Z",
   "totalPlanned": 71,
   "completed": 71,
   "passed": 71,
@@ -11,7 +11,7 @@
   "lastCompletedScenario": "S71",
   "nextScenarioToRun": "NONE",
   "isComplete": true,
-  "isConsistent": false,
+  "isConsistent": true,
   "finalVerdict": "PASS",
   "warning": "E2E_BRIDGE is not the real Tauri backend",
   "scenarios": [
@@ -940,7 +940,5 @@
     }
   ],
   "failedScenarioIds": [],
-  "warnings": [
-    "Progress says completed=50, expected 71"
-  ]
+  "warnings": []
 }
