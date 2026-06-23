@@ -293,6 +293,244 @@
     "rows": []
   },
   {
+    "scenarioId": "S25",
+    "scenarioName": "S25: Delete general expense",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": 0,
+      "partnerCash": 0,
+      "profitTotal": 0,
+      "generalExpenses": 0
+    },
+    "actual": {
+      "qasa": 0,
+      "partnerCash": 0,
+      "profitTotal": 0,
+      "generalExpenses": 0
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "S47",
+    "scenarioName": "S47: Partner deposits",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": 10000000,
+      "partnerCash": 10000000,
+      "profitTotal": 0
+    },
+    "actual": {
+      "qasa": 10000000,
+      "partnerCash": 10000000,
+      "profitTotal": 0
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "S49",
+    "scenarioName": "S49: Block third partner",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": 0,
+      "partnerCash": 0,
+      "profitTotal": 0
+    },
+    "actual": {
+      "qasa": 0,
+      "partnerCash": 0,
+      "profitTotal": 0
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "S50",
+    "scenarioName": "S50: Block partner deletion",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": 0,
+      "partnerCash": 0,
+      "profitTotal": 0
+    },
+    "actual": {
+      "qasa": 0,
+      "partnerCash": 0,
+      "profitTotal": 0
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "S53",
+    "scenarioName": "S53: Delete available car",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": 0,
+      "partnerCash": 0,
+      "profitTotal": 0,
+      "inventory": 0
+    },
+    "actual": {
+      "qasa": 0,
+      "partnerCash": 0,
+      "profitTotal": 0,
+      "inventory": 0
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "S54",
+    "scenarioName": "S54: Delete sold cash car",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": 0,
+      "partnerCash": 0,
+      "profitTotal": 0,
+      "inventory": 0
+    },
+    "actual": {
+      "qasa": 0,
+      "partnerCash": 0,
+      "profitTotal": 0,
+      "inventory": 0
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "S56",
+    "scenarioName": "S56: Company status mixed ops",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": 37500000,
+      "partnerCash": 37500000,
+      "profitTotal": 7500000,
+      "partner1Profit": 3750000,
+      "inventory": 0
+    },
+    "actual": {
+      "qasa": 37500000,
+      "partnerCash": 37500000,
+      "profitTotal": 7500000,
+      "partner1Profit": 3750000,
+      "inventory": 0
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "S59",
+    "scenarioName": "S59: Profit tab = profit card",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": 10000000,
+      "profitTotal": 10000000,
+      "partner1Profit": 5000000,
+      "carCost": 10000000,
+      "carProfit": 10000000
+    },
+    "actual": {
+      "qasa": 10000000,
+      "profitTotal": 10000000,
+      "partner1Profit": 5000000,
+      "carCost": 10000000,
+      "carProfit": 10000000
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "S60",
+    "scenarioName": "S60: IQD/USD separation",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": 8000000,
+      "profitTotal": 8000000,
+      "partner1Profit": 4000000,
+      "carCost": 10000000,
+      "carProfit": 8000000
+    },
+    "actual": {
+      "qasa": 8000000,
+      "profitTotal": 8000000,
+      "partner1Profit": 4000000,
+      "carCost": 10000000,
+      "carProfit": 8000000
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "S61",
+    "scenarioName": "S61: USD general expense",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": 0,
+      "partnerCash": 0,
+      "profitTotal": 0
+    },
+    "actual": {
+      "qasa": 0,
+      "partnerCash": 0,
+      "profitTotal": 0
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "S63",
+    "scenarioName": "S63: Read-only safety",
+    "layer": "ORACLE",
+    "backendMode": "PURE_CALCULATION",
+    "executionTimeMs": 0,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasa": 0,
+      "partnerCash": 0,
+      "profitTotal": 0
+    },
+    "actual": {
+      "qasa": 0,
+      "partnerCash": 0,
+      "profitTotal": 0
+    },
+    "rows": []
+  },
+  {
     "scenarioId": "S63",
     "scenarioName": "الدوال القرائية لا تكتب",
     "layer": "BACKEND_DB",
@@ -309,72 +547,6 @@
       "partners": 2,
       "cars": 1,
       "expenses": 1
-    },
-    "rows": []
-  },
-  {
-    "scenarioId": "S10",
-    "scenarioName": "بيع بالاقساط — بعد المقدمة",
-    "layer": "BACKEND_DB",
-    "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 4,
-    "pass": true,
-    "failureReason": "",
-    "expected": {
-      "profit": 2500000,
-      "qasa": -5000000,
-      "amirProfit": 1250000
-    },
-    "actual": {
-      "profit": 2500000,
-      "qasa": -5000000,
-      "amirProfit": 1250000
-    },
-    "rows": []
-  },
-  {
-    "scenarioId": "S11",
-    "scenarioName": "بيع بالاقساط — بعد قسط واحد",
-    "layer": "BACKEND_DB",
-    "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 4,
-    "pass": true,
-    "failureReason": "",
-    "expected": {
-      "profit": 3000000,
-      "qasa": -4000000,
-      "amirProfit": 1500000,
-      "totalProfit": 3000000
-    },
-    "actual": {
-      "profit": 3000000,
-      "qasa": -4000000,
-      "amirProfit": 1500000,
-      "totalProfit": 3000000
-    },
-    "rows": []
-  },
-  {
-    "scenarioId": "S12",
-    "scenarioName": "بيع بالاقساط — بعد كل الدفعات",
-    "layer": "BACKEND_DB",
-    "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 11,
-    "pass": true,
-    "failureReason": "",
-    "expected": {
-      "profit": 10000000,
-      "qasa": 10000000,
-      "amirProfit": 5000000,
-      "muntasirProfit": 5000000,
-      "totalProfit": 10000000
-    },
-    "actual": {
-      "profit": 10000000,
-      "qasa": 10000000,
-      "amirProfit": 5000000,
-      "muntasirProfit": 5000000,
-      "totalProfit": 10000000
     },
     "rows": []
   },
@@ -503,7 +675,7 @@
     "scenarioName": "C: General Expense",
     "layer": "BACKEND_DB",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 1,
+    "executionTimeMs": 2,
     "pass": true,
     "failureReason": "",
     "expected": {
@@ -531,62 +703,68 @@
     ]
   },
   {
-    "scenarioId": "S53",
-    "scenarioName": "حذف سيارة متوفرة",
+    "scenarioId": "S10",
+    "scenarioName": "بيع بالاقساط — بعد المقدمة",
     "layer": "BACKEND_DB",
     "backendMode": "E2E_BRIDGE",
     "executionTimeMs": 4,
     "pass": true,
     "failureReason": "",
     "expected": {
-      "inventoryBefore": 10000000,
-      "inventoryAfter": 0,
-      "qasaAfter": 0
+      "profit": 2500000,
+      "qasa": -5000000,
+      "amirProfit": 1250000
     },
     "actual": {
-      "inventoryBefore": 10000000,
-      "inventoryAfter": 0,
-      "qasaAfter": 0
+      "profit": 2500000,
+      "qasa": -5000000,
+      "amirProfit": 1250000
     },
     "rows": []
   },
   {
-    "scenarioId": "S54",
-    "scenarioName": "حذف سيارة مبيوعة كاش",
+    "scenarioId": "S11",
+    "scenarioName": "بيع بالاقساط — بعد قسط واحد",
     "layer": "BACKEND_DB",
     "backendMode": "E2E_BRIDGE",
     "executionTimeMs": 4,
     "pass": true,
     "failureReason": "",
     "expected": {
-      "qasaBefore": 8000000,
-      "qasaAfter": 0,
-      "profitAfter": 0
+      "profit": 3000000,
+      "qasa": -4000000,
+      "amirProfit": 1500000,
+      "totalProfit": 3000000
     },
     "actual": {
-      "qasaBefore": 8000000,
-      "qasaAfter": 0,
-      "profitAfter": 0
+      "profit": 3000000,
+      "qasa": -4000000,
+      "amirProfit": 1500000,
+      "totalProfit": 3000000
     },
     "rows": []
   },
   {
-    "scenarioId": "S25",
-    "scenarioName": "حذف مصروف عام",
+    "scenarioId": "S12",
+    "scenarioName": "بيع بالاقساط — بعد كل الدفعات",
     "layer": "BACKEND_DB",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 1,
+    "executionTimeMs": 10,
     "pass": true,
     "failureReason": "",
     "expected": {
-      "qasaBefore": -1000000,
-      "qasaAfter": 0,
-      "expensesAfter": 0
+      "profit": 10000000,
+      "qasa": 10000000,
+      "amirProfit": 5000000,
+      "muntasirProfit": 5000000,
+      "totalProfit": 10000000
     },
     "actual": {
-      "qasaBefore": -1000000,
-      "qasaAfter": 0,
-      "expensesAfter": 0
+      "profit": 10000000,
+      "qasa": 10000000,
+      "amirProfit": 5000000,
+      "muntasirProfit": 5000000,
+      "totalProfit": 10000000
     },
     "rows": []
   },
@@ -625,7 +803,7 @@
     "scenarioName": "بيع كاش مع مصروف سيارة",
     "layer": "BACKEND_DB",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 3,
+    "executionTimeMs": 4,
     "pass": true,
     "failureReason": "",
     "expected": {
@@ -643,7 +821,7 @@
     "scenarioName": "بيع كاش بخسارة",
     "layer": "BACKEND_DB",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 1,
+    "executionTimeMs": 2,
     "pass": true,
     "failureReason": "",
     "expected": {
@@ -655,6 +833,66 @@
       "qasa": -3000000,
       "profit": 0,
       "inventory": 0
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "S53",
+    "scenarioName": "حذف سيارة متوفرة",
+    "layer": "BACKEND_DB",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 5,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "inventoryBefore": 10000000,
+      "inventoryAfter": 0,
+      "qasaAfter": 0
+    },
+    "actual": {
+      "inventoryBefore": 10000000,
+      "inventoryAfter": 0,
+      "qasaAfter": 0
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "S54",
+    "scenarioName": "حذف سيارة مبيوعة كاش",
+    "layer": "BACKEND_DB",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 5,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasaBefore": 8000000,
+      "qasaAfter": 0,
+      "profitAfter": 0
+    },
+    "actual": {
+      "qasaBefore": 8000000,
+      "qasaAfter": 0,
+      "profitAfter": 0
+    },
+    "rows": []
+  },
+  {
+    "scenarioId": "S25",
+    "scenarioName": "حذف مصروف عام",
+    "layer": "BACKEND_DB",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 2,
+    "pass": true,
+    "failureReason": "",
+    "expected": {
+      "qasaBefore": -1000000,
+      "qasaAfter": 0,
+      "expensesAfter": 0
+    },
+    "actual": {
+      "qasaBefore": -1000000,
+      "qasaAfter": 0,
+      "expensesAfter": 0
     },
     "rows": []
   },
@@ -685,7 +923,7 @@
     "scenarioName": "بطاقة الربح = توزيع الأرباح",
     "layer": "BACKEND_DB",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 4,
+    "executionTimeMs": 3,
     "pass": true,
     "failureReason": "",
     "expected": {
@@ -703,7 +941,7 @@
     "scenarioName": "فصل العملات — IQD و USD",
     "layer": "BACKEND_DB",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 5,
+    "executionTimeMs": 6,
     "pass": true,
     "failureReason": "",
     "expected": {
@@ -863,7 +1101,7 @@
     "scenarioName": "بيع سيارة كاش (شراء ثم بيع)",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 2826,
+    "executionTimeMs": 3592,
     "pass": true,
     "failureReason": "",
     "uiChecks": [
@@ -1006,7 +1244,7 @@
     "scenarioName": "بيع بالاقساط — مقدمة وقسط واحد",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 5321,
+    "executionTimeMs": 4457,
     "pass": true,
     "failureReason": "",
     "uiChecks": [
@@ -1038,7 +1276,7 @@
     "scenarioName": "مصروف عام — ايجار",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 3228,
+    "executionTimeMs": 2625,
     "pass": true,
     "failureReason": "",
     "uiChecks": [
@@ -1072,7 +1310,7 @@
     "scenarioName": "شراء سيارة كاش",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 3191,
+    "executionTimeMs": 3274,
     "pass": true,
     "failureReason": "",
     "uiChecks": [
@@ -1107,7 +1345,7 @@
     "scenarioName": "بيع كاش بعد شراء كاش",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 4726,
+    "executionTimeMs": 5303,
     "pass": true,
     "failureReason": "",
     "uiChecks": [
@@ -1149,7 +1387,7 @@
     "scenarioName": "مصروف عام",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 3194,
+    "executionTimeMs": 3182,
     "pass": true,
     "failureReason": "",
     "uiChecks": [
@@ -1177,7 +1415,7 @@
     "scenarioName": "بيع كاش مع مصروف سيارة",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 3204,
+    "executionTimeMs": 3252,
     "pass": true,
     "failureReason": "",
     "uiChecks": [
@@ -1205,7 +1443,7 @@
     "scenarioName": "بيع كاش بخسارة",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 2496,
+    "executionTimeMs": 2535,
     "pass": true,
     "failureReason": "",
     "uiChecks": [
@@ -1233,7 +1471,7 @@
     "scenarioName": "بيع بالاقساط — بعد المقدمة",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 3235,
+    "executionTimeMs": 2498,
     "pass": true,
     "failureReason": "",
     "uiChecks": [
@@ -1261,7 +1499,7 @@
     "scenarioName": "بيع بالاقساط — بعد قسط واحد",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 2338,
+    "executionTimeMs": 3219,
     "pass": true,
     "failureReason": "",
     "uiChecks": [
@@ -1289,7 +1527,7 @@
     "scenarioName": "بيع بالاقساط — بعد كل الدفعات",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 2651,
+    "executionTimeMs": 3215,
     "pass": true,
     "failureReason": "",
     "uiChecks": [
@@ -1317,7 +1555,7 @@
     "scenarioName": "مصروف عام بعد ربح سيارة",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 3150,
+    "executionTimeMs": 2505,
     "pass": true,
     "failureReason": "",
     "uiChecks": [
@@ -1341,11 +1579,151 @@
     "rows": []
   },
   {
+    "scenarioId": "S25",
+    "scenarioName": "حذف مصروف عام",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 3233,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "لوحة التحكم",
+        "element": "القاصة",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      },
+      {
+        "tab": "لوحة التحكم",
+        "element": "الربح",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      }
+    ],
+    "expected": {},
+    "actual": {},
+    "rows": []
+  },
+  {
+    "scenarioId": "S47",
+    "scenarioName": "إيداع الشركاء",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 2668,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "لوحة التحكم",
+        "element": "القاصة",
+        "expected": "10000000",
+        "actual": "10000000",
+        "pass": true
+      },
+      {
+        "tab": "لوحة التحكم",
+        "element": "الربح",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      }
+    ],
+    "expected": {},
+    "actual": {},
+    "rows": []
+  },
+  {
+    "scenarioId": "S53",
+    "scenarioName": "حذف سيارة متوفرة",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 3204,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "لوحة التحكم",
+        "element": "قيمة المخزون",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      },
+      {
+        "tab": "لوحة التحكم",
+        "element": "القاصة",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      }
+    ],
+    "expected": {},
+    "actual": {},
+    "rows": []
+  },
+  {
+    "scenarioId": "S54",
+    "scenarioName": "حذف سيارة مبيوعة كاش",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 2610,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "لوحة التحكم",
+        "element": "القاصة",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      },
+      {
+        "tab": "لوحة التحكم",
+        "element": "الربح",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      }
+    ],
+    "expected": {},
+    "actual": {},
+    "rows": []
+  },
+  {
+    "scenarioId": "S59",
+    "scenarioName": "بطاقة الربح = توزيع الأرباح",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 5274,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "لوحة التحكم",
+        "element": "الربح",
+        "expected": "10000000",
+        "actual": "10000000",
+        "pass": true
+      },
+      {
+        "tab": "توزيع الارباح",
+        "element": "اجمالي الارباح",
+        "expected": "10000000",
+        "actual": "10000000",
+        "pass": true
+      }
+    ],
+    "expected": {},
+    "actual": {},
+    "rows": []
+  },
+  {
     "scenarioId": "S56",
     "scenarioName": "حالة الشركة بعد عمليات مختلطة",
     "layer": "CHROMIUM_UI",
     "backendMode": "E2E_BRIDGE",
-    "executionTimeMs": 2597,
+    "executionTimeMs": 3205,
     "pass": true,
     "failureReason": "",
     "uiChecks": [
@@ -1361,6 +1739,139 @@
         "element": "الربح",
         "expected": "7500000",
         "actual": "7500000",
+        "pass": true
+      }
+    ],
+    "expected": {},
+    "actual": {},
+    "rows": []
+  },
+  {
+    "scenarioId": "S49",
+    "scenarioName": "منع شريك ثالث",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 4380,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "توزيع الارباح",
+        "element": "عدد الشركاء",
+        "expected": "2",
+        "actual": "2",
+        "pass": true
+      },
+      {
+        "tab": "توزيع الارباح",
+        "element": "أمير موجود",
+        "expected": "true",
+        "actual": "true",
+        "pass": true
+      },
+      {
+        "tab": "توزيع الارباح",
+        "element": "منتصر موجود",
+        "expected": "true",
+        "actual": "true",
+        "pass": true
+      }
+    ],
+    "expected": {},
+    "actual": {},
+    "rows": []
+  },
+  {
+    "scenarioId": "S50",
+    "scenarioName": "منع حذف شريك",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 5266,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "الشركاء",
+        "element": "زر حذف شريك",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      }
+    ],
+    "expected": {},
+    "actual": {},
+    "rows": []
+  },
+  {
+    "scenarioId": "S60",
+    "scenarioName": "فصل العملات — IQD و USD",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 3239,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "لوحة التحكم",
+        "element": "القاصة بالدينار",
+        "expected": "8000000",
+        "actual": "8000000",
+        "pass": true
+      },
+      {
+        "tab": "لوحة التحكم",
+        "element": "الربح بالدينار",
+        "expected": "8000000",
+        "actual": "8000000",
+        "pass": true
+      }
+    ],
+    "expected": {},
+    "actual": {},
+    "rows": []
+  },
+  {
+    "scenarioId": "S61",
+    "scenarioName": "مصروف عام بالدولار",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 2319,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "لوحة التحكم",
+        "element": "الربح بالدينار",
+        "expected": "0",
+        "actual": "0",
+        "pass": true
+      }
+    ],
+    "expected": {},
+    "actual": {},
+    "rows": []
+  },
+  {
+    "scenarioId": "S63",
+    "scenarioName": "الدوال القرائية لا تكتب",
+    "layer": "CHROMIUM_UI",
+    "backendMode": "E2E_BRIDGE",
+    "executionTimeMs": 5272,
+    "pass": true,
+    "failureReason": "",
+    "uiChecks": [
+      {
+        "tab": "لوحة التحكم",
+        "element": "القاصة (قبل/بعد)",
+        "expected": "- 10,000,000 IQ",
+        "actual": "- 10,000,000 IQ",
+        "pass": true
+      },
+      {
+        "tab": "لوحة التحكم",
+        "element": "المخزون (قبل/بعد)",
+        "expected": "10,000,000 IQ",
+        "actual": "10,000,000 IQ",
         "pass": true
       }
     ],

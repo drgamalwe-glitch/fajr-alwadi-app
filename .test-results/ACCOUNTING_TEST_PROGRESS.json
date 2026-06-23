@@ -1,0 +1,27 @@
+{
+  "timestamp": "2026-06-22T16:16:22Z",
+  "totalPlanned": 71,
+  "completed": 20,
+  "passed": 20,
+  "failed": 0,
+  "partial": 0,
+  "pending": 51,
+  "coveragePercent": 28,
+  "backendMode": "E2E_BRIDGE",
+  "chromiumRan": true,
+  "lastCompletedScenario": "S63",
+  "currentScenario": "S02",
+  "nextScenarioToRun": "S02",
+  "batch1Status": "COMPLETE",
+  "batch2Status": "NOT_STARTED",
+  "legacyExcluded": ["A", "B", "C"],
+  "legacyNote": "Legacy scenarios A/B/C were replaced by official S-series scenarios and are excluded from final verdict.",
+  "resumePoint": "S02 — شراء سيارة بال融资 (Batch 2: Car purchases and related sales)",
+  "reportFiles": [
+    "ACCOUNTING_TEST_RESULTS.md",
+    "ACCOUNTING_TEST_SUMMARY.json",
+    "ACCOUNTING_TEST_FAILURES.md",
+    "ACCOUNTING_TEST_COVERAGE.md",
+    "ACCOUNTING_TEST_PLAN.md"
+  ]
+}

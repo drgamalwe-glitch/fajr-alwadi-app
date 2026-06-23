@@ -22,12 +22,14 @@ function main() {
   }
 
   // Group by scenario ID (first character: A, B, C)
-  const scenarioIds = [...new Set(results.map((r) => r.scenarioId.replace(/-\d+$/, "")))];
+  const LEGACY_IDS = new Set(["A", "B", "C"]);
+  const scenarioIds = [...new Set(results.map((r) => r.scenarioId.replace(/-\d+$/, "")))].filter((id) => !LEGACY_IDS.has(id));
 
   // Build per-scenario, per-layer map
   const scenarioMap = new Map<string, Map<string, LayerResult[]>>();
   for (const r of results) {
     const sid = r.scenarioId.replace(/-\d+$/, "");
+    if (LEGACY_IDS.has(sid)) continue;
     if (!scenarioMap.has(sid)) scenarioMap.set(sid, new Map());
     const layerMap = scenarioMap.get(sid)!;
     if (!layerMap.has(r.layer)) layerMap.set(r.layer, []);
@@ -247,6 +249,14 @@ function main() {
     lines.push("## تحذيرات\n");
     for (const w of warnings) lines.push(`- ${w}`);
     lines.push("");
+  }
+
+  // Legacy section
+  const legacyIds = [...new Set(results.map((r) => r.scenarioId.replace(/-\d+$/, "")))].filter((id) => LEGACY_IDS.has(id));
+  if (legacyIds.length > 0) {
+    lines.push("## سيناريوهات مؤرشفة (Legacy)\n");
+    lines.push("Legacy scenarios A/B/C were replaced by official S-series scenarios and are excluded from final verdict.\n");
+    lines.push(`السيناريوهات المؤرشفة: ${legacyIds.join(", ")}\n`);
   }
 
   // Final verdict

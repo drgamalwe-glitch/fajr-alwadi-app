@@ -365,6 +365,182 @@ function s50(): TestScenario {
   };
 }
 
+// ─── S25: Delete general expense ────────────────────────────────────
+function s25(): TestScenario {
+  return {
+    id: "S25", group: "GENERAL_EXPENSES", name: "Delete general expense", nameAr: "حذف مصروف عام",
+    description: "Add rent 1M, then delete it. Qasa/profit return to 0.",
+    oracle: {
+      label: "S25: Delete general expense",
+      qasa: 0, partnerCash: 0, profitTotal: 0,
+      partner1Profit: 0, partner2Profit: 0,
+      inventory: 0, receivables: 0, liabilities: 0, generalExpenses: 0,
+      carCost: 0, carProfit: 0, customerRemaining: 0,
+      rows: [],
+    },
+    backendChecks: [
+      { field: "qasaAfter", label: "القاصة بعد الحذف", compute: (c) => c.summary.qasa_iqd },
+      { field: "expensesAfter", label: "المصروفات بعد الحذف", compute: (c) => c.summary.total_expenses_iqd },
+    ],
+    uiChecks: [],
+  };
+}
+
+// ─── S47: Partner deposits ─────────────────────────────────────────
+// (already defined above)
+
+// ─── S49: Block third partner creation ─────────────────────────────
+// (already defined above)
+
+// ─── S50: Block partner deletion ───────────────────────────────────
+// (already defined above)
+
+// ─── S53: Delete available car ─────────────────────────────────────
+function s53(): TestScenario {
+  return {
+    id: "S53", group: "DELETE_EDIT", name: "Delete available car", nameAr: "حذف سيارة متوفرة",
+    description: "Purchase 10M car, then delete it. Inventory/qasa return to 0.",
+    oracle: {
+      label: "S53: Delete available car",
+      qasa: 0, partnerCash: 0, profitTotal: 0,
+      partner1Profit: 0, partner2Profit: 0,
+      inventory: 0, receivables: 0, liabilities: 0, generalExpenses: 0,
+      carCost: 0, carProfit: 0, customerRemaining: 0,
+      rows: [],
+    },
+    backendChecks: [
+      { field: "inventoryAfter", label: "المخزون بعد الحذف", compute: (c) => c.summary.inventory_value_iqd },
+      { field: "qasaAfter", label: "القاصة بعد الحذف", compute: (c) => c.summary.qasa_iqd },
+    ],
+    uiChecks: [],
+  };
+}
+
+// ─── S54: Delete sold cash car ─────────────────────────────────────
+function s54(): TestScenario {
+  return {
+    id: "S54", group: "DELETE_EDIT", name: "Delete sold cash car", nameAr: "حذف سيارة مبيوعة كاش",
+    description: "Purchase 10M, sell 18M, then delete. Everything returns to 0.",
+    oracle: {
+      label: "S54: Delete sold cash car",
+      qasa: 0, partnerCash: 0, profitTotal: 0,
+      partner1Profit: 0, partner2Profit: 0,
+      inventory: 0, receivables: 0, liabilities: 0, generalExpenses: 0,
+      carCost: 0, carProfit: 0, customerRemaining: 0,
+      rows: [],
+    },
+    backendChecks: [
+      { field: "qasaAfter", label: "القاصة بعد الحذف", compute: (c) => c.summary.qasa_iqd },
+      { field: "profitAfter", label: "الربح بعد الحذف", compute: (c) => c.summary.monthly_profits_iqd },
+    ],
+    uiChecks: [],
+  };
+}
+
+// ─── S56: Company status mixed operations ──────────────────────────
+function s56(): TestScenario {
+  const deposits = 30_000_000;
+  const purchase = 10_000_000;
+  const selling = 18_000_000;
+  const expense = 500_000;
+  const qasaNet = deposits - purchase + selling - expense;
+  const grossProfit = selling - purchase;
+  const netProfit = grossProfit - expense;
+  return {
+    id: "S56", group: "DASHBOARD", name: "Company status mixed operations", nameAr: "حالة الشركة — عمليات مختلطة",
+    description: "Deposits 30M + purchase 10M + sale 18M + expense 500K.",
+    oracle: {
+      label: "S56: Company status mixed ops",
+      qasa: qasaNet, partnerCash: qasaNet, profitTotal: netProfit,
+      partner1Profit: netProfit / 2, partner2Profit: netProfit / 2,
+      inventory: 0, receivables: 0, liabilities: 0, generalExpenses: expense,
+      carCost: purchase, carProfit: grossProfit, customerRemaining: 0,
+      rows: [],
+    },
+    backendChecks: [
+      { field: "qasa", label: "القاصة", compute: (c) => c.summary.qasa_iqd },
+      { field: "inventory", label: "المخزون", compute: (c) => c.summary.inventory_value_iqd },
+      { field: "profit", label: "الربح", compute: (c) => c.summary.monthly_profits_iqd },
+      { field: "partnerCash", label: "رأس مال الشركاء", compute: (c) => c.summary.total_partner_capital_iqd },
+    ],
+    uiChecks: [
+      { tab: "لوحة التحكم", element: "القاصة", compute: (c) => c.summary.qasa_iqd },
+      { tab: "لوحة التحكم", element: "الربح", compute: (c) => c.summary.monthly_profits_iqd },
+    ],
+  };
+}
+
+// ─── S59: Profit tab equals profit card ────────────────────────────
+function s59(): TestScenario {
+  const purchase = 10_000_000;
+  const selling = 20_000_000;
+  const profit = selling - purchase;
+  return {
+    id: "S59", group: "DASHBOARD", name: "Profit tab equals profit card", nameAr: "بطاقة الربح = توزيع الأرباح",
+    description: "Purchase 10M / Sell 20M. Profit distribution = dashboard profit.",
+    oracle: {
+      label: "S59: Profit tab = profit card",
+      qasa: selling - purchase, partnerCash: selling - purchase, profitTotal: profit,
+      partner1Profit: profit / 2, partner2Profit: profit / 2,
+      inventory: 0, receivables: 0, liabilities: 0, generalExpenses: 0,
+      carCost: purchase, carProfit: profit, customerRemaining: 0,
+      rows: [],
+    },
+    backendChecks: [
+      { field: "dashboardProfit", label: "ربح لوحة التحكم", compute: (c) => c.summary.monthly_profits_iqd },
+    ],
+    uiChecks: [],
+  };
+}
+
+// ─── S60: IQD/USD currency separation ──────────────────────────────
+function s60(): TestScenario {
+  const iqdPurchase = 10_000_000;
+  const iqdSelling = 18_000_000;
+  const usdPurchase = 8_000;
+  const usdSelling = 12_000;
+  return {
+    id: "S60", group: "CURRENCY", name: "IQD/USD currency separation", nameAr: "فصل العملات — IQD و USD",
+    description: "IQD car: 10M→18M. USD car: 8K→12K. Currencies stay separate.",
+    oracle: {
+      label: "S60: IQD/USD separation",
+      qasa: iqdSelling - iqdPurchase, partnerCash: iqdSelling - iqdPurchase, profitTotal: iqdSelling - iqdPurchase,
+      partner1Profit: (iqdSelling - iqdPurchase) / 2, partner2Profit: (iqdSelling - iqdPurchase) / 2,
+      inventory: 0, receivables: 0, liabilities: 0, generalExpenses: 0,
+      carCost: iqdPurchase, carProfit: iqdSelling - iqdPurchase, customerRemaining: 0,
+      rows: [],
+    },
+    backendChecks: [
+      { field: "qasaIqd", label: "القاصة بالدينار", compute: (c) => c.summary.qasa_iqd },
+      { field: "profitIqd", label: "الربح بالدينار", compute: (c) => c.summary.monthly_profits_iqd },
+      { field: "qasaUsd", label: "القاصة بالدولار", compute: (c) => c.summary.qasa_usd },
+      { field: "profitUsd", label: "الربح بالدولار", compute: (c) => c.summary.monthly_profits_usd },
+    ],
+    uiChecks: [],
+  };
+}
+
+// ─── S61: USD general expense ──────────────────────────────────────
+function s61(): TestScenario {
+  return {
+    id: "S61", group: "CURRENCY", name: "USD general expense", nameAr: "مصروف عام بالدولار",
+    description: "USD expense 500 → USD profit=-500, IQD unchanged.",
+    oracle: {
+      label: "S61: USD general expense",
+      qasa: 0, partnerCash: 0, profitTotal: 0,
+      partner1Profit: 0, partner2Profit: 0,
+      inventory: 0, receivables: 0, liabilities: 0, generalExpenses: 0,
+      carCost: 0, carProfit: 0, customerRemaining: 0,
+      rows: [],
+    },
+    backendChecks: [
+      { field: "profitUsd", label: "الربح بالدولار", compute: (c) => c.summary.monthly_profits_usd },
+      { field: "profitIqd", label: "الربح بالدينار", compute: (c) => c.summary.monthly_profits_iqd },
+    ],
+    uiChecks: [],
+  };
+}
+
 // ─── S63: Read-only safety ─────────────────────────────────────────
 function s63(): TestScenario {
   return {
@@ -388,8 +564,11 @@ export function getAllScenarios(): TestScenario[] {
   return [
     s01(), s05(), s08(), s09(),
     s10(), s11(), s12(),
-    s22(), s23(),
+    s22(), s23(), s25(),
     s47(), s49(), s50(),
+    s53(), s54(),
+    s56(), s59(),
+    s60(), s61(),
     s63(),
   ];
 }

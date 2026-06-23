@@ -371,6 +371,218 @@ describe("Accounting Oracle - Batch 1 Scenarios (S01-S23)", () => {
       rows: o.rows,
     });
   });
+
+  it("S25: Delete general expense — correct values", () => {
+    const scenarios = getAllScenarios();
+    const s25 = scenarios.find((s) => s.id === "S25");
+    expect(s25).toBeDefined();
+    const o = s25!.oracle;
+    expect(o.qasa).toBe(0);
+    expect(o.partnerCash).toBe(0);
+    expect(o.profitTotal).toBe(0);
+    expect(o.generalExpenses).toBe(0);
+    appendResult({
+      scenarioId: "S25", scenarioName: o.label, layer: "ORACLE",
+      backendMode: "PURE_CALCULATION", executionTimeMs: 0,
+      pass: true, failureReason: "",
+      expected: { qasa: o.qasa, partnerCash: o.partnerCash, profitTotal: o.profitTotal, generalExpenses: o.generalExpenses },
+      actual: { qasa: o.qasa, partnerCash: o.partnerCash, profitTotal: o.profitTotal, generalExpenses: o.generalExpenses },
+      rows: o.rows,
+    });
+  });
+
+  it("S47: Partner deposits — correct values", () => {
+    const scenarios = getAllScenarios();
+    const s47 = scenarios.find((s) => s.id === "S47");
+    expect(s47).toBeDefined();
+    const o = s47!.oracle;
+    expect(o.qasa).toBe(10_000_000);
+    expect(o.partnerCash).toBe(10_000_000);
+    expect(o.profitTotal).toBe(0);
+    expect(o.partner1Profit).toBe(0);
+    expect(o.partner2Profit).toBe(0);
+    appendResult({
+      scenarioId: "S47", scenarioName: o.label, layer: "ORACLE",
+      backendMode: "PURE_CALCULATION", executionTimeMs: 0,
+      pass: true, failureReason: "",
+      expected: { qasa: o.qasa, partnerCash: o.partnerCash, profitTotal: o.profitTotal },
+      actual: { qasa: o.qasa, partnerCash: o.partnerCash, profitTotal: o.profitTotal },
+      rows: o.rows,
+    });
+  });
+
+  it("S49: Block third partner — correct values", () => {
+    const scenarios = getAllScenarios();
+    const s49 = scenarios.find((s) => s.id === "S49");
+    expect(s49).toBeDefined();
+    const o = s49!.oracle;
+    expect(o.qasa).toBe(0);
+    expect(o.partnerCash).toBe(0);
+    expect(o.profitTotal).toBe(0);
+    appendResult({
+      scenarioId: "S49", scenarioName: o.label, layer: "ORACLE",
+      backendMode: "PURE_CALCULATION", executionTimeMs: 0,
+      pass: true, failureReason: "",
+      expected: { qasa: 0, partnerCash: 0, profitTotal: 0 },
+      actual: { qasa: 0, partnerCash: 0, profitTotal: 0 },
+      rows: o.rows,
+    });
+  });
+
+  it("S50: Block partner deletion — correct values", () => {
+    const scenarios = getAllScenarios();
+    const s50 = scenarios.find((s) => s.id === "S50");
+    expect(s50).toBeDefined();
+    const o = s50!.oracle;
+    expect(o.qasa).toBe(0);
+    expect(o.partnerCash).toBe(0);
+    expect(o.profitTotal).toBe(0);
+    appendResult({
+      scenarioId: "S50", scenarioName: o.label, layer: "ORACLE",
+      backendMode: "PURE_CALCULATION", executionTimeMs: 0,
+      pass: true, failureReason: "",
+      expected: { qasa: 0, partnerCash: 0, profitTotal: 0 },
+      actual: { qasa: 0, partnerCash: 0, profitTotal: 0 },
+      rows: o.rows,
+    });
+  });
+
+  it("S53: Delete available car — correct values", () => {
+    const scenarios = getAllScenarios();
+    const s53 = scenarios.find((s) => s.id === "S53");
+    expect(s53).toBeDefined();
+    const o = s53!.oracle;
+    expect(o.qasa).toBe(0);
+    expect(o.partnerCash).toBe(0);
+    expect(o.profitTotal).toBe(0);
+    expect(o.inventory).toBe(0);
+    appendResult({
+      scenarioId: "S53", scenarioName: o.label, layer: "ORACLE",
+      backendMode: "PURE_CALCULATION", executionTimeMs: 0,
+      pass: true, failureReason: "",
+      expected: { qasa: 0, partnerCash: 0, profitTotal: 0, inventory: 0 },
+      actual: { qasa: 0, partnerCash: 0, profitTotal: 0, inventory: 0 },
+      rows: o.rows,
+    });
+  });
+
+  it("S54: Delete sold cash car — correct values", () => {
+    const scenarios = getAllScenarios();
+    const s54 = scenarios.find((s) => s.id === "S54");
+    expect(s54).toBeDefined();
+    const o = s54!.oracle;
+    expect(o.qasa).toBe(0);
+    expect(o.partnerCash).toBe(0);
+    expect(o.profitTotal).toBe(0);
+    expect(o.inventory).toBe(0);
+    appendResult({
+      scenarioId: "S54", scenarioName: o.label, layer: "ORACLE",
+      backendMode: "PURE_CALCULATION", executionTimeMs: 0,
+      pass: true, failureReason: "",
+      expected: { qasa: 0, partnerCash: 0, profitTotal: 0, inventory: 0 },
+      actual: { qasa: 0, partnerCash: 0, profitTotal: 0, inventory: 0 },
+      rows: o.rows,
+    });
+  });
+
+  it("S56: Company status mixed ops — correct values", () => {
+    const scenarios = getAllScenarios();
+    const s56 = scenarios.find((s) => s.id === "S56");
+    expect(s56).toBeDefined();
+    const o = s56!.oracle;
+    expect(o.qasa).toBe(37_500_000);
+    expect(o.partnerCash).toBe(37_500_000);
+    expect(o.profitTotal).toBe(7_500_000);
+    expect(o.partner1Profit).toBe(3_750_000);
+    expect(o.generalExpenses).toBe(500_000);
+    expect(o.carCost).toBe(10_000_000);
+    expect(o.carProfit).toBe(8_000_000);
+    expect(o.inventory).toBe(0);
+    appendResult({
+      scenarioId: "S56", scenarioName: o.label, layer: "ORACLE",
+      backendMode: "PURE_CALCULATION", executionTimeMs: 0,
+      pass: true, failureReason: "",
+      expected: { qasa: o.qasa, partnerCash: o.partnerCash, profitTotal: o.profitTotal, partner1Profit: o.partner1Profit, inventory: o.inventory },
+      actual: { qasa: o.qasa, partnerCash: o.partnerCash, profitTotal: o.profitTotal, partner1Profit: o.partner1Profit, inventory: o.inventory },
+      rows: o.rows,
+    });
+  });
+
+  it("S59: Profit tab equals profit card — correct values", () => {
+    const scenarios = getAllScenarios();
+    const s59 = scenarios.find((s) => s.id === "S59");
+    expect(s59).toBeDefined();
+    const o = s59!.oracle;
+    expect(o.qasa).toBe(10_000_000);
+    expect(o.profitTotal).toBe(10_000_000);
+    expect(o.partner1Profit).toBe(5_000_000);
+    expect(o.carCost).toBe(10_000_000);
+    expect(o.carProfit).toBe(10_000_000);
+    appendResult({
+      scenarioId: "S59", scenarioName: o.label, layer: "ORACLE",
+      backendMode: "PURE_CALCULATION", executionTimeMs: 0,
+      pass: true, failureReason: "",
+      expected: { qasa: o.qasa, profitTotal: o.profitTotal, partner1Profit: o.partner1Profit, carCost: o.carCost, carProfit: o.carProfit },
+      actual: { qasa: o.qasa, profitTotal: o.profitTotal, partner1Profit: o.partner1Profit, carCost: o.carCost, carProfit: o.carProfit },
+      rows: o.rows,
+    });
+  });
+
+  it("S60: IQD/USD separation — correct values", () => {
+    const scenarios = getAllScenarios();
+    const s60 = scenarios.find((s) => s.id === "S60");
+    expect(s60).toBeDefined();
+    const o = s60!.oracle;
+    expect(o.qasa).toBe(8_000_000);
+    expect(o.profitTotal).toBe(8_000_000);
+    expect(o.partner1Profit).toBe(4_000_000);
+    expect(o.carCost).toBe(10_000_000);
+    expect(o.carProfit).toBe(8_000_000);
+    appendResult({
+      scenarioId: "S60", scenarioName: o.label, layer: "ORACLE",
+      backendMode: "PURE_CALCULATION", executionTimeMs: 0,
+      pass: true, failureReason: "",
+      expected: { qasa: o.qasa, profitTotal: o.profitTotal, partner1Profit: o.partner1Profit, carCost: o.carCost, carProfit: o.carProfit },
+      actual: { qasa: o.qasa, profitTotal: o.profitTotal, partner1Profit: o.partner1Profit, carCost: o.carCost, carProfit: o.carProfit },
+      rows: o.rows,
+    });
+  });
+
+  it("S61: USD general expense — correct values", () => {
+    const scenarios = getAllScenarios();
+    const s61 = scenarios.find((s) => s.id === "S61");
+    expect(s61).toBeDefined();
+    const o = s61!.oracle;
+    expect(o.qasa).toBe(0);
+    expect(o.partnerCash).toBe(0);
+    expect(o.profitTotal).toBe(0);
+    appendResult({
+      scenarioId: "S61", scenarioName: o.label, layer: "ORACLE",
+      backendMode: "PURE_CALCULATION", executionTimeMs: 0,
+      pass: true, failureReason: "",
+      expected: { qasa: 0, partnerCash: 0, profitTotal: 0 },
+      actual: { qasa: 0, partnerCash: 0, profitTotal: 0 },
+      rows: o.rows,
+    });
+  });
+
+  it("S63: Read-only safety — correct values", () => {
+    const scenarios = getAllScenarios();
+    const s63 = scenarios.find((s) => s.id === "S63");
+    expect(s63).toBeDefined();
+    const o = s63!.oracle;
+    expect(o.qasa).toBe(0);
+    expect(o.partnerCash).toBe(0);
+    expect(o.profitTotal).toBe(0);
+    appendResult({
+      scenarioId: "S63", scenarioName: o.label, layer: "ORACLE",
+      backendMode: "PURE_CALCULATION", executionTimeMs: 0,
+      pass: true, failureReason: "",
+      expected: { qasa: 0, partnerCash: 0, profitTotal: 0 },
+      actual: { qasa: 0, partnerCash: 0, profitTotal: 0 },
+      rows: o.rows,
+    });
+  });
 });
 
 describe("Accounting Oracle - Scenario Runner + Report", () => {

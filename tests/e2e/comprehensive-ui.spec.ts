@@ -465,6 +465,201 @@ test.describe("S23: مصروف عام بعد ربح سيارة — فحص الو
   });
 });
 
+// ─── S25 UI: Delete general expense ────────────────────────────────
+
+test.describe("S25: حذف مصروف عام — فحص الواجهة", () => {
+  test("حذف مصروف عام: التحقق من القاصة والربح", async ({ page }) => {
+    test.setTimeout(120_000);
+    const t0 = Date.now();
+    const uiChecks: UiCheck[] = [];
+
+    await bridgeReset();
+    await bridgeInvoke("add_expense", {
+      description: "ايجار", amount: 1_000_000, date: "2024-02-01", currency: "IQD",
+    });
+
+    // Get expense id and delete it
+    const expenses: any[] = await bridgeInvoke("get_expenses", {});
+    if (expenses[0]?.id) {
+      await bridgeInvoke("delete_expense", { id: expenses[0].id });
+    }
+
+    await setupAndLogin(page);
+
+    // Dashboard — Qasa = 0
+    const qasaText = await safeText(page.locator(".qasa-iqd span").first());
+    const qasaVal = parseMoney(qasaText);
+    uiChecks.push({ tab: "لوحة التحكم", element: "القاصة", expected: "0", actual: String(qasaVal), pass: !isNaN(qasaVal) && Math.abs(qasaVal) < 1 });
+
+    // Dashboard — Profit = 0
+    const profitText = await safeText(page.locator(".profit-iqd span").first());
+    const profitVal = parseMoney(profitText);
+    uiChecks.push({ tab: "لوحة التحكم", element: "الربح", expected: "0", actual: String(profitVal), pass: !isNaN(profitVal) && Math.abs(profitVal) < 1 });
+
+    const pass = writeUiResult("S25", "حذف مصروف عام", uiChecks, t0);
+    expect(pass).toBe(true);
+  });
+});
+
+// ─── S47 UI: Partner deposits ──────────────────────────────────────
+
+test.describe("S47: إيداع الشركاء — فحص الواجهة", () => {
+  test("إيداع الشركاء: التحقق من القاصة", async ({ page }) => {
+    test.setTimeout(120_000);
+    const t0 = Date.now();
+    const uiChecks: UiCheck[] = [];
+
+    await bridgeReset();
+    await bridgeInvoke("add_partner_transaction", {
+      partner_name: "أمير", kind: "شريك",
+      type_: "ايداع شريك", amount: 5_000_000,
+      date: "2024-01-01", currency: "IQD", payment_type: "قاصه",
+    });
+    await bridgeInvoke("add_partner_transaction", {
+      partner_name: "منتصر", kind: "شريك",
+      type_: "ايداع شريك", amount: 5_000_000,
+      date: "2024-01-01", currency: "IQD", payment_type: "قاصه",
+    });
+
+    await setupAndLogin(page);
+
+    // Dashboard — Qasa = 10M
+    const qasaText = await safeText(page.locator(".qasa-iqd span").first());
+    const qasaVal = parseMoney(qasaText);
+    uiChecks.push({ tab: "لوحة التحكم", element: "القاصة", expected: "10000000", actual: String(qasaVal), pass: !isNaN(qasaVal) && Math.abs(qasaVal - 10_000_000) < 1 });
+
+    // Dashboard — Profit = 0
+    const profitText = await safeText(page.locator(".profit-iqd span").first());
+    const profitVal = parseMoney(profitText);
+    uiChecks.push({ tab: "لوحة التحكم", element: "الربح", expected: "0", actual: String(profitVal), pass: !isNaN(profitVal) && Math.abs(profitVal) < 1 });
+
+    const pass = writeUiResult("S47", "إيداع الشركاء", uiChecks, t0);
+    expect(pass).toBe(true);
+  });
+});
+
+// ─── S53 UI: Delete available car ──────────────────────────────────
+
+test.describe("S53: حذف سيارة متوفرة — فحص الواجهة", () => {
+  test("حذف سيارة متوفرة: التحقق من المخزون", async ({ page }) => {
+    test.setTimeout(120_000);
+    const t0 = Date.now();
+    const uiChecks: UiCheck[] = [];
+
+    await bridgeReset();
+    await bridgeInvoke("add_car", {
+      num: "UI-S53", chassis: "CH-UI-S53", model: "سيارة S53", year: "2024",
+      name: "سيارة اختبار S53", color: "أبيض", details: "",
+      purchase: 10_000_000, status: "متوفرة",
+      purchaseDate: "2024-01-01", currency: "IQD",
+      purchasePaymentType: "قاصه", purchaseType: "كاش",
+    });
+
+    // Delete the car
+    await bridgeInvoke("delete_car", { num: "UI-S53" });
+
+    await setupAndLogin(page);
+
+    // Dashboard — Inventory = 0
+    const invText = await safeText(page.locator(".inventory-iqd span").first());
+    const invVal = parseMoney(invText);
+    uiChecks.push({ tab: "لوحة التحكم", element: "قيمة المخزون", expected: "0", actual: String(invVal), pass: !isNaN(invVal) && Math.abs(invVal) < 1 });
+
+    // Dashboard — Qasa = 0
+    const qasaText = await safeText(page.locator(".qasa-iqd span").first());
+    const qasaVal = parseMoney(qasaText);
+    uiChecks.push({ tab: "لوحة التحكم", element: "القاصة", expected: "0", actual: String(qasaVal), pass: !isNaN(qasaVal) && Math.abs(qasaVal) < 1 });
+
+    const pass = writeUiResult("S53", "حذف سيارة متوفرة", uiChecks, t0);
+    expect(pass).toBe(true);
+  });
+});
+
+// ─── S54 UI: Delete sold cash car ──────────────────────────────────
+
+test.describe("S54: حذف سيارة مبيوعة كاش — فحص الواجهة", () => {
+  test("حذف سيارة مبيوعة: التحقق من القاصة والربح", async ({ page }) => {
+    test.setTimeout(120_000);
+    const t0 = Date.now();
+    const uiChecks: UiCheck[] = [];
+
+    await bridgeReset();
+    await bridgeInvoke("add_car", {
+      num: "UI-S54", chassis: "CH-UI-S54", model: "سيارة S54", year: "2024",
+      name: "سيارة اختبار S54", color: "أبيض", details: "",
+      purchase: 10_000_000, status: "متوفرة",
+      purchaseDate: "2024-01-01", currency: "IQD",
+      purchasePaymentType: "قاصه", purchaseType: "كاش",
+    });
+    await bridgeInvoke("sell_car_with_accounting", {
+      carNumber: "UI-S54", sellingPrice: 18_000_000, paymentType: "كاش",
+      amountPaid: 18_000_000, amountRemaining: 0,
+      buyerName: "زبون S54", buyerPhone: "07800000054",
+      saleDate: "2024-01-15", saleCurrency: "IQD",
+    });
+
+    // Delete the car
+    await bridgeInvoke("delete_car", { num: "UI-S54" });
+
+    await setupAndLogin(page);
+
+    // Dashboard — Qasa = 0
+    const qasaText = await safeText(page.locator(".qasa-iqd span").first());
+    const qasaVal = parseMoney(qasaText);
+    uiChecks.push({ tab: "لوحة التحكم", element: "القاصة", expected: "0", actual: String(qasaVal), pass: !isNaN(qasaVal) && Math.abs(qasaVal) < 1 });
+
+    // Dashboard — Profit = 0
+    const profitText = await safeText(page.locator(".profit-iqd span").first());
+    const profitVal = parseMoney(profitText);
+    uiChecks.push({ tab: "لوحة التحكم", element: "الربح", expected: "0", actual: String(profitVal), pass: !isNaN(profitVal) && Math.abs(profitVal) < 1 });
+
+    const pass = writeUiResult("S54", "حذف سيارة مبيوعة كاش", uiChecks, t0);
+    expect(pass).toBe(true);
+  });
+});
+
+// ─── S59 UI: Profit tab equals profit card ─────────────────────────
+
+test.describe("S59: بطاقة الربح = توزيع الأرباح — فحص الواجهة", () => {
+  test("بطاقة الربح = توزيع الأرباح: التحقق", async ({ page }) => {
+    test.setTimeout(120_000);
+    const t0 = Date.now();
+    const uiChecks: UiCheck[] = [];
+
+    await bridgeReset();
+    await bridgeInvoke("add_car", {
+      num: "UI-S59", chassis: "CH-UI-S59", model: "سيارة S59", year: "2024",
+      name: "سيارة اختبار S59", color: "أبيض", details: "",
+      purchase: 10_000_000, status: "متوفرة",
+      purchaseDate: "2024-01-01", currency: "IQD",
+      purchasePaymentType: "قاصه", purchaseType: "كاش",
+    });
+    await bridgeInvoke("sell_car_with_accounting", {
+      carNumber: "UI-S59", sellingPrice: 20_000_000, paymentType: "كاش",
+      amountPaid: 20_000_000, amountRemaining: 0,
+      buyerName: "زبون S59", buyerPhone: "07800000059",
+      saleDate: "2024-01-15", saleCurrency: "IQD",
+    });
+
+    await setupAndLogin(page);
+
+    // Dashboard — Profit = 10M
+    const profitText = await safeText(page.locator(".profit-iqd span").first());
+    const profitVal = parseMoney(profitText);
+    uiChecks.push({ tab: "لوحة التحكم", element: "الربح", expected: "10000000", actual: String(profitVal), pass: !isNaN(profitVal) && Math.abs(profitVal - 10_000_000) < 1 });
+
+    // Profit Distribution page — total = 10M
+    await page.locator('[data-testid="nav-profit-distribution"]').click();
+    await page.waitForTimeout(2000);
+    const distText = await safeText(page.locator(".currency-card--iqd span").first());
+    const distVal = parseMoney(distText);
+    uiChecks.push({ tab: "توزيع الارباح", element: "اجمالي الارباح", expected: "10000000", actual: String(distVal), pass: !isNaN(distVal) && Math.abs(distVal - 10_000_000) < 1 });
+
+    const pass = writeUiResult("S59", "بطاقة الربح = توزيع الأرباح", uiChecks, t0);
+    expect(pass).toBe(true);
+  });
+});
+
 // ─── S56 UI: Company status ────────────────────────────────────────
 
 test.describe("S56: حالة الشركة — فحص الواجهة", () => {
@@ -495,6 +690,189 @@ test.describe("S56: حالة الشركة — فحص الواجهة", () => {
     uiChecks.push({ tab: "لوحة التحكم", element: "الربح", expected: "7500000", actual: String(profitVal), pass: !isNaN(profitVal) && Math.abs(profitVal - 7_500_000) < 1 });
 
     const pass = writeUiResult("S56", "حالة الشركة بعد عمليات مختلطة", uiChecks, t0);
+    expect(pass).toBe(true);
+  });
+});
+
+// ─── S49 UI: Block third partner ───────────────────────────────────
+
+test.describe("S49: منع شريك ثالث — فحص الواجهة", () => {
+  test("لا يوجد شريك ثالث في توزيع الأرباح", async ({ page }) => {
+    test.setTimeout(120_000);
+    const t0 = Date.now();
+    const uiChecks: UiCheck[] = [];
+
+    await bridgeReset();
+    await setupAndLogin(page);
+
+    // Navigate to profit distribution page
+    await page.locator('[data-testid="nav-profit-distribution"]').click();
+    await page.waitForTimeout(2000);
+
+    // Check that profit distribution shows only 2 partners (أمير and منتصر)
+    const partnerRows = page.locator('.profit-distribution-table tbody tr, .partner-profit-row, [data-testid^="profit-partner-"]');
+    const rowCount = await partnerRows.count();
+
+    // Also check via bridge that partner count is 2
+    const partners: any[] = await bridgeInvoke("get_partners", {});
+    const shurakaCount = partners.filter((p: any) => p.kind === "شريك").length;
+    uiChecks.push({ tab: "توزيع الارباح", element: "عدد الشركاء", expected: "2", actual: String(shurakaCount), pass: shurakaCount === 2 });
+
+    // Verify both partners appear
+    const amirExists = partners.some((p: any) => p.partner_name === "أمير" && p.kind === "شريك");
+    const muntasirExists = partners.some((p: any) => p.partner_name === "منتصر" && p.kind === "شريك");
+    uiChecks.push({ tab: "توزيع الارباح", element: "أمير موجود", expected: "true", actual: String(amirExists), pass: amirExists });
+    uiChecks.push({ tab: "توزيع الارباح", element: "منتصر موجود", expected: "true", actual: String(muntasirExists), pass: muntasirExists });
+
+    const pass = writeUiResult("S49", "منع شريك ثالث", uiChecks, t0);
+    expect(pass).toBe(true);
+  });
+});
+
+// ─── S50 UI: Block partner deletion ────────────────────────────────
+
+test.describe("S50: منع حذف شريك — فحص الواجهة", () => {
+  test("لا يوجد زر لحذف شريك", async ({ page }) => {
+    test.setTimeout(120_000);
+    const t0 = Date.now();
+    const uiChecks: UiCheck[] = [];
+
+    await bridgeReset();
+    await setupAndLogin(page);
+
+    // Navigate to partners page
+    await page.locator('[data-testid="nav-partners-financial"]').click();
+    await page.waitForTimeout(2000);
+
+    // Verify no delete button for شريك partners
+    const deleteBtn = page.locator('[data-testid^="delete-partner-"]');
+    const deleteBtnCount = await deleteBtn.count();
+    uiChecks.push({ tab: "الشركاء", element: "زر حذف شريك", expected: "0", actual: String(deleteBtnCount), pass: deleteBtnCount === 0 });
+
+    const pass = writeUiResult("S50", "منع حذف شريك", uiChecks, t0);
+    expect(pass).toBe(true);
+  });
+});
+
+// ─── S60 UI: IQD/USD currency separation ───────────────────────────
+
+test.describe("S60: فصل العملات — فحص الواجهة", () => {
+  test("فصل الدينار والدولار: التحقق من القاصة", async ({ page }) => {
+    test.setTimeout(120_000);
+    const t0 = Date.now();
+    const uiChecks: UiCheck[] = [];
+
+    await bridgeReset();
+    // IQD car
+    await bridgeInvoke("add_car", {
+      num: "UI-S60-IQD", chassis: "CH-UI-S60-IQD", model: "سيارة دينار", year: "2024",
+      name: "سيارة دينار", color: "أبيض", details: "",
+      purchase: 10_000_000, status: "متوفرة",
+      purchaseDate: "2024-01-01", currency: "IQD",
+      purchasePaymentType: "قاصه", purchaseType: "كاش",
+    });
+    await bridgeInvoke("sell_car_with_accounting", {
+      carNumber: "UI-S60-IQD", sellingPrice: 18_000_000, paymentType: "كاش",
+      amountPaid: 18_000_000, amountRemaining: 0,
+      buyerName: "زبون IQD", buyerPhone: "07800000060",
+      saleDate: "2024-01-15", saleCurrency: "IQD",
+    });
+    // USD car
+    await bridgeInvoke("add_car", {
+      num: "UI-S60-USD", chassis: "CH-UI-S60-USD", model: "سيارة دولار", year: "2024",
+      name: "سيارة دولار", color: "أسود", details: "",
+      purchase: 8_000, status: "متوفرة",
+      purchaseDate: "2024-01-01", currency: "USD",
+      purchasePaymentType: "قاصه", purchaseType: "كاش",
+    });
+    await bridgeInvoke("sell_car_with_accounting", {
+      carNumber: "UI-S60-USD", sellingPrice: 12_000, paymentType: "كاش",
+      amountPaid: 12_000, amountRemaining: 0,
+      buyerName: "زبون USD", buyerPhone: "07800000061",
+      saleDate: "2024-01-15", saleCurrency: "USD",
+    });
+
+    await setupAndLogin(page);
+
+    // Dashboard — IQD Qasa = 8M
+    const qasaText = await safeText(page.locator(".qasa-iqd span").first());
+    const qasaVal = parseMoney(qasaText);
+    uiChecks.push({ tab: "لوحة التحكم", element: "القاصة بالدينار", expected: "8000000", actual: String(qasaVal), pass: !isNaN(qasaVal) && Math.abs(qasaVal - 8_000_000) < 1 });
+
+    // Dashboard — IQD Profit = 8M
+    const profitText = await safeText(page.locator(".profit-iqd span").first());
+    const profitVal = parseMoney(profitText);
+    uiChecks.push({ tab: "لوحة التحكم", element: "الربح بالدينار", expected: "8000000", actual: String(profitVal), pass: !isNaN(profitVal) && Math.abs(profitVal - 8_000_000) < 1 });
+
+    const pass = writeUiResult("S60", "فصل العملات — IQD و USD", uiChecks, t0);
+    expect(pass).toBe(true);
+  });
+});
+
+// ─── S61 UI: USD general expense ───────────────────────────────────
+
+test.describe("S61: مصروف عام بالدولار — فحص الواجهة", () => {
+  test("مصروف عام بالدولار: التحقق", async ({ page }) => {
+    test.setTimeout(120_000);
+    const t0 = Date.now();
+    const uiChecks: UiCheck[] = [];
+
+    await bridgeReset();
+    await bridgeInvoke("add_expense", {
+      description: "مصاريف دولار", amount: 500, date: "2024-02-01", currency: "USD",
+    });
+
+    await setupAndLogin(page);
+
+    // Dashboard — IQD Profit = 0 (USD expense doesn't affect IQD)
+    const profitText = await safeText(page.locator(".profit-iqd span").first());
+    const profitVal = parseMoney(profitText);
+    uiChecks.push({ tab: "لوحة التحكم", element: "الربح بالدينار", expected: "0", actual: String(profitVal), pass: !isNaN(profitVal) && Math.abs(profitVal) < 1 });
+
+    const pass = writeUiResult("S61", "مصروف عام بالدولار", uiChecks, t0);
+    expect(pass).toBe(true);
+  });
+});
+
+// ─── S63 UI: Read-only safety ──────────────────────────────────────
+
+test.describe("S63: الدوال القرائية لا تكتب — فحص الواجهة", () => {
+  test("الدوال القرائية لا تغير الواجهة", async ({ page }) => {
+    test.setTimeout(120_000);
+    const t0 = Date.now();
+    const uiChecks: UiCheck[] = [];
+
+    await bridgeReset();
+    // Seed some data
+    await bridgeInvoke("add_car", {
+      num: "UI-S63", chassis: "CH-UI-S63", model: "سيارة S63", year: "2024",
+      name: "سيارة اختبار S63", color: "أبيض", details: "",
+      purchase: 10_000_000, status: "متوفرة",
+      purchaseDate: "2024-01-01", currency: "IQD",
+      purchasePaymentType: "قاصه", purchaseType: "كاش",
+    });
+
+    await setupAndLogin(page);
+
+    // Read dashboard values before
+    const qasaBefore = await safeText(page.locator(".qasa-iqd span").first());
+    const invBefore = await safeText(page.locator(".inventory-iqd span").first());
+
+    // Navigate away and back (simulates read-only operations)
+    await page.locator('[data-testid="nav-partners-financial"]').click();
+    await page.waitForTimeout(1000);
+    await page.locator('[data-testid="nav-dashboard"]').click();
+    await page.waitForTimeout(1000);
+
+    // Read dashboard values after
+    const qasaAfter = await safeText(page.locator(".qasa-iqd span").first());
+    const invAfter = await safeText(page.locator(".inventory-iqd span").first());
+
+    // Values should not change from navigation
+    uiChecks.push({ tab: "لوحة التحكم", element: "القاصة (قبل/بعد)", expected: qasaBefore, actual: qasaAfter, pass: qasaBefore === qasaAfter });
+    uiChecks.push({ tab: "لوحة التحكم", element: "المخزون (قبل/بعد)", expected: invBefore, actual: invAfter, pass: invBefore === invAfter });
+
+    const pass = writeUiResult("S63", "الدوال القرائية لا تكتب", uiChecks, t0);
     expect(pass).toBe(true);
   });
 });

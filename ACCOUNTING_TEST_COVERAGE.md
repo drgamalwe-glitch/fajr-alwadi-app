@@ -1,11 +1,12 @@
 # مصفوفة التغطية — اختبارات المحاسبة
 
-**التاريخ:** 2026-06-22T15:37:43.916Z
+**التاريخ:** 2026-06-22T16:16:22.332Z
 
 ## ملخص
 
 - إجمالي السيناريوهات: 71
-- مُنفذ: 20
+- مُنفذ بالكامل (3 طبقات): 20
+- مُنفذ جزئياً: 0
 - مخطط: 51
 - نسبة التغطية: 28%
 
@@ -13,18 +14,18 @@
 
 | المعرف | المجموعة | الاسم | ORACLE | BACKEND_DB | CHROMIUM_UI | الحالة |
 |---|---|---|---|---|---|---|
-| S01 | CAR_PURCHASE | شراء سيارة كاش | ✅ | ✅ | ✅ | مُنفذ |
+| S01 | CAR_PURCHASE | شراء سيارة كاش | ✅ | ✅ | ✅ | مُنفذ ✅ |
 | S02 | CAR_PURCHASE | شراء سيارة بالتمويل | ❌ | ❌ | ❌ | مخطط |
 | S03 | CAR_PURCHASE | شراء سيارة عن طريق شركة | ❌ | ❌ | ❌ | مخطط |
 | S04 | CAR_PURCHASE | شراء سيارة بالدولار | ❌ | ❌ | ❌ | مخطط |
-| S05 | CASH_SALES | بيع كاش بعد شراء كاش | ✅ | ✅ | ✅ | مُنفذ |
+| S05 | CASH_SALES | بيع كاش بعد شراء كاش | ✅ | ✅ | ✅ | مُنفذ ✅ |
 | S06 | CASH_SALES | بيع كاش بعد شراء بالتمويل | ❌ | ❌ | ❌ | مخطط |
 | S07 | CASH_SALES | بيع كاش بعد شراء عن طريق شركة | ❌ | ❌ | ❌ | مخطط |
-| S08 | CASH_SALES | بيع كاش مع مصروف سيارة | ✅ | ✅ | ❌ | مُنفذ |
-| S09 | CASH_SALES | بيع كاش بخسارة | ✅ | ✅ | ❌ | مُنفذ |
-| S10 | INSTALLMENTS | بيع بالاقساط — بعد المقدمة | ✅ | ✅ | ❌ | مُنفذ |
-| S11 | INSTALLMENTS | بيع بالاقساط — بعد قسط واحد | ✅ | ✅ | ❌ | مُنفذ |
-| S12 | INSTALLMENTS | بيع بالاقساط — بعد كل الدفعات | ✅ | ✅ | ❌ | مُنفذ |
+| S08 | CASH_SALES | بيع كاش مع مصروف سيارة | ✅ | ✅ | ✅ | مُنفذ ✅ |
+| S09 | CASH_SALES | بيع كاش بخسارة | ✅ | ✅ | ✅ | مُنفذ ✅ |
+| S10 | INSTALLMENTS | بيع بالاقساط — بعد المقدمة | ✅ | ✅ | ✅ | مُنفذ ✅ |
+| S11 | INSTALLMENTS | بيع بالاقساط — بعد قسط واحد | ✅ | ✅ | ✅ | مُنفذ ✅ |
+| S12 | INSTALLMENTS | بيع بالاقساط — بعد كل الدفعات | ✅ | ✅ | ✅ | مُنفذ ✅ |
 | S13 | INSTALLMENTS | دفع زائد في الاقساط | ❌ | ❌ | ❌ | مخطط |
 | S14 | INSTALLMENTS | إقفال القسط الأخير | ❌ | ❌ | ❌ | مخطط |
 | S15 | INSTALLMENTS | اقساط مع مصروف سيارة | ❌ | ❌ | ❌ | مخطط |
@@ -34,10 +35,10 @@
 | S19 | CAR_EXPENSES | مصروف سيارة بعد البيع | ❌ | ❌ | ❌ | مخطط |
 | S20 | CAR_EXPENSES | تعديل مصروف سيارة | ❌ | ❌ | ❌ | مخطط |
 | S21 | CAR_EXPENSES | حذف مصروف سيارة | ❌ | ❌ | ❌ | مخطط |
-| S22 | GENERAL_EXPENSES | مصروف عام | ✅ | ✅ | ✅ | مُنفذ |
-| S23 | GENERAL_EXPENSES | مصروف عام بعد ربح سيارة | ✅ | ✅ | ❌ | مُنفذ |
+| S22 | GENERAL_EXPENSES | مصروف عام | ✅ | ✅ | ✅ | مُنفذ ✅ |
+| S23 | GENERAL_EXPENSES | مصروف عام بعد ربح سيارة | ✅ | ✅ | ✅ | مُنفذ ✅ |
 | S24 | GENERAL_EXPENSES | تعديل مصروف عام | ❌ | ❌ | ❌ | مخطط |
-| S25 | GENERAL_EXPENSES | حذف مصروف عام | ❌ | ✅ | ❌ | مُنفذ |
+| S25 | GENERAL_EXPENSES | حذف مصروف عام | ✅ | ✅ | ✅ | مُنفذ ✅ |
 | S26 | INVESTORS | إيداع مستثمر | ❌ | ❌ | ❌ | مخطط |
 | S27 | INVESTORS | سحب مستثمر | ❌ | ❌ | ❌ | مخطط |
 | S28 | INVESTORS | مستثمر + شراء سيارة | ❌ | ❌ | ❌ | مخطط |
@@ -59,23 +60,23 @@
 | S44 | CUSTOMERS | الزبون يدفع قسطاً | ❌ | ❌ | ❌ | مخطط |
 | S45 | CUSTOMERS | الزبون يدفع كل الاقساط | ❌ | ❌ | ❌ | مخطط |
 | S46 | CUSTOMERS | طباعة كشف حساب زبون | ❌ | ❌ | ❌ | مخطط |
-| S47 | PARTNERS | إيداع الشركاء | ✅ | ✅ | ❌ | مُنفذ |
+| S47 | PARTNERS | إيداع الشركاء | ✅ | ✅ | ✅ | مُنفذ ✅ |
 | S48 | PARTNERS | سحب شريك | ❌ | ❌ | ❌ | مخطط |
-| S49 | PARTNERS | منع شريك ثالث | ✅ | ✅ | ❌ | مُنفذ |
-| S50 | PARTNERS | منع حذف شريك | ✅ | ✅ | ❌ | مُنفذ |
+| S49 | PARTNERS | منع شريك ثالث | ✅ | ✅ | ✅ | مُنفذ ✅ |
+| S50 | PARTNERS | منع حذف شريك | ✅ | ✅ | ✅ | مُنفذ ✅ |
 | S51 | DELETE_EDIT | تعديل شراء سيارة متوفرة | ❌ | ❌ | ❌ | مخطط |
 | S52 | DELETE_EDIT | تعديل سعر بيع سيارة مبيوعة | ❌ | ❌ | ❌ | مخطط |
-| S53 | DELETE_EDIT | حذف سيارة متوفرة | ❌ | ✅ | ❌ | مُنفذ |
-| S54 | DELETE_EDIT | حذف سيارة مبيوعة كاش | ❌ | ✅ | ❌ | مُنفذ |
+| S53 | DELETE_EDIT | حذف سيارة متوفرة | ✅ | ✅ | ✅ | مُنفذ ✅ |
+| S54 | DELETE_EDIT | حذف سيارة مبيوعة كاش | ✅ | ✅ | ✅ | مُنفذ ✅ |
 | S55 | DELETE_EDIT | حذف سيارة مبيوعة بالاقساط | ❌ | ❌ | ❌ | مخطط |
-| S56 | DASHBOARD | حالة الشركة — عمليات مختلطة | ✅ | ✅ | ✅ | مُنفذ |
+| S56 | DASHBOARD | حالة الشركة — عمليات مختلطة | ✅ | ✅ | ✅ | مُنفذ ✅ |
 | S57 | DASHBOARD | قاصة = بطاقة القاصة | ❌ | ❌ | ❌ | مخطط |
 | S58 | DASHBOARD | الكاش = بطاقة رأس المال | ❌ | ❌ | ❌ | مخطط |
-| S59 | DASHBOARD | الربح = بطاقة الربح | ✅ | ✅ | ❌ | مُنفذ |
-| S60 | CURRENCY | فصل الدينار والدولار | ❌ | ✅ | ❌ | مُنفذ |
-| S61 | CURRENCY | مصروف عام بالدولار | ❌ | ✅ | ❌ | مُنفذ |
+| S59 | DASHBOARD | الربح = بطاقة الربح | ✅ | ✅ | ✅ | مُنفذ ✅ |
+| S60 | CURRENCY | فصل الدينار والدولار | ✅ | ✅ | ✅ | مُنفذ ✅ |
+| S61 | CURRENCY | مصروف عام بالدولار | ✅ | ✅ | ✅ | مُنفذ ✅ |
 | S62 | CURRENCY | منع خلط العملات | ❌ | ❌ | ❌ | مخطط |
-| S63 | READ_ONLY | أمان الدوال القرائية | ✅ | ✅ | ❌ | مُنفذ |
+| S63 | READ_ONLY | أمان الدوال القرائية | ✅ | ✅ | ✅ | مُنفذ ✅ |
 | S64 | PRINT | طباعة كشف حساب شريك | ❌ | ❌ | ❌ | مخطط |
 | S65 | PRINT | طباعة كشف حساب زبون | ❌ | ❌ | ❌ | مخطط |
 | S66 | PRINT | تصدير قاعدة البيانات | ❌ | ❌ | ❌ | مخطط |
@@ -85,168 +86,28 @@
 | S70 | FULL_FLOWS | دورة شركة | ❌ | ❌ | ❌ | مخطط |
 | S71 | FULL_FLOWS | دورة مستثمر | ❌ | ❌ | ❌ | مخطط |
 
-## السيناريوهات المُنفذة
+## السيناريوهات المُنفذة بالكامل
 
-### S01: شراء سيارة كاش
-
-- **المجموعة:** CAR_PURCHASE
-- **الاسم:** Cash car purchase
-- **ORACLE:** نعم
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** نعم
-
-### S05: بيع كاش بعد شراء كاش
-
-- **المجموعة:** CASH_SALES
-- **الاسم:** Cash sale after cash purchase
-- **ORACLE:** نعم
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** نعم
-
-### S08: بيع كاش مع مصروف سيارة
-
-- **المجموعة:** CASH_SALES
-- **الاسم:** Cash sale with car expense
-- **ORACLE:** نعم
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
-### S09: بيع كاش بخسارة
-
-- **المجموعة:** CASH_SALES
-- **الاسم:** Cash sale at loss
-- **ORACLE:** نعم
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
-### S10: بيع بالاقساط — بعد المقدمة
-
-- **المجموعة:** INSTALLMENTS
-- **الاسم:** Installment - after down payment
-- **ORACLE:** نعم
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
-### S11: بيع بالاقساط — بعد قسط واحد
-
-- **المجموعة:** INSTALLMENTS
-- **الاسم:** Installment - after one installment
-- **ORACLE:** نعم
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
-### S12: بيع بالاقساط — بعد كل الدفعات
-
-- **المجموعة:** INSTALLMENTS
-- **الاسم:** Installment - after all payments
-- **ORACLE:** نعم
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
-### S22: مصروف عام
-
-- **المجموعة:** GENERAL_EXPENSES
-- **الاسم:** General expense
-- **ORACLE:** نعم
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** نعم
-
-### S23: مصروف عام بعد ربح سيارة
-
-- **المجموعة:** GENERAL_EXPENSES
-- **الاسم:** General expense after car profit
-- **ORACLE:** نعم
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
-### S25: حذف مصروف عام
-
-- **المجموعة:** GENERAL_EXPENSES
-- **الاسم:** Delete general expense
-- **ORACLE:** لا
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
-### S47: إيداع الشركاء
-
-- **المجموعة:** PARTNERS
-- **الاسم:** Partner deposits
-- **ORACLE:** نعم
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
-### S49: منع شريك ثالث
-
-- **المجموعة:** PARTNERS
-- **الاسم:** Block third partner
-- **ORACLE:** نعم
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
-### S50: منع حذف شريك
-
-- **المجموعة:** PARTNERS
-- **الاسم:** Block partner deletion
-- **ORACLE:** نعم
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
-### S53: حذف سيارة متوفرة
-
-- **المجموعة:** DELETE_EDIT
-- **الاسم:** Delete available car
-- **ORACLE:** لا
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
-### S54: حذف سيارة مبيوعة كاش
-
-- **المجموعة:** DELETE_EDIT
-- **الاسم:** Delete sold cash car
-- **ORACLE:** لا
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
-### S56: حالة الشركة — عمليات مختلطة
-
-- **المجموعة:** DASHBOARD
-- **الاسم:** Company status mixed ops
-- **ORACLE:** نعم
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** نعم
-
-### S59: الربح = بطاقة الربح
-
-- **المجموعة:** DASHBOARD
-- **الاسم:** Profit tab = profit card
-- **ORACLE:** نعم
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
-### S60: فصل الدينار والدولار
-
-- **المجموعة:** CURRENCY
-- **الاسم:** IQD/USD separation
-- **ORACLE:** لا
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
-### S61: مصروف عام بالدولار
-
-- **المجموعة:** CURRENCY
-- **الاسم:** USD general expense
-- **ORACLE:** لا
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
-### S63: أمان الدوال القرائية
-
-- **المجموعة:** READ_ONLY
-- **الاسم:** Read-only safety
-- **ORACLE:** نعم
-- **BACKEND_DB:** نعم
-- **CHROMIUM_UI:** لا
-
+- **S01:** شراء سيارة كاش — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S05:** بيع كاش بعد شراء كاش — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S08:** بيع كاش مع مصروف سيارة — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S09:** بيع كاش بخسارة — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S10:** بيع بالاقساط — بعد المقدمة — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S11:** بيع بالاقساط — بعد قسط واحد — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S12:** بيع بالاقساط — بعد كل الدفعات — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S22:** مصروف عام — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S23:** مصروف عام بعد ربح سيارة — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S25:** حذف مصروف عام — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S47:** إيداع الشركاء — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S49:** منع شريك ثالث — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S50:** منع حذف شريك — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S53:** حذف سيارة متوفرة — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S54:** حذف سيارة مبيوعة كاش — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S56:** حالة الشركة — عمليات مختلطة — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S59:** الربح = بطاقة الربح — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S60:** فصل الدينار والدولار — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S61:** مصروف عام بالدولار — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
+- **S63:** أمان الدوال القرائية — ORACLE ✅ BACKEND_DB ✅ CHROMIUM_UI ✅
 
 ## السيناريوهات المخطط لها
 
@@ -301,3 +162,7 @@
 - **S69:** دورة تمويل (FULL_FLOWS)
 - **S70:** دورة شركة (FULL_FLOWS)
 - **S71:** دورة مستثمر (FULL_FLOWS)
+
+## سيناريوهات مؤرشفة (Legacy)
+
+Legacy scenarios A/B/C were replaced by official S-series scenarios and are excluded from final verdict.

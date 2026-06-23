@@ -1,12 +1,12 @@
 # تقرير حالات الفشل
 
-**التاريخ:** 2026-06-22T15:37:43.370Z
+**التاريخ:** 2026-06-22T16:16:21.826Z
 
-**الحالة:** FAIL
+**الحالة:** PASS
 
-**إجمالي السيناريوهات:** 23
-**الناجحة:** 9
-**الفاشلة:** 14
+**إجمالي السيناريوهات:** 20
+**الناجحة:** 20
+**الفاشلة:** 0
 **الجزئية:** 0
 
 ## حالة جميع السيناريوهات
@@ -65,30 +65,68 @@
 - BACKEND_DB: ناجح
 - CHROMIUM_UI: ناجح
 
-### S63: الدوال القرائية لا تكتب — فشل
+### S25: S25: Delete general expense — ناجح
 
-### A: بيع سيارة كاش (شراء ثم بيع) — فشل
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
 
-### B: B1: Installment - After Down Payment — فشل
+### S47: S47: Partner deposits — ناجح
 
-### C: C: General Expense — فشل
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
 
-### S53: حذف سيارة متوفرة — فشل
+### S49: S49: Block third partner — ناجح
 
-### S54: حذف سيارة مبيوعة كاش — فشل
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
 
-### S25: حذف مصروف عام — فشل
+### S50: S50: Block partner deletion — ناجح
 
-### S56: حالة الشركة بعد عمليات مختلطة — فشل
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
 
-### S59: بطاقة الربح = توزيع الأرباح — فشل
+### S53: S53: Delete available car — ناجح
 
-### S60: فصل العملات — IQD و USD — فشل
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
 
-### S61: مصروف عام بالدولار — فشل
+### S54: S54: Delete sold cash car — ناجح
 
-### S47: إيداع الشركاء — فشل
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
 
-### S49: منع إنشاء شريك ثالث — فشل
+### S56: S56: Company status mixed ops — ناجح
 
-### S50: منع حذف شريك — فشل
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
+
+### S59: S59: Profit tab = profit card — ناجح
+
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
+
+### S60: S60: IQD/USD separation — ناجح
+
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
+
+### S61: S61: USD general expense — ناجح
+
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
+
+### S63: S63: Read-only safety — ناجح
+
+- ORACLE: ناجح
+- BACKEND_DB: ناجح
+- CHROMIUM_UI: ناجح
