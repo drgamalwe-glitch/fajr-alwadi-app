@@ -65,11 +65,6 @@ const getLinkedInstallmentId = (tx: PartnerTransaction) => {
   return match ? Number(match[1]) : null;
 };
 
-const withInstallmentLink = (notes: string | null | undefined, installmentId: number) => {
-  const cleanNotes = (notes || "").replace(/\s*\|\s*قسط#\d+\s*/g, "").trim();
-  return `${cleanNotes || "تسديد قسط"} | قسط#${installmentId}`;
-};
-
 const isLinkedInstallmentPayment = (tx: PartnerTransaction) =>
   isBorrowerInstallmentPayment(tx) && getLinkedInstallmentId(tx) != null;
 
@@ -79,10 +74,6 @@ const isUnpaidInstallment = (tx: PartnerTransaction) =>
 // معاملات بيع السيارة بموعد تسليم أو تقسيط (تُعرض كـ باقي/واصل بدلاً من سحب/ايداع)
 const isSaleInstallmentTx = (tx: PartnerTransaction) =>
   tx.type_.startsWith("مقدمة") || tx.type_.startsWith("باقي") || tx.type_.startsWith("استلام") || !!tx.notes?.includes("موعد تسليم") || !!tx.notes?.includes("قسط");
-
-const isSameCurrency = (tx: PartnerTransaction, currency: Currency) =>
-  (tx.currency || "IQD") === currency;
-
 
 const isFinancialClientKind = (kind: string) =>
   kind === "مستثمر" || kind === "ممول" || kind === "شركة";
@@ -174,38 +165,6 @@ const parseFinancierNotes = (notes: string | null, amount?: number) => {
     originalNotes: originalNotes || (notes.startsWith("نقل بواسطة:") ? "" : notes)
   };
 };
-
-function splitAmountEvenly(total: number, parts: number) {
-  if (parts <= 0) return [];
-  const roundedTotal = Math.max(0, Math.round(total));
-  const base = Math.floor(roundedTotal / parts);
-  const remainder = roundedTotal - base * parts;
-  return Array.from({ length: parts }, (_, index) =>
-    index === parts - 1 ? base + remainder : base,
-  );
-}
-
-function addMonthsToDate(dateStr: string, monthsToAdd: number): string {
-  if (monthsToAdd === 0) return dateStr;
-  const parts = dateStr.split("-");
-  if (parts.length < 3) return dateStr;
-
-  let year = parseInt(parts[0], 10);
-  let month = parseInt(parts[1], 10);
-  let day = parseInt(parts[2], 10);
-
-  if (isNaN(year) || isNaN(month) || isNaN(day)) return dateStr;
-
-  const totalMonths = year * 12 + (month - 1) + monthsToAdd;
-  const newYear = Math.floor(totalMonths / 12);
-  const newMonth = (totalMonths % 12) + 1;
-
-  const maxDays = new Date(newYear, newMonth, 0).getDate();
-  const newDay = Math.min(day, maxDays);
-
-  return `${newYear}-${String(newMonth).padStart(2, "0")}-${String(newDay).padStart(2, "0")}`;
-}
-
 
 const ACCOUNTS_TABS: { id: AccountsTabId; label: string }[] = [
   { id: "customers", label: "العملاء" },
@@ -853,15 +812,24 @@ export function PartnersTab({
     });
   }, [transactions, transactionSort]);
 
+  const isOriginalCustomerInstallmentRow = useCallback((tx: PartnerTransaction) =>
+    form.kind === "زبون" &&
+    (tx.type_.startsWith("باقي") || tx.type_.startsWith("واصل")) &&
+    (tx.type_.includes("قسط") || !!tx.notes?.includes("قسط")),
+  [form.kind]);
+
   const visibleSortedTransactions = useMemo(
     () =>
       sortedTransactions.filter(
         (tx) =>
-          !(isInstallmentWithdrawal(tx) && tx.amount <= 0) &&
-          !isLinkedInstallmentPayment(tx) &&
-          !tx.type_.startsWith("تحويل")
+          isOriginalCustomerInstallmentRow(tx) ||
+          (
+            !(isInstallmentWithdrawal(tx) && tx.amount <= 0) &&
+            !isLinkedInstallmentPayment(tx) &&
+            !tx.type_.startsWith("تحويل")
+          )
       ),
-    [sortedTransactions],
+    [sortedTransactions, isOriginalCustomerInstallmentRow],
   );
 
   const totalModalPages = Math.max(1, Math.ceil(visibleSortedTransactions.length / PAGE_SIZE));
@@ -923,196 +891,6 @@ export function PartnersTab({
 
     return paidIds;
   }, [transactions, form.kind]);
-
-  const rebalanceInstallmentsAfterPayment = async (
-    partnerName: string,
-    paymentDelta: number,
-    paymentDate: string,
-    currency: Currency,
-  ) => {
-    const roundedDelta = Math.round(paymentDelta);
-    if (roundedDelta === 0) return;
-
-    const installmentRows = transactions
-      .filter((tx) => isInstallmentWithdrawal(tx) && isSameCurrency(tx, currency))
-      .sort((a, b) => {
-        const dateDiff = new Date(a.date).getTime() - new Date(b.date).getTime();
-        return dateDiff !== 0 ? dateDiff : a.id - b.id;
-      });
-
-    if (installmentRows.length === 0) return;
-
-    const activeRows = installmentRows.filter((tx) => tx.amount > 0);
-    if (activeRows.length === 0) return;
-
-    const paymentTime = new Date(paymentDate).getTime();
-    const target = activeRows.find((tx) => new Date(tx.date).getTime() >= paymentTime) ?? activeRows[0];
-    const targetIndex = installmentRows.findIndex((tx) => tx.id === target.id);
-    if (targetIndex < 0) return;
-
-    const futureRows = installmentRows.slice(targetIndex + 1).filter((tx) => tx.amount > 0);
-
-    if (form.kind === "زبون") {
-      const difference = target.amount - roundedDelta;
-      if (difference === 0) return;
-
-      if (futureRows.length === 0) {
-        if (difference > 0) {
-          const nextMonthDate = addMonthsToDate(target.date, 1);
-          await callTauri("add_partner_transaction", {
-            partnerName,
-            kind: form.kind,
-            type: "باقي قسط",
-            amount: difference,
-            date: nextMonthDate,
-            notes: `متبقي قسط مؤجل - ${target.notes ?? ""}`,
-            currency,
-            paymentType: "قاصه",
-          });
-        }
-        return;
-      }
-
-      const futureTotal = futureRows.reduce((sum, tx) => sum + tx.amount, 0);
-      const newRemaining = Math.max(0, futureTotal + difference);
-      const distributedAmounts = splitAmountEvenly(newRemaining, futureRows.length);
-
-      await Promise.all(
-        futureRows.map((tx, index) => {
-          const nextAmount = distributedAmounts[index] ?? 0;
-          if (nextAmount <= 0) {
-            return callTauri("delete_partner_transaction", {
-              id: tx.id, partnerName, kind: form.kind,
-            });
-          }
-          return callTauri("update_partner_transaction", {
-            id: tx.id, partnerName, kind: form.kind,
-            type: tx.type_,
-            amount: nextAmount,
-            date: tx.date, notes: tx.notes,
-            currency,
-            paymentType: tx.payment_type || tx.paymentType || "قاصه",
-          });
-        }),
-      );
-      return;
-    }
-
-    if (futureRows.length === 0) {
-      const newAmount = Math.max(0, target.amount - roundedDelta);
-      if (newAmount <= 0) {
-        await callTauri("delete_partner_transaction", {
-          id: target.id, partnerName, kind: form.kind,
-        });
-      } else {
-        await callTauri("update_partner_transaction", {
-          id: target.id,
-          partnerName,
-          kind: form.kind,
-          type: target.type_,
-          amount: newAmount,
-          date: target.date,
-          notes: target.notes,
-          currency: target.currency,
-          paymentType: target.paymentType || target.payment_type || "قاصه",
-        });
-      }
-      return;
-    }
-
-    const futureTotal = futureRows.reduce((sum, tx) => sum + tx.amount, 0);
-    const originalTotal = target.amount + futureTotal;
-    const newRemaining = Math.max(0, originalTotal - roundedDelta);
-    const distributedAmounts = splitAmountEvenly(newRemaining, futureRows.length);
-
-    await callTauri("delete_partner_transaction", {
-      id: target.id, partnerName, kind: form.kind,
-    });
-
-    await Promise.all(
-      futureRows.map((tx, index) => {
-        const nextAmount = distributedAmounts[index] ?? 0;
-        if (nextAmount <= 0) {
-          return callTauri("delete_partner_transaction", {
-            id: tx.id, partnerName, kind: form.kind,
-          });
-        }
-        return callTauri("update_partner_transaction", {
-          id: tx.id, partnerName, kind: form.kind,
-          type: tx.type_,
-          amount: nextAmount,
-          date: tx.date, notes: tx.notes,
-          currency,
-          paymentType: tx.payment_type || tx.paymentType || "قاصه",
-        });
-      }),
-    );
-  };
-
-  const rebalanceCustomerFutureInstallments = async (
-    partnerName: string,
-    targetInstallment: PartnerTransaction,
-    amountDifference: number,
-    currency: Currency,
-  ) => {
-    const roundedDifference = Math.round(amountDifference);
-    if (roundedDifference === 0) return;
-
-    const installmentRows = transactions
-      .filter((tx) => isInstallmentWithdrawal(tx) && isSameCurrency(tx, currency))
-      .sort((a, b) => {
-        const dateDiff = new Date(a.date).getTime() - new Date(b.date).getTime();
-        return dateDiff !== 0 ? dateDiff : a.id - b.id;
-      });
-
-    const targetIndex = installmentRows.findIndex((tx) => tx.id === targetInstallment.id);
-    if (targetIndex < 0) return;
-
-    const futureRows = installmentRows.slice(targetIndex + 1).filter((tx) => tx.amount > 0);
-    if (futureRows.length === 0) {
-      if (roundedDifference > 0) {
-        await callTauri("add_partner_transaction", {
-          partnerName,
-          kind: form.kind,
-          type: targetInstallment.type_.startsWith("باقي") ? targetInstallment.type_ : "باقي قسط",
-          amount: roundedDifference,
-          date: addMonthsToDate(targetInstallment.date, 1),
-          notes: `متبقي قسط مؤجل - ${targetInstallment.notes ?? ""}`,
-          currency,
-          paymentType: targetInstallment.payment_type || targetInstallment.paymentType || "قاصه",
-        });
-      }
-      return;
-    }
-
-    const futureTotal = futureRows.reduce((sum, tx) => sum + tx.amount, 0);
-    const newRemaining = Math.max(0, futureTotal + roundedDifference);
-    const distributedAmounts = splitAmountEvenly(newRemaining, futureRows.length);
-
-    await Promise.all(
-      futureRows.map((tx, index) => {
-        const nextAmount = distributedAmounts[index] ?? 0;
-        if (nextAmount <= 0) {
-          return callTauri("delete_partner_transaction", {
-            id: tx.id,
-            partnerName,
-            kind: form.kind,
-          });
-        }
-        return callTauri("update_partner_transaction", {
-          id: tx.id,
-          partnerName,
-          kind: form.kind,
-          type: tx.type_,
-          amount: nextAmount,
-          date: tx.date,
-          notes: tx.notes,
-          currency,
-          paymentType: tx.payment_type || tx.paymentType || "قاصه",
-        });
-      }),
-    );
-  };
 
   useEffect(() => {
     if (!shouldScrollTransactionsRef.current || transactionsLoading || transactions.length === 0) {
@@ -1607,233 +1385,21 @@ export function PartnersTab({
         !!originalEditingTransaction &&
         isCustomerInstallmentRecord(originalEditingTransaction);
 
-      const convertsInstallmentToPayment =
-        form.kind === "زبون" &&
-        txForm.type === "ايداع" &&
-        !!editingTransactionId &&
-        !!originalEditingTransaction &&
-        isInstallmentWithdrawal(originalEditingTransaction);
-
       if (isBorrowerInstallmentEdit && originalEditingTransaction) {
-        const wasAlreadyPaid = paidTransactionIds.has(originalEditingTransaction.id);
         const isWantsPaid = txForm.type === "ايداع";
 
-        if (!wasAlreadyPaid && !isWantsPaid) {
-          await rebalanceCustomerFutureInstallments(
-            editingKey,
-            originalEditingTransaction,
-            originalEditingTransaction.amount - periodAmount,
-            txCurrency,
-          );
-
-          await callTauri("update_partner_transaction", {
-            id: editingTransactionId,
-            partnerName: editingKey,
-            kind: form.kind,
-            type: originalEditingTransaction.type_ || "باقي قسط",
-            amount: periodAmount,
-            date: dateStr,
-            notes: txForm.notes || originalEditingTransaction.notes,
-            currency: txCurrency,
-            paymentType: originalEditingTransaction.payment_type || originalEditingTransaction.paymentType || "قاصه",
-          });
-        } else if (!wasAlreadyPaid && isWantsPaid) {
-          // Case B: Unpaid -> Paid. Create payment transactions and keep original installment.
-          await callTauri("add_partner_transaction", {
-            partnerName: editingKey,
-            kind: form.kind,
-            type: "تسديد قسط سيارة",
-            amount: periodAmount,
-            date: dateStr,
-            notes: withInstallmentLink(txForm.notes || `تسديد ${originalEditingTransaction.notes ?? "قسط"}`, originalEditingTransaction.id),
-            currency: txCurrency,
-            paymentType: "قاصه",
-          });
-
-          await callTauri("add_partner_transaction", {
-            partnerName: editingKey,
-            kind: form.kind,
-            type: "تحويل قسط الى القاصة",
-            amount: periodAmount,
-            date: dateStr,
-            notes: withInstallmentLink(originalEditingTransaction.notes ?? "تحويل قسط الى القاصة", originalEditingTransaction.id),
-            currency: txCurrency,
-            paymentType: "قاصه",
-          });
-
-          await rebalanceCustomerFutureInstallments(
-            editingKey,
-            originalEditingTransaction,
-            originalEditingTransaction.amount - periodAmount,
-            txCurrency,
-          );
-
-          await callTauri("update_partner_transaction", {
-            id: editingTransactionId,
-            partnerName: editingKey,
-            kind: form.kind,
-            type: "واصل قسط",
-            amount: periodAmount,
-            date: dateStr,
-            notes: txForm.notes || originalEditingTransaction.notes,
-            currency: txCurrency,
-            paymentType: originalEditingTransaction.payment_type || originalEditingTransaction.paymentType || "قاصه",
-          });
-        } else if (wasAlreadyPaid && !isWantsPaid) {
-          // Case C: Paid -> Unpaid. Delete matching payment transactions and keep original installment.
-          const allTxs = await callTauri<PartnerTransaction[]>("get_partner_transactions", {
-            partnerName: editingKey,
-            kind: form.kind,
-          });
-
-          const paymentTx = allTxs.find(t =>
-            t.type_ === "تسديد قسط سيارة" &&
-            getLinkedInstallmentId(t) === originalEditingTransaction.id
-          ) ?? allTxs.find(t =>
-            t.type_ === "تسديد قسط سيارة" &&
-            getLinkedInstallmentId(t) == null &&
-            t.amount === originalEditingTransaction.amount &&
-            (t.currency || "IQD") === (originalEditingTransaction.currency || "IQD")
-          );
-
-          if (paymentTx) {
-            await callTauri("delete_partner_transaction", {
-              id: paymentTx.id,
-              partnerName: editingKey,
-              kind: form.kind,
-            });
-
-            const transferTx = allTxs.find(t =>
-              (t.type_ === "تحويل الى القاصة" || t.type_ === "تحويل باقي قسط الى القاصة" || t.type_ === "تحويل قسط الى القاصة") &&
-              getLinkedInstallmentId(t) === originalEditingTransaction.id
-            ) ?? allTxs.find(t =>
-              (t.type_ === "تحويل الى القاصة" || t.type_ === "تحويل باقي قسط الى القاصة" || t.type_ === "تحويل قسط الى القاصة") &&
-              getLinkedInstallmentId(t) == null &&
-              t.amount === originalEditingTransaction.amount &&
-              (t.currency || "IQD") === (originalEditingTransaction.currency || "IQD") &&
-              t.date === paymentTx.date
-            );
-            if (transferTx) {
-              await callTauri("delete_partner_transaction", {
-                id: transferTx.id,
-                partnerName: editingKey,
-                kind: form.kind,
-              });
-            }
-          }
-
-          await callTauri("update_partner_transaction", {
-            id: editingTransactionId,
-            partnerName: editingKey,
-            kind: form.kind,
-            type: "باقي قسط",
-            amount: periodAmount,
-            date: dateStr,
-            notes: txForm.notes || originalEditingTransaction.notes,
-            currency: txCurrency,
-            paymentType: originalEditingTransaction.payment_type || originalEditingTransaction.paymentType || "قاصه",
-          });
-        } else if (wasAlreadyPaid && isWantsPaid) {
-          // Case D: Remains paid, but edited. Update both original installment and matching payment transactions.
-          const allTxs = await callTauri<PartnerTransaction[]>("get_partner_transactions", {
-            partnerName: editingKey,
-            kind: form.kind,
-          });
-
-          const paymentTx = allTxs.find(t =>
-            t.type_ === "تسديد قسط سيارة" &&
-            getLinkedInstallmentId(t) === originalEditingTransaction.id
-          ) ?? allTxs.find(t =>
-            t.type_ === "تسديد قسط سيارة" &&
-            getLinkedInstallmentId(t) == null &&
-            t.amount === originalEditingTransaction.amount &&
-            (t.currency || "IQD") === (originalEditingTransaction.currency || "IQD")
-          );
-
-          if (paymentTx) {
-            await callTauri("update_partner_transaction", {
-              id: paymentTx.id,
-              partnerName: editingKey,
-              kind: form.kind,
-              type: "تسديد قسط سيارة",
-              amount: periodAmount,
-              date: dateStr,
-              notes: withInstallmentLink(txForm.notes || paymentTx.notes || `تسديد ${originalEditingTransaction.notes ?? "قسط"}`, originalEditingTransaction.id),
-              currency: txCurrency,
-              paymentType: "قاصه",
-            });
-
-            const transferTx = allTxs.find(t =>
-              (t.type_ === "تحويل الى القاصة" || t.type_ === "تحويل باقي قسط الى القاصة" || t.type_ === "تحويل قسط الى القاصة") &&
-              getLinkedInstallmentId(t) === originalEditingTransaction.id
-            ) ?? allTxs.find(t =>
-              (t.type_ === "تحويل الى القاصة" || t.type_ === "تحويل باقي قسط الى القاصة" || t.type_ === "تحويل قسط الى القاصة") &&
-              getLinkedInstallmentId(t) == null &&
-              t.amount === originalEditingTransaction.amount &&
-              (t.currency || "IQD") === (originalEditingTransaction.currency || "IQD") &&
-              t.date === paymentTx.date
-            );
-            if (transferTx) {
-              await callTauri("update_partner_transaction", {
-                id: transferTx.id,
-                partnerName: editingKey,
-                kind: form.kind,
-                type: "تحويل قسط الى القاصة",
-                amount: periodAmount,
-                date: dateStr,
-                notes: withInstallmentLink(txForm.notes || originalEditingTransaction.notes || "تحويل قسط الى القاصة", originalEditingTransaction.id),
-                currency: txCurrency,
-                paymentType: "قاصه",
-              });
-            }
-          }
-
-          await rebalanceCustomerFutureInstallments(
-            editingKey,
-            originalEditingTransaction,
-            originalEditingTransaction.amount - periodAmount,
-            txCurrency,
-          );
-
-          await callTauri("update_partner_transaction", {
-            id: editingTransactionId,
-            partnerName: editingKey,
-            kind: form.kind,
-            type: originalEditingTransaction.type_ || "باقي قسط",
-            amount: periodAmount,
-            date: dateStr,
-            notes: txForm.notes || originalEditingTransaction.notes,
-            currency: txCurrency,
-            paymentType: originalEditingTransaction.payment_type || originalEditingTransaction.paymentType || "قاصه",
-          });
-        }
-      } else if (convertsInstallmentToPayment) {
-        await callTauri("add_partner_transaction", {
+        // Use the new atomic command for all installment toggle operations
+        await callTauri("set_customer_installment_status", {
+          installmentId: originalEditingTransaction.id,
           partnerName: editingKey,
           kind: form.kind,
-          type: "تسديد قسط سيارة",
+          paid: isWantsPaid,
           amount: periodAmount,
           date: dateStr,
-          notes: withInstallmentLink(txForm.notes || `تسديد ${originalEditingTransaction.notes ?? "قسط"}`, originalEditingTransaction.id),
+          notes: txForm.notes || originalEditingTransaction.notes,
           currency: txCurrency,
-          paymentType: "قاصه",
+          paymentType: originalEditingTransaction.payment_type || originalEditingTransaction.paymentType || "قاصه",
         });
-
-        // إدخال قيد التحويل في قاصه
-        await callTauri("add_partner_transaction", {
-          partnerName: editingKey,
-          kind: form.kind,
-          type: "تحويل قسط الى القاصة",
-          amount: periodAmount,
-          date: dateStr,
-          notes: withInstallmentLink(originalEditingTransaction.notes ?? "تحويل قسط الى القاصة", originalEditingTransaction.id),
-          currency: txCurrency,
-          paymentType: "قاصه",
-        });
-
-        if (form.kind !== "زبون") {
-          await rebalanceInstallmentsAfterPayment(editingKey, periodAmount, dateStr, txCurrency);
-        }
       } else {
         for (let i = 0; i < installments; i++) {
           const [yStr, mStr, dStr] = dateStr.split("-");

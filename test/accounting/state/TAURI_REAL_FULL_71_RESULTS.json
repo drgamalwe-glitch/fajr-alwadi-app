@@ -1040,13 +1040,13 @@
     "expected": {
       "cash_rows": 2.0,
       "monthly_profits_iqd": 3000000.0,
-      "profit_rows": 2.0,
+      "profit_rows": 0.0,
       "qasa_iqd": -4000000.0
     },
     "actual": {
       "cash_rows": 2.0,
       "monthly_profits_iqd": 3000000.0,
-      "profit_rows": 2.0,
+      "profit_rows": 0.0,
       "qasa_iqd": -4000000.0
     },
     "rust_functions": [
@@ -1054,7 +1054,7 @@
       "add_partner_transaction",
       "get_financial_summary"
     ],
-    "notes": "One installment payment — cash and profit rows once each"
+    "notes": "One installment payment — cash rows only, profit calculated analytically"
   },
   {
     "id": "S45",

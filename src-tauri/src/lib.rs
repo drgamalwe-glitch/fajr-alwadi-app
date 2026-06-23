@@ -942,6 +942,48 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         let _ = conn.execute("INSERT INTO db_version (version) VALUES (13)", []);
     }
 
+    if version < 14 {
+        // Migration 14: Remove hidden profit_recognition rows for customer installment payments.
+        // These rows were incorrectly created as partner transactions.
+        // Profit is now calculated analytically in get_profit_distribution_summary.
+
+        // First, delete ledger entries for the profit rows we're about to remove
+        let profit_ids: Vec<i64> = conn.prepare(
+            "SELECT id FROM partner_transactions WHERE source_type = 'customer_payment' AND source_role = 'profit_recognition' AND kind = 'شريك'"
+        ).map_err(|e| rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e.to_string())))?
+        .query_map([], |row| row.get(0))
+        .map_err(|e| rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e.to_string())))?
+        .collect::<Result<Vec<i64>, _>>()
+        .unwrap_or_default();
+
+        for pid in &profit_ids {
+            let _ = conn.execute("DELETE FROM ledger_entries WHERE reference_type = 'partner_transaction' AND reference_id = ?1", [pid]);
+        }
+
+        // Delete the hidden profit_recognition rows
+        let _ = conn.execute(
+            "DELETE FROM partner_transactions WHERE source_type = 'customer_payment' AND source_role = 'profit_recognition' AND kind = 'شريك'",
+            [],
+        );
+
+        // Recalculate all partners to reflect corrected balances
+        if let Ok(mut partners_stmt) = conn.prepare(
+            "SELECT partner_name, kind FROM partners"
+        ) {
+            if let Ok(rows) = partners_stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            }) {
+                for row in rows {
+                    if let Ok((p_name, p_kind)) = row {
+                        let _ = recalculate_partner_total(conn, &p_name, &p_kind);
+                    }
+                }
+            }
+        }
+
+        let _ = conn.execute("INSERT INTO db_version (version) VALUES (14)", []);
+    }
+
     // Performance indexes
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cars_status ON cars(status)",
@@ -6315,41 +6357,9 @@ fn apply_partner_transaction_splits(
             )?;
         }
 
-        // Only create profit_recognition when payment is linked to a car
-        if let Some(ref car_num) = car_num {
-            let profit_exists: bool = db.query_row(
-                "SELECT COUNT(*) > 0 FROM partner_transactions WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'profit_recognition' AND kind = 'شريك'",
-                [tx_id],
-                |row| row.get(0),
-            ).unwrap_or(false);
-
-            if !profit_exists {
-                let payment_profit = calculate_customer_payment_profit_capped(db, car_num, amount, currency)?;
-                if payment_profit > 0.0 {
-                    let profit_note = format!(
-                        "ربح دفعة زبون: {} (رقم حركة دفعة: {}) #بيع_سيارة_{}",
-                        notes_str, tx_id, car_num
-                    );
-                    distribute_to_partners_50_with_effects_and_related(
-                        db,
-                        payment_profit,
-                        currency,
-                        date,
-                        "قاصه",
-                        "ايداع ارباح سيارة",
-                        &profit_note,
-                        "customer_payment",
-                        &tx_id.to_string(),
-                        "profit_recognition",
-                        false, // affects_qasa
-                        false, // affects_partner_cash
-                        true,  // affects_profit
-                        Some("car"),
-                        Some(car_num),
-                    )?;
-                }
-            }
-        }
+        // NOTE: profit_recognition rows are NO LONGER created here.
+        // Profit is calculated analytically in get_profit_distribution_summary.
+        // This prevents hidden profit transactions in partner accounts.
     }
 
     Ok(())
@@ -6374,6 +6384,296 @@ fn parse_financier_commission(amount: f64, notes: Option<&str>) -> f64 {
         return (amount * percent) / 100.0;
     }
     raw_commission.parse::<f64>().unwrap_or(0.0)
+}
+
+/// Atomic command to toggle customer installment status (paid/unpaid).
+/// Creates or removes payment rows and partner cash splits in one transaction.
+/// Does NOT create profit_recognition rows — profit is calculated analytically in Profit Distribution.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn set_customer_installment_status(
+    state: State<AppState>,
+    installment_id: i64,
+    partner_name: String,
+    kind: String,
+    paid: bool,
+    amount: f64,
+    date: String,
+    notes: Option<String>,
+    currency: Option<String>,
+    payment_type: Option<String>,
+) -> Result<(), String> {
+    // ============================================================
+    // VALIDATION
+    // ============================================================
+    validate_required_text(&partner_name, "اسم الزبون")?;
+    if kind != "زبون" {
+        return Err("نوع الحساب يجب أن يكون زبون".to_string());
+    }
+    validate_positive_amount(amount, "مبلغ القسط")?;
+    validate_required_text(&date, "التاريخ")?;
+    let currency = currency.unwrap_or_else(|| "IQD".to_string());
+    validate_currency(&currency)?;
+    let payment_type = payment_type.unwrap_or_else(|| "قاصه".to_string());
+
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
+
+    // Verify installment exists and belongs to this customer
+    let (orig_type, _orig_amount, _orig_date, _orig_notes): (String, f64, String, Option<String>) = db.query_row(
+        "SELECT type, amount, date, notes FROM partner_transactions WHERE id = ?1 AND partner_name = ?2 AND kind = 'زبون'",
+        params![installment_id, &partner_name],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).map_err(|_| format!("القسط رقم {} غير موجود أو لا ينتمي لـ {}", installment_id, partner_name))?;
+
+    // Verify it's an installment row
+    if !orig_type.contains("قسط") {
+        return Err("الصف المحدد ليس قسطاً".to_string());
+    }
+
+    let installment_marker = format!("قسط#{}", installment_id);
+    let clean_notes = notes.as_deref().unwrap_or("").replace(&format!(" | {}", installment_marker), "").replace(&installment_marker, "").trim().to_string();
+    let updated_notes = if clean_notes.is_empty() {
+        format!(" | {}", installment_marker)
+    } else {
+        format!("{} | {}", clean_notes, installment_marker)
+    };
+
+    let time_str = db
+        .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .unwrap_or_else(|_| "00:00".to_string());
+
+    if paid {
+        // ============================================================
+        // PAID = TRUE: Convert باقي -> واصل
+        // ============================================================
+
+        // Delete any old linked payment rows to prevent duplicates
+        let old_payment_ids: Vec<i64> = db.prepare(
+            "SELECT id FROM partner_transactions WHERE related_source_type = 'installment' AND related_source_id = ?1 AND source_role = 'cash_movement' AND kind = 'شريك'"
+        ).map_err(|e| e.to_string())?
+        .query_map(params![installment_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<i64>, _>>()
+        .map_err(|e| e.to_string())?;
+
+        for pid in &old_payment_ids {
+            let _ = delete_ledger_entries(&db, "partner_transaction", &pid.to_string());
+            let _ = db.execute("DELETE FROM partner_transactions WHERE id = ?1", [pid]);
+        }
+
+        // Also clean up old customer payment rows linked to this installment
+        let old_customer_payment_ids: Vec<i64> = db.prepare(
+            "SELECT id FROM partner_transactions WHERE related_source_type = 'installment' AND related_source_id = ?1 AND source_role = 'customer_payment' AND kind = 'زبون'"
+        ).map_err(|e| e.to_string())?
+        .query_map(params![installment_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<i64>, _>>()
+        .map_err(|e| e.to_string())?;
+
+        for cpid in &old_customer_payment_ids {
+            // Delete partner cash rows for this customer payment
+            let cash_ids: Vec<i64> = db.prepare(
+                "SELECT id FROM partner_transactions WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'cash_movement' AND kind = 'شريك'"
+            ).map_err(|e| e.to_string())?
+            .query_map(params![cpid], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<i64>, _>>()
+            .map_err(|e| e.to_string())?;
+
+            for cid in &cash_ids {
+                let _ = delete_ledger_entries(&db, "partner_transaction", &cid.to_string());
+                let _ = db.execute("DELETE FROM partner_transactions WHERE id = ?1", [cid]);
+            }
+
+            // Delete profit recognition rows
+            let profit_ids: Vec<i64> = db.prepare(
+                "SELECT id FROM partner_transactions WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'profit_recognition' AND kind = 'شريك'"
+            ).map_err(|e| e.to_string())?
+            .query_map(params![cpid], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<i64>, _>>()
+            .map_err(|e| e.to_string())?;
+
+            for prid in &profit_ids {
+                let _ = delete_ledger_entries(&db, "partner_transaction", &prid.to_string());
+                let _ = db.execute("DELETE FROM partner_transactions WHERE id = ?1", [prid]);
+            }
+
+            let _ = delete_ledger_entries(&db, "partner_transaction", &cpid.to_string());
+            let _ = db.execute("DELETE FROM partner_transactions WHERE id = ?1", [cpid]);
+        }
+
+        // Also clean by notes fallback for old data
+        let fallback_ids: Vec<i64> = db.prepare(
+            "SELECT id FROM partner_transactions WHERE notes LIKE ?1 AND id != ?2 AND (partner_name != ?3 OR kind != 'زبون')"
+        ).map_err(|e| e.to_string())?
+        .query_map(params![format!("%{}%", installment_marker), installment_id, &partner_name], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<i64>, _>>()
+        .map_err(|e| e.to_string())?;
+
+        for fid in &fallback_ids {
+            let _ = delete_ledger_entries(&db, "partner_transaction", &fid.to_string());
+            let _ = db.execute("DELETE FROM partner_transactions WHERE id = ?1", [fid]);
+        }
+
+        // Update the original installment row to "واصل قسط"
+        db.execute(
+            "UPDATE partner_transactions SET type = 'واصل قسط', amount = ?1, date = ?2, notes = ?3, currency = ?4, payment_type = ?5 WHERE id = ?6",
+            params![amount, &date, &updated_notes, &currency, &payment_type, installment_id],
+        ).map_err(|e| e.to_string())?;
+
+        // Insert one customer payment row
+        db.execute(
+            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_role, affects_qasa, affects_partner_cash, affects_profit, related_source_type, related_source_id)
+             VALUES (?1, 'زبون', 'تسديد قسط سيارة', ?2, ?3, ?4, ?5, ?6, ?7, 'customer_payment', 'customer_payment', 0, 0, 0, 'installment', ?8)",
+            params![&partner_name, amount, &date, &time_str, format!("تسديد قسط سيارة | {}", installment_marker), &currency, &payment_type, installment_id],
+        ).map_err(|e| e.to_string())?;
+        let customer_payment_id = db.last_insert_rowid();
+
+        // Create exactly two partner cash rows (50/50 split)
+        let half_amount = amount / 2.0;
+        let partners: Vec<String> = db.prepare(
+            "SELECT partner_name FROM partners WHERE kind = 'شريك' ORDER BY partner_name"
+        ).map_err(|e| e.to_string())?
+        .query_map([], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(|e| e.to_string())?;
+
+        if partners.len() != 2 {
+            return Err("يجب أن يكون هناك شريكان بالضبط".to_string());
+        }
+
+        for partner in &partners {
+            let cash_note = format!("دفعة قسط من {} | {}", partner_name, installment_marker);
+            db.execute(
+                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit, related_source_type, related_source_id)
+                 VALUES (?1, 'شريك', 'دفعة قسط زبون', ?2, ?3, ?4, ?5, ?6, ?7, 'customer_payment', ?8, 'cash_movement', 1, 1, 0, 'installment', ?9)",
+                params![partner, half_amount, &date, &time_str, &cash_note, &currency, &payment_type, customer_payment_id.to_string(), installment_id],
+            ).map_err(|e| e.to_string())?;
+            let partner_tx_id = db.last_insert_rowid();
+            record_partner_ledger_entries(&db, partner_tx_id)?;
+            recalculate_partner_total(&db, partner, "شريك")?;
+        }
+
+        // Recalculate customer total
+        recalculate_partner_total(&db, &partner_name, "زبون")?;
+
+    } else {
+        // ============================================================
+        // PAID = FALSE: Convert واصل -> باقي
+        // ============================================================
+
+        // Find all customer payment rows linked to this installment
+        let payment_ids: Vec<i64> = db.prepare(
+            "SELECT id FROM partner_transactions WHERE related_source_type = 'installment' AND related_source_id = ?1 AND source_role = 'customer_payment' AND kind = 'زبون'"
+        ).map_err(|e| e.to_string())?
+        .query_map(params![installment_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<i64>, _>>()
+        .map_err(|e| e.to_string())?;
+
+        // Also find by notes fallback
+        let fallback_payment_ids: Vec<i64> = db.prepare(
+            "SELECT id FROM partner_transactions WHERE notes LIKE ?1 AND source_role = 'customer_payment' AND kind = 'زبون' AND id NOT IN (SELECT id FROM partner_transactions WHERE related_source_type = 'installment' AND related_source_id = ?2)"
+        ).map_err(|e| e.to_string())?
+        .query_map(params![format!("%{}%", installment_marker), installment_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<i64>, _>>()
+        .map_err(|e| e.to_string())?;
+
+        let mut all_payment_ids = payment_ids;
+        all_payment_ids.extend(fallback_payment_ids);
+
+        for payment_id in &all_payment_ids {
+            // Delete partner cash rows for this payment
+            let cash_ids: Vec<i64> = db.prepare(
+                "SELECT id FROM partner_transactions WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'cash_movement' AND kind = 'شريك'"
+            ).map_err(|e| e.to_string())?
+            .query_map(params![payment_id], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<i64>, _>>()
+            .map_err(|e| e.to_string())?;
+
+            for cid in &cash_ids {
+                let _ = delete_ledger_entries(&db, "partner_transaction", &cid.to_string());
+                let _ = db.execute("DELETE FROM partner_transactions WHERE id = ?1", [cid]);
+            }
+
+            // Delete profit recognition rows
+            let profit_ids: Vec<i64> = db.prepare(
+                "SELECT id FROM partner_transactions WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'profit_recognition' AND kind = 'شريك'"
+            ).map_err(|e| e.to_string())?
+            .query_map(params![payment_id], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<i64>, _>>()
+            .map_err(|e| e.to_string())?;
+
+            for prid in &profit_ids {
+                let _ = delete_ledger_entries(&db, "partner_transaction", &prid.to_string());
+                let _ = db.execute("DELETE FROM partner_transactions WHERE id = ?1", [prid]);
+            }
+
+            // Delete the customer payment row itself
+            let _ = delete_ledger_entries(&db, "partner_transaction", &payment_id.to_string());
+            let _ = db.execute("DELETE FROM partner_transactions WHERE id = ?1", [payment_id]);
+        }
+
+        // Delete linked transfer rows if they exist
+        let transfer_ids: Vec<i64> = db.prepare(
+            "SELECT id FROM partner_transactions WHERE related_source_type = 'installment' AND related_source_id = ?1 AND type LIKE '%تحويل%'"
+        ).map_err(|e| e.to_string())?
+        .query_map(params![installment_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<i64>, _>>()
+        .map_err(|e| e.to_string())?;
+
+        for tid in &transfer_ids {
+            let _ = delete_ledger_entries(&db, "partner_transaction", &tid.to_string());
+            let _ = db.execute("DELETE FROM partner_transactions WHERE id = ?1", [tid]);
+        }
+
+        // Also clean transfers by notes fallback
+        let fallback_transfer_ids: Vec<i64> = db.prepare(
+            "SELECT id FROM partner_transactions WHERE notes LIKE ?1 AND type LIKE '%تحويل%' AND id NOT IN (SELECT id FROM partner_transactions WHERE related_source_type = 'installment' AND related_source_id = ?2)"
+        ).map_err(|e| e.to_string())?
+        .query_map(params![format!("%{}%", installment_marker), installment_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<i64>, _>>()
+        .map_err(|e| e.to_string())?;
+
+        for tid in &fallback_transfer_ids {
+            let _ = delete_ledger_entries(&db, "partner_transaction", &tid.to_string());
+            let _ = db.execute("DELETE FROM partner_transactions WHERE id = ?1", [tid]);
+        }
+
+        // Update the original installment row back to "باقي قسط"
+        db.execute(
+            "UPDATE partner_transactions SET type = 'باقي قسط', amount = ?1, date = ?2, notes = ?3, currency = ?4, payment_type = ?5 WHERE id = ?6",
+            params![amount, &date, &updated_notes, &currency, &payment_type, installment_id],
+        ).map_err(|e| e.to_string())?;
+
+        // Recalculate totals
+        let partners: Vec<String> = db.prepare(
+            "SELECT partner_name FROM partners WHERE kind = 'شريك'"
+        ).map_err(|e| e.to_string())?
+        .query_map([], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(|e| e.to_string())?;
+
+        for partner in &partners {
+            recalculate_partner_total(&db, partner, "شريك")?;
+        }
+        recalculate_partner_total(&db, &partner_name, "زبون")?;
+    }
+
+    db.commit().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -8585,11 +8885,14 @@ fn calculate_profit_totals_since(
     // Task 8: Use date + time filtering together
     let time_filter = start_time.trim();
     let effective_time = if time_filter.is_empty() { "00:00" } else { time_filter };
+    let use_time = !start_time.trim().is_empty();
 
+    // Exclude customer_payment profit_recognition rows (no longer created, but old data may exist)
     let realized_profit_iqd: f64 = db.query_row(
         "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
          WHERE kind = 'شريك' AND COALESCE(currency, 'IQD') = 'IQD'
            AND affects_profit = 1
+           AND NOT (source_type = 'customer_payment' AND source_role = 'profit_recognition')
            AND (
              date > ?1
              OR (date = ?1 AND COALESCE(time, '00:00') >= ?2)
@@ -8602,12 +8905,21 @@ fn calculate_profit_totals_since(
         "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
          WHERE kind = 'شريك' AND COALESCE(currency, 'IQD') = 'USD'
            AND affects_profit = 1
+           AND NOT (source_type = 'customer_payment' AND source_role = 'profit_recognition')
            AND (
              date > ?1
              OR (date = ?1 AND COALESCE(time, '00:00') >= ?2)
            )",
         params![start_date, effective_time],
         |row| row.get(0),
+    ).unwrap_or(0.0);
+
+    // Add analytical installment profit (calculated from actual customer payment rows)
+    let installment_profit_iqd = calculate_analytical_installment_profit(
+        db, "", "IQD", start_date, "9999-12-31", use_time, effective_time
+    ).unwrap_or(0.0);
+    let installment_profit_usd = calculate_analytical_installment_profit(
+        db, "", "USD", start_date, "9999-12-31", use_time, effective_time
     ).unwrap_or(0.0);
 
     // Only general expenses (not linked to a car)
@@ -8636,8 +8948,8 @@ fn calculate_profit_totals_since(
     ).unwrap_or(0.0);
 
     Ok((
-        realized_profit_iqd - general_expenses_iqd,
-        realized_profit_usd - general_expenses_usd,
+        realized_profit_iqd + installment_profit_iqd - general_expenses_iqd,
+        realized_profit_usd + installment_profit_usd - general_expenses_usd,
     ))
 }
 
@@ -8676,6 +8988,141 @@ fn current_profit_period_start(
     Ok(latest_reset.unwrap_or((month_start, String::new())))
 }
 
+/// Calculate analytical installment profit for partner payments in a date range.
+/// This replaces the old profit_recognition rows that were created as hidden partner transactions.
+/// Profit is calculated as: payment_amount * (full_car_profit / selling_price)
+/// with a cap so total recognized profit never exceeds full_car_profit.
+fn calculate_analytical_installment_profit(
+    db: &Connection,
+    partner_name: &str,
+    currency_filter: &str,
+    start_date: &str,
+    end_date: &str,
+    use_time: bool,
+    effective_start_time: &str,
+) -> Result<f64, String> {
+    // Find all customer payment rows (cash_movement) for this partner's currency
+    // These represent actual installment payments received
+    let payments: Vec<(f64, String)> = if !partner_name.is_empty() {
+        if use_time {
+            let mut stmt = db.prepare(
+                "SELECT pt.amount, pt.notes FROM partner_transactions pt
+                 WHERE pt.kind = 'شريك' AND pt.partner_name = ?4 AND pt.source_role = 'cash_movement'
+                   AND pt.source_type = 'customer_payment'
+                   AND COALESCE(pt.currency, 'IQD') = ?1
+                   AND (
+                     pt.date > ?2
+                     OR (pt.date = ?2 AND COALESCE(pt.time, '00:00') >= ?3)
+                   )"
+            ).map_err(|e| e.to_string())?;
+            let result = stmt.query_map(params![currency_filter, start_date, effective_start_time, partner_name], |row| {
+                Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<(f64, String)>, _>>()
+            .map_err(|e| e.to_string())?;
+            result
+        } else {
+            let mut stmt = db.prepare(
+                "SELECT pt.amount, pt.notes FROM partner_transactions pt
+                 WHERE pt.kind = 'شريك' AND pt.partner_name = ?4 AND pt.source_role = 'cash_movement'
+                   AND pt.source_type = 'customer_payment'
+                   AND COALESCE(pt.currency, 'IQD') = ?1
+                   AND pt.date >= ?2 AND pt.date <= ?3"
+            ).map_err(|e| e.to_string())?;
+            let result = stmt.query_map(params![currency_filter, start_date, end_date, partner_name], |row| {
+                Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<(f64, String)>, _>>()
+            .map_err(|e| e.to_string())?;
+            result
+        }
+    } else {
+        // No partner filter — sum all partners' rows (for total calculation)
+        // Each row is already partner's share, so no division needed
+        if use_time {
+            let mut stmt = db.prepare(
+                "SELECT pt.amount, pt.notes FROM partner_transactions pt
+                 WHERE pt.kind = 'شريك' AND pt.source_role = 'cash_movement'
+                   AND pt.source_type = 'customer_payment'
+                   AND COALESCE(pt.currency, 'IQD') = ?1
+                   AND (
+                     pt.date > ?2
+                     OR (pt.date = ?2 AND COALESCE(pt.time, '00:00') >= ?3)
+                   )"
+            ).map_err(|e| e.to_string())?;
+            let result = stmt.query_map(params![currency_filter, start_date, effective_start_time], |row| {
+                Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<(f64, String)>, _>>()
+            .map_err(|e| e.to_string())?;
+            result
+        } else {
+            let mut stmt = db.prepare(
+                "SELECT pt.amount, pt.notes FROM partner_transactions pt
+                 WHERE pt.kind = 'شريك' AND pt.source_role = 'cash_movement'
+                   AND pt.source_type = 'customer_payment'
+                   AND COALESCE(pt.currency, 'IQD') = ?1
+                   AND pt.date >= ?2 AND pt.date <= ?3"
+            ).map_err(|e| e.to_string())?;
+            let result = stmt.query_map(params![currency_filter, start_date, end_date], |row| {
+                Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<(f64, String)>, _>>()
+            .map_err(|e| e.to_string())?;
+            result
+        }
+    };
+
+    let mut total_profit = 0.0;
+    let mut car_profit_map: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+
+    for (payment_amount, notes) in &payments {
+        // Extract car number from notes (format: ... #بيع_سيارة_XXX)
+        let car_num = extract_car_number_from_notes(notes);
+        if let Some(car_number) = car_num {
+            // Get or calculate car profit info
+            let car_total_profit = match car_profit_map.get(&format!("total_{}", car_number)) {
+                Some(v) => *v,
+                None => {
+                    let tp = calculate_car_total_profit(db, &car_number).unwrap_or(0.0);
+                    car_profit_map.insert(format!("total_{}", car_number), tp);
+                    tp
+                }
+            };
+
+            if car_total_profit <= 0.0 {
+                continue;
+            }
+
+            // Calculate theoretical profit for this payment
+            let theoretical = calculate_customer_payment_profit(db, &car_number, *payment_amount, currency_filter).unwrap_or(0.0);
+            if theoretical <= 0.0 {
+                continue;
+            }
+
+            // Get already accumulated profit for this car
+            let recognized_so_far = *car_profit_map.get(&format!("recognized_{}", car_number)).unwrap_or(&0.0);
+            let remaining = car_total_profit - recognized_so_far;
+
+            if remaining <= 0.0 {
+                continue;
+            }
+
+            let capped = theoretical.min(remaining);
+            total_profit += capped;
+
+            // Update recognized profit for this car
+            car_profit_map.insert(format!("recognized_{}", car_number), recognized_so_far + capped);
+        }
+    }
+
+    Ok(total_profit)
+}
+
 #[tauri::command]
 fn get_profit_distribution_summary(
     state: State<AppState>,
@@ -8708,15 +9155,32 @@ fn get_profit_distribution_summary(
 
     drop(stmt);
 
+    // Calculate total analytical installment profit at company level (IQD and USD)
+    // This ensures proper profit capping per car
+    let total_installment_profit_iqd = calculate_analytical_installment_profit(
+        &db, "", "IQD", &start, &end, use_time, effective_start_time
+    ).unwrap_or(0.0);
+    let total_installment_profit_usd = calculate_analytical_installment_profit(
+        &db, "", "USD", &start, &end, use_time, effective_start_time
+    ).unwrap_or(0.0);
+
+    // Count partners for splitting
+    let partner_count = partners_list.len() as f64;
+    let per_partner_installment_iqd = if partner_count > 0.0 { total_installment_profit_iqd / partner_count } else { 0.0 };
+    let per_partner_installment_usd = if partner_count > 0.0 { total_installment_profit_usd / partner_count } else { 0.0 };
+
     let mut partners = Vec::new();
     for name in partners_list {
         // Phase 9: Use affects_profit = 1 instead of type names
         // Issue 8: Use time-aware filtering
-        let profit_iqd: f64 = if use_time {
+        // Exclude customer_payment profit_recognition rows (no longer created, but old data may exist)
+        // Keep car_sale and agency profit_recognition rows
+        let existing_profit_iqd: f64 = if use_time {
             db.query_row(
                 "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
                  WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'IQD'
                    AND affects_profit = 1
+                   AND NOT (source_type = 'customer_payment' AND source_role = 'profit_recognition')
                    AND (
                      date > ?2
                      OR (date = ?2 AND COALESCE(time, '00:00') >= ?3)
@@ -8729,17 +9193,21 @@ fn get_profit_distribution_summary(
                 "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
                  WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'IQD'
                    AND affects_profit = 1
+                   AND NOT (source_type = 'customer_payment' AND source_role = 'profit_recognition')
                    AND date >= ?2 AND date <= ?3",
                 params![&name, &start, &end],
                 |row| row.get(0),
             ).unwrap_or(0.0)
         };
 
-        let profit_usd: f64 = if use_time {
+        let profit_iqd = existing_profit_iqd + per_partner_installment_iqd;
+
+        let existing_profit_usd: f64 = if use_time {
             db.query_row(
                 "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
                  WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'USD'
                    AND affects_profit = 1
+                   AND NOT (source_type = 'customer_payment' AND source_role = 'profit_recognition')
                    AND (
                      date > ?2
                      OR (date = ?2 AND COALESCE(time, '00:00') >= ?3)
@@ -8752,11 +9220,14 @@ fn get_profit_distribution_summary(
                 "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
                  WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'USD'
                    AND affects_profit = 1
+                   AND NOT (source_type = 'customer_payment' AND source_role = 'profit_recognition')
                    AND date >= ?2 AND date <= ?3",
                 params![&name, &start, &end],
                 |row| row.get(0),
             ).unwrap_or(0.0)
         };
+
+        let profit_usd = existing_profit_usd + per_partner_installment_usd;
 
         // Query IQD drawings (only type = 'سحب شريك', excluding expenses)
         let drawings_iqd: f64 = db.query_row(
@@ -10145,6 +10616,7 @@ pub fn run() {
             change_password,
             delete_user,
             export_database_to_excel,
+            set_customer_installment_status,
             settle_company_through_funder,
         ])
         .run(tauri::generate_context!())

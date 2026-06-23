@@ -6,8 +6,8 @@ use crate::{
     delete_agency, delete_car, delete_car_expense_record, delete_expense, delete_partner,
     export_database_to_excel, get_agencies, get_cars, get_cash_register_entries, get_financial_summary,
     get_partner_transactions, get_partners, get_profit_distribution_summary, init_db,
-    pay_financier_from_partners, update_expense, update_sold_car_with_accounting, AppState,
-    FinancialSummary, ProfitDistributionSummary,
+    pay_financier_from_partners, set_customer_installment_status, update_expense,
+    update_sold_car_with_accounting, AppState, FinancialSummary, ProfitDistributionSummary,
 };
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -260,6 +260,28 @@ impl TestHarness {
             amount,
             date.to_string(),
             Some(format!("تسديد قسط سيارة #بيع_سيارة_{car_num}")),
+            Some("IQD".to_string()),
+            Some("قاصه".to_string()),
+        )
+    }
+
+    pub fn set_installment_status(
+        &self,
+        installment_id: i64,
+        partner_name: &str,
+        paid: bool,
+        amount: f64,
+        date: &str,
+    ) -> Result<(), String> {
+        set_customer_installment_status(
+            self.st(),
+            installment_id,
+            partner_name.to_string(),
+            "زبون".to_string(),
+            paid,
+            amount,
+            date.to_string(),
+            None,
             Some("IQD".to_string()),
             Some("قاصه".to_string()),
         )
@@ -824,6 +846,11 @@ impl TestHarness {
                     && tx.source_role.as_deref() == Some(source_role)
             })
             .count() as i64
+    }
+
+    pub fn get_partner_transactions(&self, name: &str, kind: &str) -> Vec<crate::PartnerTransaction> {
+        get_partner_transactions(self.st(), name.to_string(), kind.to_string())
+            .unwrap_or_default()
     }
 
     pub fn add_company_car_plain(&self, num: &str, purchase: f64) -> Result<(), String> {

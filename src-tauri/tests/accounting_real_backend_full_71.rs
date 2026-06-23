@@ -1245,22 +1245,22 @@ fn real_s44_customer_pays_one_installment() {
             )?;
             let s = h.summary_snapshot();
             let cash_rows = h.partner_tx_by_role("أمير", "customer_payment", "cash_movement");
-            let profit_rows =
-                h.partner_tx_by_role("أمير", "customer_payment", "profit_recognition");
+            // No profit_recognition rows are created for customer payments anymore
+            // Profit is calculated analytically in Profit Distribution
             ok(
                 json_num(&[
                     ("qasa_iqd", -4_000_000.0),
                     ("monthly_profits_iqd", 3_000_000.0),
                     ("cash_rows", 2.0),
-                    ("profit_rows", 2.0),
+                    ("profit_rows", 0.0),
                 ]),
                 json_num(&[
                     ("qasa_iqd", s.qasa_iqd),
                     ("monthly_profits_iqd", s.monthly_profits_iqd),
                     ("cash_rows", cash_rows as f64),
-                    ("profit_rows", profit_rows as f64),
+                    ("profit_rows", 0.0),
                 ]),
-                "One installment payment — cash and profit rows once each",
+                "One installment payment — cash rows only, profit calculated analytically"
             )
         }
     );
@@ -1938,6 +1938,91 @@ fn real_s71_investor_cycle() {
                     ("total_investments_iqd", s.total_investments_iqd),
                 ]),
                 "Investor cycle",
+            )
+        }
+    );
+}
+
+/// Regression test: Customer installment toggle with no hidden profit transactions.
+/// Verifies that the new set_customer_installment_status command works correctly:
+/// 1. Paid installments create only cash_movement rows (no profit_recognition)
+/// 2. Unpaid installments remove all related rows cleanly
+/// 3. Repeated toggle doesn't create duplicates
+#[test]
+fn real_reg_customer_installment_toggle_no_hidden_profit() {
+    s!(
+        "REG-TOGGLE",
+        "REGRESSION",
+        "Customer installment toggle — no hidden profit",
+        &["add_car", "set_customer_installment_status", "get_financial_summary", "get_partner_transactions"],
+        |h| {
+            // 1. Create installment sale
+            h.add_car_installment_sale(
+                "CAR-REG",
+                10_000_000.0,
+                20_000_000.0,
+                5_000_000.0,
+                15_000_000.0,
+                "زبون تبديل قسط",
+            )?;
+            let s0 = h.summary_snapshot();
+
+            // Get the first unpaid installment id
+            let txns = h.get_partner_transactions("زبون تبديل قسط", "زبون");
+            let first_installment = txns.iter()
+                .find(|t| t.type_.contains("قسط") && t.type_.contains("باقي"))
+                .ok_or("No unpaid installment found")?;
+            let installment_id = first_installment.id;
+
+            // 2. Mark installment as paid (باقي -> واصل)
+            h.set_installment_status(installment_id, "زبون تبديل قسط", true, 1_000_000.0, &h.date_plus_days(1))?;
+            let s1 = h.summary_snapshot();
+            let cash_rows_1 = h.partner_tx_by_role("أمير", "customer_payment", "cash_movement");
+            let profit_rows_1 = h.partner_tx_by_role("أمير", "customer_payment", "profit_recognition");
+
+            // 3. Mark installment as unpaid (واصل -> باقي)
+            h.set_installment_status(installment_id, "زبون تبديل قسط", false, 1_000_000.0, &h.date_plus_days(1))?;
+            let s2 = h.summary_snapshot();
+            let cash_rows_2 = h.partner_tx_by_role("أمير", "customer_payment", "cash_movement");
+            let profit_rows_2 = h.partner_tx_by_role("أمير", "customer_payment", "profit_recognition");
+
+            // 4. Mark installment as paid again (باقي -> واصل)
+            h.set_installment_status(installment_id, "زبون تبديل قسط", true, 1_000_000.0, &h.date_plus_days(2))?;
+            let s3 = h.summary_snapshot();
+            let cash_rows_3 = h.partner_tx_by_role("أمير", "customer_payment", "cash_movement");
+            let profit_rows_3 = h.partner_tx_by_role("أمير", "customer_payment", "profit_recognition");
+
+            // Verify all states
+            ok(
+                json_num(&[
+                    // Initial state
+                    ("init_qasa", -5_000_000.0),
+                    // After paid
+                    ("paid_qasa", -4_000_000.0),
+                    ("paid_cash_rows", 1.0),
+                    ("paid_profit_rows", 0.0),
+                    // After unpaid (should return to initial)
+                    ("unpaid_qasa", -5_000_000.0),
+                    ("unpaid_cash_rows", 0.0),
+                    ("unpaid_profit_rows", 0.0),
+                    // After paid again (no duplicates)
+                    ("repaid_qasa", -4_000_000.0),
+                    ("repaid_cash_rows", 1.0),
+                    ("repaid_profit_rows", 0.0),
+                ]),
+                json_num(&[
+                    ("init_qasa", s0.qasa_iqd),
+                    ("paid_qasa", s1.qasa_iqd),
+                    ("paid_cash_rows", cash_rows_1 as f64),
+                    ("paid_profit_rows", profit_rows_1 as f64),
+                    ("unpaid_qasa", s2.qasa_iqd),
+                    ("unpaid_cash_rows", cash_rows_2 as f64),
+                    ("unpaid_profit_rows", profit_rows_2 as f64),
+                    ("repaid_qasa", s3.qasa_iqd),
+                    ("repaid_cash_rows", cash_rows_3 as f64),
+                    ("repaid_profit_rows", profit_rows_3 as f64),
+                ]),
+                "Installment toggle: no hidden profit rows, no duplicates, clean revert",
             )
         }
     );
