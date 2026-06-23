@@ -148,12 +148,14 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
           });
         }
         await fetchAgencies();
+        await onRefresh();
+        setSelectedAgency(null);
+        setAgenciesTab("list");
       } catch (err) {
-        console.error("Final save failed:", err);
+        console.error("Agency save failed:", err);
+        alert("فشل حفظ الوكالة: " + (err instanceof Error ? err.message : String(err)));
       }
     }
-    setSelectedAgency(null);
-    setAgenciesTab("list");
   };
 
   const handleCancelAgency = async () => {

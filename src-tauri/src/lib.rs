@@ -8510,7 +8510,9 @@ fn add_agency(
     amount_iqd: f64,
     notes: String,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
+
     let (date, time): (String, String) = db
         .query_row(
             "SELECT strftime('%Y-%m-%d', 'now', 'localtime'), strftime('%H:%M', 'now', 'localtime')",
@@ -8545,6 +8547,8 @@ fn add_agency(
     record_agency_ledger_entries(&db, new_id)?;
     rebuild_agency_partner_entries(&db, new_id)?;
 
+    db.commit().map_err(|e| e.to_string())?;
+
     Ok(new_id)
 }
 
@@ -8564,7 +8568,8 @@ fn update_agency(
     amount_iqd: f64,
     notes: String,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
 
     // Phase 14: Delete all partner rows by agency_id (cash_movement + profit_recognition)
     delete_partner_transactions_by_source_with_ledger(&db, "agency", &id.to_string(), None)?;
@@ -8592,12 +8597,15 @@ fn update_agency(
     record_agency_ledger_entries(&db, id)?;
     rebuild_agency_partner_entries(&db, id)?;
 
+    db.commit().map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
 #[tauri::command]
 fn delete_agency(state: State<AppState>, id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
 
     // Issue 9: Delete only by source fields, not by names/notes
     // 1. Delete agency base profit rows with their ledger entries
@@ -8628,6 +8636,8 @@ fn delete_agency(state: State<AppState>, id: i64) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     recalculate_all_partners(&db)?;
+
+    db.commit().map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -8675,7 +8685,9 @@ fn add_agency_transaction(
     notes: Option<String>,
     currency: Option<String>,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
+
     let time: String = db
         .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
             row.get(0)
@@ -8757,12 +8769,15 @@ fn add_agency_transaction(
         )?;
     }
 
+    db.commit().map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
 #[tauri::command]
 fn delete_agency_transaction(state: State<AppState>, id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
 
     // Issue 9: Delete only by source fields, not by names/notes
     // 1. Delete ledger entries for this transaction
@@ -8776,6 +8791,8 @@ fn delete_agency_transaction(state: State<AppState>, id: i64) -> Result<(), Stri
         .map_err(|e| e.to_string())?;
 
     recalculate_all_partners(&db)?;
+
+    db.commit().map_err(|e| e.to_string())?;
 
     Ok(())
 }
