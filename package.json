@@ -16,7 +16,7 @@
     "test:e2e:headed": "node e2e-bridge/server.mjs & BRIDGE_PID=$!; sleep 1; VITE_E2E=1 playwright test --project=chromium --headed; RESULT=$?; kill $BRIDGE_PID 2>/dev/null; exit $RESULT",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:report": "playwright show-report",
-    "test:consolidate": "npx tsx test/accounting/runners/consolidate-reports.ts && npx tsx test/accounting/runners/write-coverage.ts && npx tsx test/accounting/runners/write-plan.ts",
+    "test:consolidate": "npx tsx test/accounting/runners/generate-accounting-report.ts",
     "test:accounting:fast": "npm run test:oracle && npm run test:backend && npm run test:consolidate",
     "test:accounting:full": "sh -c 'RC=0; npm run test:oracle || RC=$?; npm run test:backend || RC=$?; npm run test:e2e || RC=$?; npm run test:consolidate; exit $RC'",
     "e2e-bridge": "node e2e-bridge/server.mjs",

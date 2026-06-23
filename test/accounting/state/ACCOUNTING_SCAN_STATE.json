@@ -1,0 +1,965 @@
+{
+  "timestamp": "2026-06-23T05:25:52.344Z",
+  "totalPlanned": 71,
+  "completed": 71,
+  "passed": 51,
+  "failed": 20,
+  "pending": 0,
+  "coveragePercent": 100,
+  "scanMode": "E2E_BRIDGE_FAST_SCAN_NO_FIX",
+  "backendMode": "E2E_BRIDGE",
+  "lastCompletedScenario": "S71",
+  "nextScenarioToRun": "NONE",
+  "isComplete": true,
+  "isConsistent": true,
+  "finalVerdict": "FAIL",
+  "warning": "E2E_BRIDGE is not the real Tauri backend",
+  "scenarios": [
+    {
+      "id": "S01",
+      "name": "Cash car purchase",
+      "group": "CAR_PURCHASE",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S02",
+      "name": "Funded car purchase",
+      "group": "CAR_PURCHASE",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S03",
+      "name": "Company car purchase",
+      "group": "CAR_PURCHASE",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S04",
+      "name": "USD cash car purchase",
+      "group": "CAR_PURCHASE",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "inventory_usd: expected 10000, got 0",
+      "needsFix": true
+    },
+    {
+      "id": "S05",
+      "name": "Cash sale after cash purchase",
+      "group": "CASH_SALES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S06",
+      "name": "Cash sale after funded purchase",
+      "group": "CASH_SALES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S07",
+      "name": "Cash sale after company purchase",
+      "group": "CASH_SALES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S08",
+      "name": "Cash sale with car expense",
+      "group": "CASH_SALES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S09",
+      "name": "Cash sale at loss",
+      "group": "CASH_SALES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S10",
+      "name": "Installment - after down payment",
+      "group": "INSTALLMENTS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S11",
+      "name": "Installment - after one installment",
+      "group": "INSTALLMENTS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S12",
+      "name": "Installment - after all payments",
+      "group": "INSTALLMENTS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S13",
+      "name": "Installment overpayment",
+      "group": "INSTALLMENTS",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "profit cap exceeded by 500,000 (expected 10,000,000, got 10,500,000)",
+      "needsFix": true
+    },
+    {
+      "id": "S14",
+      "name": "Final installment exact close",
+      "group": "INSTALLMENTS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S15",
+      "name": "Installment with car expense",
+      "group": "INSTALLMENTS",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "profit with car expense: expected 2,400,000, got 2,900,000; qasa: expected -4,000,000, got -6,000,000",
+      "needsFix": true
+    },
+    {
+      "id": "S16",
+      "name": "Term sale with down payment",
+      "group": "TERM_SALES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S17",
+      "name": "Term sale final payment",
+      "group": "TERM_SALES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S18",
+      "name": "Car expense before sale",
+      "group": "CAR_EXPENSES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S19",
+      "name": "Car expense after sale",
+      "group": "CAR_EXPENSES",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "qasa after expense: expected 6,000,000, got 7,000,000",
+      "needsFix": true
+    },
+    {
+      "id": "S20",
+      "name": "Edit car expense",
+      "group": "CAR_EXPENSES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S21",
+      "name": "Delete car expense",
+      "group": "CAR_EXPENSES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S22",
+      "name": "General expense",
+      "group": "GENERAL_EXPENSES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S23",
+      "name": "General expense after car profit",
+      "group": "GENERAL_EXPENSES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S24",
+      "name": "Edit general expense",
+      "group": "GENERAL_EXPENSES",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "qasa after edit: expected -2,000,000, got -1,000,000",
+      "needsFix": true
+    },
+    {
+      "id": "S25",
+      "name": "Delete general expense",
+      "group": "GENERAL_EXPENSES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S26",
+      "name": "Investor deposit",
+      "group": "INVESTORS",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "investments: expected 10,000,000, got 0",
+      "needsFix": true
+    },
+    {
+      "id": "S27",
+      "name": "Investor withdrawal",
+      "group": "INVESTORS",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "investments: expected 6,000,000, got 0",
+      "needsFix": true
+    },
+    {
+      "id": "S28",
+      "name": "Investor + car purchase",
+      "group": "INVESTORS",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "investments: expected 20,000,000, got 0",
+      "needsFix": true
+    },
+    {
+      "id": "S29",
+      "name": "Delete investor with balance",
+      "group": "INVESTORS",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "investments before: expected 5,000,000, got 0",
+      "needsFix": true
+    },
+    {
+      "id": "S30",
+      "name": "Funder financing",
+      "group": "FUNDERS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S31",
+      "name": "Funder repayment",
+      "group": "FUNDERS",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "qasa: expected -10,000,000, got 0; partnerCash: expected -10,000,000, got 0",
+      "needsFix": true
+    },
+    {
+      "id": "S32",
+      "name": "Partial funder repayment",
+      "group": "FUNDERS",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "qasa: expected -4,000,000, got 0; partnerCash: expected -4,000,000, got 0",
+      "needsFix": true
+    },
+    {
+      "id": "S33",
+      "name": "Funder repayment with commission",
+      "group": "FUNDERS",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "qasa: expected -10,500,000, got 0; partnerCash: expected -10,500,000, got 0",
+      "needsFix": true
+    },
+    {
+      "id": "S34",
+      "name": "Delete funder with balance",
+      "group": "FUNDERS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S35",
+      "name": "Company purchase",
+      "group": "COMPANIES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S36",
+      "name": "Company repayment",
+      "group": "COMPANIES",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "qasa: expected -10,000,000, got 0; partnerCash: expected -10,000,000, got 0",
+      "needsFix": true
+    },
+    {
+      "id": "S37",
+      "name": "Partial company repayment",
+      "group": "COMPANIES",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "qasa: expected -3,000,000, got 0; partnerCash: expected -3,000,000, got 0",
+      "needsFix": true
+    },
+    {
+      "id": "S38",
+      "name": "Delete company with balance",
+      "group": "COMPANIES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S39",
+      "name": "Agency profit IQD",
+      "group": "AGENCIES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S40",
+      "name": "Agency profit USD",
+      "group": "AGENCIES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S41",
+      "name": "Two agencies same names/date",
+      "group": "AGENCIES",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S42",
+      "name": "Delete one agency transaction",
+      "group": "AGENCIES",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "one agency remains: expected 1, got 0",
+      "needsFix": true
+    },
+    {
+      "id": "S43",
+      "name": "Customer balance after installment",
+      "group": "CUSTOMERS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S44",
+      "name": "Customer pays one installment",
+      "group": "CUSTOMERS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S45",
+      "name": "Customer pays all installments",
+      "group": "CUSTOMERS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S46",
+      "name": "Print customer statement",
+      "group": "CUSTOMERS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S47",
+      "name": "Partner deposits",
+      "group": "PARTNERS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S48",
+      "name": "Partner withdrawal",
+      "group": "PARTNERS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S49",
+      "name": "Block third partner",
+      "group": "PARTNERS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S50",
+      "name": "Block partner deletion",
+      "group": "PARTNERS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S51",
+      "name": "Edit available car purchase",
+      "group": "DELETE_EDIT",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "qasa after edit: expected -15,000,000, got -10,000,000",
+      "needsFix": true
+    },
+    {
+      "id": "S52",
+      "name": "Edit sold car sale price",
+      "group": "DELETE_EDIT",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S53",
+      "name": "Delete available car",
+      "group": "DELETE_EDIT",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S54",
+      "name": "Delete sold cash car",
+      "group": "DELETE_EDIT",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S55",
+      "name": "Delete sold installment car",
+      "group": "DELETE_EDIT",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "qasa after delete: expected 0, got 1,000,000; profit after delete: expected 0, got 500,000",
+      "needsFix": true
+    },
+    {
+      "id": "S56",
+      "name": "Company status mixed ops",
+      "group": "DASHBOARD",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S57",
+      "name": "Qasa tab = Qasa card",
+      "group": "DASHBOARD",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S58",
+      "name": "Cash tab = partner cash card",
+      "group": "DASHBOARD",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S59",
+      "name": "Profit tab = profit card",
+      "group": "DASHBOARD",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S60",
+      "name": "IQD/USD separation",
+      "group": "CURRENCY",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S61",
+      "name": "USD general expense",
+      "group": "CURRENCY",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S62",
+      "name": "Mixed currency blocked",
+      "group": "CURRENCY",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S63",
+      "name": "Read-only safety",
+      "group": "READ_ONLY",
+      "status": "PASS",
+      "layers": {
+        "oracle": "PASS",
+        "backendDb": "PASS",
+        "chromiumUi": "PASS"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S64",
+      "name": "Print partner statement",
+      "group": "PRINT",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S65",
+      "name": "Print customer statement",
+      "group": "PRINT",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S66",
+      "name": "Export database",
+      "group": "PRINT",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S67",
+      "name": "Full cash business cycle",
+      "group": "FULL_FLOWS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S68",
+      "name": "Full installment cycle",
+      "group": "FULL_FLOWS",
+      "status": "PASS",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "PASS",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "",
+      "needsFix": false
+    },
+    {
+      "id": "S69",
+      "name": "Funder cycle",
+      "group": "FULL_FLOWS",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "qasa: expected 8,000,000, got 18,000,000 (diff 10,000,000 — funder financing not deducted)",
+      "needsFix": true
+    },
+    {
+      "id": "S70",
+      "name": "Company cycle",
+      "group": "FULL_FLOWS",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "qasa: expected 8,000,000, got 18,000,000 (diff 10,000,000 — company not deducted)",
+      "needsFix": true
+    },
+    {
+      "id": "S71",
+      "name": "Investor cycle",
+      "group": "FULL_FLOWS",
+      "status": "FAIL",
+      "layers": {
+        "oracle": "NOT_RUN",
+        "backendDb": "FAIL",
+        "chromiumUi": "NOT_RUN"
+      },
+      "failureReason": "investments: expected 20,000,000, got 0",
+      "needsFix": true
+    }
+  ],
+  "failedScenarioIds": [
+    "S04",
+    "S13",
+    "S15",
+    "S19",
+    "S24",
+    "S26",
+    "S27",
+    "S28",
+    "S29",
+    "S31",
+    "S32",
+    "S33",
+    "S36",
+    "S37",
+    "S42",
+    "S51",
+    "S55",
+    "S69",
+    "S70",
+    "S71"
+  ],
+  "warnings": []
+}
