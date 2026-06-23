@@ -4876,14 +4876,13 @@ fn save_and_sell_car_with_accounting(
             purchase_type, financer_name, commission_type, commission_value,
             buyer_name, buyer_phone, purchase_date, sale_date, delivery_date,
             first_payment_date, purchase_time, sale_time
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'مبيوعة',
-            ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24,
-            ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32)",
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             car_number, car_number, clean_chassis,
             model.trim(), year.trim(), clean_name, color.trim(), details.trim(),
             purchase, curr, sale_curr,
             selling,
+            "مبيوعة",
             payment_type,
             amount_paid,
             amount_paid,
@@ -6533,6 +6532,12 @@ fn set_customer_installment_status(
             params![&partner_name, amount, &date, &time_str, format!("تسديد قسط سيارة | {}", installment_marker), &currency, &payment_type, installment_id],
         ).map_err(|e| e.to_string())?;
         let customer_payment_id = db.last_insert_rowid();
+
+        // Record ledger entries for the customer payment row.
+        // This records Cr receivable (reduces customer debt) in financial_ledger.
+        // The partner rows below record Dr cash (increases cash).
+        // This is the single source of truth for customer balance.
+        record_partner_ledger_entries(&db, customer_payment_id)?;
 
         // Create exactly two partner cash rows (50/50 split)
         let half_amount = amount / 2.0;

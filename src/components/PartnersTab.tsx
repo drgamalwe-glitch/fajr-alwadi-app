@@ -1456,7 +1456,7 @@ export function PartnersTab({
       shouldScrollTransactionsRef.current = !editingTransactionId;
       await loadPartner({ partner_name: editingKey, phone: form.phone, total_amount: 0, iqd_balance: 0, usd_balance: 0, total_withdrawals: 0, kind: form.kind }, true);
       await onRefresh();
-      if (usesUnifiedAccounts) { void fetchUnifiedAccounts(); }
+      if (usesUnifiedAccounts) { await fetchUnifiedAccounts(); }
       setShowTxModal(false);
     } catch (err) {
       console.error(err);

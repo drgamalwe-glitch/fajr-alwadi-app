@@ -661,6 +661,7 @@ export function CarsTab({
       }
     } catch (err) {
       console.error("فشل الحفظ:", err);
+      alert("فشل حفظ السيارة: " + (err instanceof Error ? err.message : String(err)));
     }
   };
 
