@@ -396,7 +396,7 @@ def audit_db(db_path):
         FROM financial_ledger fl
         WHERE fl.reference_type = 'partner_transaction'
           AND fl.account_type = 'receivable'
-          AND fl.type_ = 'ايداع دفعة زبون'
+          AND fl.type_ = 'ايداع مقدمة سيارة'
           AND fl.reference_id IN (
               SELECT CAST(pt.id AS TEXT) FROM partner_transactions pt
               WHERE pt.source_type = 'customer_payment'

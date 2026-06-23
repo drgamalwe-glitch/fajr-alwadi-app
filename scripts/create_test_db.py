@@ -274,13 +274,13 @@ def create_test_db(path):
         VALUES (20,'مشتري تقسيط','زبون','مقدمة بيع سيارة',5000000,'2026-02-15','00:00','استلام مقدمة سيارة من مشتري تقسيط رقم الشاصي #بيع_سيارة_INST001 ','IQD','قاصه','customer_transaction','20','account_movement',0,0,0,'car','INST001')""")
     # Cash movement for down payment
     conn.execute("""INSERT INTO partner_transactions (id,partner_name,kind,type,amount,date,time,notes,currency,payment_type,source_type,source_id,source_role,affects_qasa,affects_partner_cash,affects_profit,related_source_type,related_source_id)
-        VALUES (21,'أمير','شريك','ايداع دفعة زبون',2500000,'2026-02-15','00:00','دفعة زبون: استلام مقدمة (رقم حركة دفعة: 20) #بيع_سيارة_INST001','IQD','قاصه','customer_payment','20','cash_movement',1,1,0,'car','INST001')""")
+        VALUES (21,'أمير','شريك','ايداع مقدمة سيارة',2500000,'2026-02-15','00:00','دفعة زبون: استلام مقدمة (رقم حركة دفعة: 20) #بيع_سيارة_INST001','IQD','قاصه','customer_payment','20','cash_movement',1,1,0,'car','INST001')""")
     conn.execute("""INSERT INTO partner_transactions (id,partner_name,kind,type,amount,date,time,notes,currency,payment_type,source_type,source_id,source_role,affects_qasa,affects_partner_cash,affects_profit,related_source_type,related_source_id)
-        VALUES (22,'منتصر','شريك','ايداع دفعة زبون',2500000,'2026-02-15','00:00','دفعة زبون: استلام مقدمة (رقم حركة دفعة: 20) #بيع_سيارة_INST001','IQD','قاصه','customer_payment','20','cash_movement',1,1,0,'car','INST001')""")
+        VALUES (22,'منتصر','شريك','ايداع مقدمة سيارة',2500000,'2026-02-15','00:00','دفعة زبون: استلام مقدمة (رقم حركة دفعة: 20) #بيع_سيارة_INST001','IQD','قاصه','customer_payment','20','cash_movement',1,1,0,'car','INST001')""")
     # Receivable credit for down payment
     conn.execute("INSERT INTO financial_ledger VALUES (20,'2026-02-15','00:00','receivable','مشتري تقسيط',0.0,5000000,'IQD','partner_transaction','20','ايداع زبون مديونية','تخفيض مديونية الزبون مشتري تقسيط',NULL)")
     # Cash debit for down payment
-    conn.execute("INSERT INTO financial_ledger VALUES (21,'2026-02-15','00:00','cash','قاصه',5000000,0.0,'IQD','partner_transaction','21','ايداع دفعة زبون','إيداع دفعة زبون',NULL)")
+    conn.execute("INSERT INTO financial_ledger VALUES (21,'2026-02-15','00:00','cash','قاصه',5000000,0.0,'IQD','partner_transaction','21','ايداع مقدمة سيارة','إيداع دفعة زبون',NULL)")
     # Profit recognition for down payment: 5M * 50% = 2.5M
     conn.execute("""INSERT INTO partner_transactions (id,partner_name,kind,type,amount,date,time,notes,currency,payment_type,source_type,source_id,source_role,affects_qasa,affects_partner_cash,affects_profit,related_source_type,related_source_id)
         VALUES (23,'أمير','شريك','ايداع ارباح سيارة',1250000,'2026-02-15','00:00','ربح دفعة زبون (رقم حركة دفعة: 20) #بيع_سيارة_INST001','IQD','قاصه','customer_payment','20','profit_recognition',0,0,1,'car','INST001')""")
@@ -321,12 +321,12 @@ def create_test_db(path):
         VALUES (213,'مشتري تقسيط','زبون','باقي قسط',1000000,'2027-05-15','00:00','باقي قسط شهر 15 من 15 على مشتري تقسيط رقم الشاصي','IQD','قاصه','customer_transaction','213','account_movement',0,0,0)""")
     # Cash movement for installment
     conn.execute("""INSERT INTO partner_transactions (id,partner_name,kind,type,amount,date,time,notes,currency,payment_type,source_type,source_id,source_role,affects_qasa,affects_partner_cash,affects_profit,related_source_type,related_source_id)
-        VALUES (26,'أمير','شريك','ايداع دفعة زبون',500000,'2026-03-15','00:00','دفعة زبون: تسديد قسط (رقم حركة دفعة: 25) #بيع_سيارة_INST001','IQD','قاصه','customer_payment','25','cash_movement',1,1,0,'car','INST001')""")
+        VALUES (26,'أمير','شريك','ايداع مقدمة سيارة',500000,'2026-03-15','00:00','دفعة زبون: تسديد قسط (رقم حركة دفعة: 25) #بيع_سيارة_INST001','IQD','قاصه','customer_payment','25','cash_movement',1,1,0,'car','INST001')""")
     conn.execute("""INSERT INTO partner_transactions (id,partner_name,kind,type,amount,date,time,notes,currency,payment_type,source_type,source_id,source_role,affects_qasa,affects_partner_cash,affects_profit,related_source_type,related_source_id)
-        VALUES (27,'منتصر','شريك','ايداع دفعة زبون',500000,'2026-03-15','00:00','دفعة زبون: تسديد قسط (رقم حركة دفعة: 25) #بيع_سيارة_INST001','IQD','قاصه','customer_payment','25','cash_movement',1,1,0,'car','INST001')""")
+        VALUES (27,'منتصر','شريك','ايداع مقدمة سيارة',500000,'2026-03-15','00:00','دفعة زبون: تسديد قسط (رقم حركة دفعة: 25) #بيع_سيارة_INST001','IQD','قاصه','customer_payment','25','cash_movement',1,1,0,'car','INST001')""")
     # Receivable credit for installment
     conn.execute("INSERT INTO financial_ledger VALUES (25,'2026-03-15','00:00','receivable','مشتري تقسيط',0.0,1000000,'IQD','partner_transaction','25','ايداع زبون مديونية','تخفيض مديونية الزبون',NULL)")
-    conn.execute("INSERT INTO financial_ledger VALUES (26,'2026-03-15','00:00','cash','قاصه',1000000,0.0,'IQD','partner_transaction','26','ايداع دفعة زبون','إيداع دفعة زبون',NULL)")
+    conn.execute("INSERT INTO financial_ledger VALUES (26,'2026-03-15','00:00','cash','قاصه',1000000,0.0,'IQD','partner_transaction','26','ايداع مقدمة سيارة','إيداع دفعة زبون',NULL)")
     # Profit recognition: 1M * 50% = 500K
     conn.execute("""INSERT INTO partner_transactions (id,partner_name,kind,type,amount,date,time,notes,currency,payment_type,source_type,source_id,source_role,affects_qasa,affects_partner_cash,affects_profit,related_source_type,related_source_id)
         VALUES (28,'أمير','شريك','ايداع ارباح سيارة',250000,'2026-03-15','00:00','ربح دفعة زبون (رقم حركة دفعة: 25) #بيع_سيارة_INST001','IQD','قاصه','customer_payment','25','profit_recognition',0,0,1,'car','INST001')""")

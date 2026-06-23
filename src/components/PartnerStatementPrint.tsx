@@ -31,13 +31,6 @@ const formatDualAmount = (iqd: number, usd: number) => {
 const isDebit = (tx: PartnerTransaction) =>
   tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي") || tx.type_.startsWith("تسليم");
 
-const isCredit = (tx: PartnerTransaction) =>
-  tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") ||
-  tx.type_.startsWith("واصل") || tx.type_.startsWith("مقدمة") ||
-  tx.type_.startsWith("استلام") || tx.type_.startsWith("إستلام") ||
-  tx.type_.startsWith("تسديد") || tx.type_.startsWith("إعادة استثمار") ||
-  tx.type_.startsWith("تسوية");
-
 const getLinkedInstallmentId = (tx: PartnerTransaction) => {
   const match = tx.notes?.match(/قسط#(\d+)/);
   return match ? Number(match[1]) : null;
@@ -55,64 +48,91 @@ const isInstallmentWithdrawal = (tx: PartnerTransaction) =>
 
 const emptyBalances = (): Record<StatementCurrency, number> => ({ IQD: 0, USD: 0 });
 
+const isFinancialAccountKind = (kind: string) =>
+  kind === "مستثمر" || kind === "ممول" || kind === "شركة";
+
+const isFinancialPrintDeposit = (tx: PartnerTransaction) =>
+  tx.type_.startsWith("ايداع") ||
+  tx.type_.startsWith("إيداع") ||
+  tx.type_.startsWith("استلام") ||
+  tx.type_.startsWith("إستلام") ||
+  tx.type_.startsWith("تمويل") ||
+  tx.type_.includes("تمويل شراء سيارة");
+
+const isFinancialPrintWithdrawal = (tx: PartnerTransaction) =>
+  tx.type_.startsWith("سحب") ||
+  tx.type_.startsWith("تسليم") ||
+  tx.type_.startsWith("سداد") ||
+  tx.type_.startsWith("تسديد");
+
 const calculateCustomerPrintSummary = (
   transactions: PartnerTransaction[],
   paidTransactionIds: Set<number>
 ) => {
   const remaining = emptyBalances();
-  const received = emptyBalances();
+  const paid = emptyBalances();
 
   transactions.forEach((tx) => {
+    if (tx.type_.startsWith("تحويل")) return;
     const currency = (tx.currency || "IQD") as StatementCurrency;
     const amount = Math.abs(tx.amount);
     const paidInstallment = tx.id !== undefined && paidTransactionIds.has(tx.id);
 
-    if (isDebit(tx) && !paidInstallment) {
-      remaining[currency] += amount;
+    if (paidInstallment) {
+      paid[currency] += amount;
+      return;
     }
-    if (isCredit(tx) || paidInstallment) {
-      received[currency] += amount;
+
+    if (tx.type_.startsWith("باقي") || tx.type_.startsWith("سحب")) {
+      remaining[currency] += amount;
+      return;
+    }
+
+    if (
+      tx.type_.startsWith("واصل") ||
+      tx.type_.startsWith("ايداع") ||
+      tx.type_.startsWith("إيداع") ||
+      tx.type_.startsWith("استلام") ||
+      tx.type_.startsWith("إستلام") ||
+      tx.type_.startsWith("تسديد") ||
+      tx.type_.startsWith("مقدمة")
+    ) {
+      paid[currency] += amount;
+      return;
     }
   });
 
   const total = {
-    IQD: remaining.IQD + received.IQD,
-    USD: remaining.USD + received.USD,
+    IQD: paid.IQD + remaining.IQD,
+    USD: paid.USD + remaining.USD,
   };
 
-  return { remaining, received, total };
+  return { paid, remaining, total };
 };
 
-const calculateInvestorPrintSummary = (transactions: PartnerTransaction[]) => {
-  const deposits = emptyBalances();
-  const withdrawals = emptyBalances();
+const calculateFinancialClientPrintSummary = (transactions: PartnerTransaction[]) => {
+  const received = emptyBalances();
+  const delivered = emptyBalances();
 
   transactions.forEach((tx) => {
+    if (tx.type_.startsWith("تحويل")) return;
     const currency = (tx.currency || "IQD") as StatementCurrency;
     const amount = Math.abs(tx.amount);
 
-    if (isCredit(tx)) {
-      deposits[currency] += amount;
+    if (isFinancialPrintDeposit(tx)) {
+      received[currency] += amount;
     }
-    if (isDebit(tx)) {
-      withdrawals[currency] += amount;
+    if (isFinancialPrintWithdrawal(tx)) {
+      delivered[currency] += amount;
     }
   });
 
   const net = {
-    IQD: withdrawals.IQD - deposits.IQD,
-    USD: withdrawals.USD - deposits.USD,
+    IQD: received.IQD - delivered.IQD,
+    USD: received.USD - delivered.USD,
   };
 
-  return { deposits, withdrawals, net };
-};
-
-const calculateCompanyPrintSummary = (transactions: PartnerTransaction[]) => {
-  return calculateInvestorPrintSummary(transactions);
-};
-
-const calculateFunderPrintSummary = (transactions: PartnerTransaction[]) => {
-  return calculateInvestorPrintSummary(transactions);
+  return { received, delivered, net };
 };
 
 export function PartnerStatementPrint({
@@ -125,12 +145,26 @@ export function PartnerStatementPrint({
   amirPhone,
   paidTransactionIds,
 }: PartnerStatementPrintProps) {
-  const getTxType = (tx: PartnerTransaction) => {
-    if (partner.kind === "زبون") {
+  const getPrintOperationType = (tx: PartnerTransaction, partnerKind: string) => {
+    if (partnerKind === "زبون") {
       if (tx.id !== undefined && paidTransactionIds.has(tx.id)) return "واصل";
-      if (isDebit(tx)) return "باقي";
-      if (isCredit(tx)) return "واصل";
+      if (tx.type_.startsWith("باقي") || tx.type_.startsWith("سحب")) return "باقي";
+      if (
+        tx.type_.startsWith("واصل") ||
+        tx.type_.startsWith("ايداع") ||
+        tx.type_.startsWith("إيداع") ||
+        tx.type_.startsWith("استلام") ||
+        tx.type_.startsWith("إستلام") ||
+        tx.type_.startsWith("تسديد") ||
+        tx.type_.startsWith("مقدمة")
+      ) return "واصل";
     }
+
+    if (isFinancialAccountKind(partnerKind)) {
+      if (isFinancialPrintDeposit(tx)) return "استلام";
+      if (isFinancialPrintWithdrawal(tx)) return "تسليم";
+    }
+
     return tx.type_;
   };
 
@@ -162,7 +196,7 @@ export function PartnerStatementPrint({
         key: `${tx.id ?? idx}-${tx.date}`,
         seq: idx + 1,
         date: tx.date,
-        type: getTxType(tx),
+        type: getPrintOperationType(tx, partner.kind),
         amount: formatAmount(tx.amount, currency),
         kind: debitRow ? ("debit" as const) : ("credit" as const),
         notes: tx.notes?.trim() ? tx.notes.trim() : "—",
@@ -181,8 +215,8 @@ export function PartnerStatementPrint({
   }, [ledgerRows]);
 
   const customerSummary = useMemo(() => {
-    return calculateCustomerPrintSummary(cashStatementTransactions, paidTransactionIds);
-  }, [cashStatementTransactions, paidTransactionIds]);
+    return calculateCustomerPrintSummary(statementTransactions, paidTransactionIds);
+  }, [statementTransactions, paidTransactionIds]);
 
   const financialStatementTransactions = useMemo(() => {
     return partner.kind === "مستثمر" || partner.kind === "ممول" || partner.kind === "شركة"
@@ -191,14 +225,8 @@ export function PartnerStatementPrint({
   }, [statementTransactions, cashStatementTransactions, partner.kind]);
 
   const otherSummary = useMemo(() => {
-    if (partner.kind === "مستثمر") {
-      return calculateInvestorPrintSummary(financialStatementTransactions);
-    } else if (partner.kind === "شركة") {
-      return calculateCompanyPrintSummary(financialStatementTransactions);
-    } else {
-      return calculateFunderPrintSummary(financialStatementTransactions);
-    }
-  }, [financialStatementTransactions, partner.kind]);
+    return calculateFinancialClientPrintSummary(financialStatementTransactions);
+  }, [financialStatementTransactions]);
 
   const periodLabel = printMode === "range"
     ? `الفترة من ${printFromDate || "البداية"} إلى ${printToDate || "النهاية"}`
@@ -215,18 +243,12 @@ export function PartnerStatementPrint({
   }, [installments.length, paidInstallments]);
 
   const renderNetSummary = (iqd: number, usd: number) => {
-    const firstName = partner.partner_name.trim().split(" ")[0];
+    const kindLabel = partner.kind === "ممول" ? "الممول"
+      : partner.kind === "شركة" ? "الشركة"
+      : "المستثمر";
 
     const formatVal = (v: number, curr: StatementCurrency) =>
       `${Math.round(Math.abs(v)).toLocaleString("en-US")} ${currencyLabel(curr)}`;
-
-    const partnerDemands = [];
-    if (iqd < 0) partnerDemands.push(formatVal(iqd, "IQD"));
-    if (usd < 0) partnerDemands.push(formatVal(usd, "USD"));
-
-    const partnerOwes = [];
-    if (iqd > 0) partnerOwes.push(formatVal(iqd, "IQD"));
-    if (usd > 0) partnerOwes.push(formatVal(usd, "USD"));
 
     if (iqd === 0 && usd === 0) {
       return (
@@ -235,32 +257,39 @@ export function PartnerStatementPrint({
             الحساب متوازن
           </span>
           <strong className="net-value" style={{ fontSize: "10pt", color: "#64748b", marginTop: "2px" }}>
-            0 IQD
+            0 {currencyLabel("IQD")}
           </strong>
         </div>
       );
     }
 
+    const weOweThem = [];
+    const theyOweUs = [];
+    if (iqd > 0) weOweThem.push(formatVal(iqd, "IQD"));
+    if (usd > 0) weOweThem.push(formatVal(usd, "USD"));
+    if (iqd < 0) theyOweUs.push(formatVal(iqd, "IQD"));
+    if (usd < 0) theyOweUs.push(formatVal(usd, "USD"));
+
     return (
       <div className="net-summary-box" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px", width: "100%" }}>
-        {partnerDemands.length > 0 && (
+        {weOweThem.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
             <span className="net-label" style={{ fontSize: "7.5pt", color: "#475569", fontWeight: "bold", marginBottom: "2px" }}>
-              {firstName} يطلب فجر الوادي
+              {kindLabel} يطلبنا
             </span>
-            {partnerDemands.map((valStr, idx) => (
+            {weOweThem.map((valStr, idx) => (
               <strong key={idx} className="net-value" style={{ fontSize: "11pt", fontWeight: "900", color: "#1e293b", lineHeight: "1.2" }}>
                 {valStr}
               </strong>
             ))}
           </div>
         )}
-        {partnerOwes.length > 0 && (
+        {theyOweUs.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}>
             <span className="net-label net-label--debt" style={{ fontSize: "7.5pt", color: "#b91c1c", fontWeight: "bold", marginBottom: "2px" }}>
-              {firstName} مطلوب إلى فجر الوادي
+              نطلب {kindLabel}
             </span>
-            {partnerOwes.map((valStr, idx) => (
+            {theyOweUs.map((valStr, idx) => (
               <strong key={idx} className="net-value net-value--debt" style={{ fontSize: "11pt", fontWeight: "900", color: "#b91c1c", lineHeight: "1.2" }}>
                 {valStr}
               </strong>
@@ -335,7 +364,7 @@ export function PartnerStatementPrint({
                 </div>
                 <div className="print-summary-card print-summary-card--paid">
                   <span>الواصل</span>
-                  <strong>{formatDualAmount(customerSummary.received.IQD, customerSummary.received.USD)}</strong>
+                  <strong>{formatDualAmount(customerSummary.paid.IQD, customerSummary.paid.USD)}</strong>
                 </div>
                 <div className="print-summary-card print-summary-card--remaining">
                   <span>الباقي</span>
@@ -352,12 +381,12 @@ export function PartnerStatementPrint({
           ) : (
             <section className="print-statement__summary" aria-label="ملخص الحساب">
               <div className="print-summary-card print-summary-card--deposit">
-                <span>الإيداعات</span>
-                <strong>{formatDualAmount(otherSummary.deposits.IQD, otherSummary.deposits.USD)}</strong>
+                <span>الاستلام</span>
+                <strong>{formatDualAmount(otherSummary.received.IQD, otherSummary.received.USD)}</strong>
               </div>
               <div className="print-summary-card print-summary-card--withdrawal">
-                <span>السحوبات</span>
-                <strong>{formatDualAmount(otherSummary.withdrawals.IQD, otherSummary.withdrawals.USD)}</strong>
+                <span>التسليم</span>
+                <strong>{formatDualAmount(otherSummary.delivered.IQD, otherSummary.delivered.USD)}</strong>
               </div>
               <div className="print-summary-card print-summary-card--net">
                 <span>الناتج</span>

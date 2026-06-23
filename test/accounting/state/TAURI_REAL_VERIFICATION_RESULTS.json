@@ -91,14 +91,14 @@
       "S19"
     ],
     "group": "",
-    "status": "PASS",
+    "status": "FAIL",
     "expected": {
       "profit_after": 8000000.0,
       "profit_before": 8000000.0,
       "qasa_after": 7000000.0
     },
     "actual": {
-      "profit_after": 8000000.0,
+      "profit_after": 7000000.0,
       "profit_before": 8000000.0,
       "qasa_after": 7000000.0
     },
