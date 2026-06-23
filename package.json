@@ -19,7 +19,11 @@
     "test:consolidate": "npx tsx scripts/consolidate-reports.ts && npx tsx scripts/write-coverage.ts && npx tsx scripts/write-plan.ts",
     "test:accounting:fast": "npm run test:oracle && npm run test:backend && npm run test:consolidate",
     "test:accounting:full": "sh -c 'RC=0; npm run test:oracle || RC=$?; npm run test:backend || RC=$?; npm run test:e2e || RC=$?; npm run test:consolidate; exit $RC'",
-    "e2e-bridge": "node e2e-bridge/server.mjs"
+    "e2e-bridge": "node e2e-bridge/server.mjs",
+    "test:accounting:fast-scan-no-fix": "node e2e-bridge/server.mjs & BRIDGE_PID=$!; sleep 1; npx tsx scripts/fast-scan-no-fix.ts; RESULT=$?; kill $BRIDGE_PID 2>/dev/null; exit $RESULT",
+    "test:accounting:scan-resume": "npm run test:accounting:fast-scan-no-fix",
+    "test:accounting:scan-next": "node e2e-bridge/server.mjs & BRIDGE_PID=$!; sleep 1; npx tsx scripts/fast-scan-no-fix.ts --one; RESULT=$?; kill $BRIDGE_PID 2>/dev/null; exit $RESULT",
+    "test:accounting:scan-scenario": "node e2e-bridge/server.mjs & BRIDGE_PID=$!; sleep 1; npx tsx scripts/fast-scan-no-fix.ts --scenario; RESULT=$?; kill $BRIDGE_PID 2>/dev/null; exit $RESULT"
   },
   "dependencies": {
     "@radix-ui/react-select": "^2.2.6",

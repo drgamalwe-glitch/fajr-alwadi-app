@@ -1,138 +1,309 @@
-# تقرير حالات الفشل
+# Accounting Test Failures
 
-**التاريخ:** 2026-06-23T02:30:31.841Z
+**Generated:** 2026-06-23T04:47:47.908Z
 
-**الحالة:** PASS
+## S04: USD cash car purchase
 
-**إجمالي السيناريوهات:** 21
-**الناجحة:** 21
-**الفاشلة:** 0
-**الجزئية:** 0
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** inventory_usd: expected 10000, got 0
 
-## حالة جميع السيناريوهات
+**Expected:**
+- inventoryUsd: 10,000
+- qasaUsd: -10,000
+- qasaIqd: 0
 
-### S02: S02: Funded car purchase — ناجح
+**Actual:**
+- inventoryUsd: 0
+- qasaUsd: -10,000
+- qasaIqd: 0
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+## S13: Installment overpayment
 
-### S01: S01: Cash car purchase — ناجح
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** profit cap: expected 10000000, got 10500000 (diff 500000); profit 10500000 exceeded cap 10,000,000; totalProfit: expected 10000000, got 10500000 (diff 500000)
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+**Expected:**
+- profit: 10,000,000
+- qasa: 11,000,000
+- totalProfit: 10,000,000
 
-### S05: S05: Cash sale after cash purchase — ناجح
+**Actual:**
+- profit: 10,500,000
+- qasa: 11,000,000
+- totalProfit: 10,500,000
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+## S15: Installment with car expense
 
-### S08: S08: Cash sale with car expense — ناجح
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** profit with car expense: expected 2400000, got 2900000 (diff 500000); qasa: expected -4000000, got -6000000 (diff 2000000)
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+**Expected:**
+- profit: 2,400,000
+- qasa: -4,000,000
 
-### S09: S09: Cash sale at loss — ناجح
+**Actual:**
+- profit: 2,900,000
+- qasa: -6,000,000
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+## S19: Car expense after sale
 
-### S10: S10: Installment - after down payment — ناجح
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** qasa after expense: expected 6000000, got 7000000 (diff 1000000)
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+**Expected:**
+- profitBefore: 8,000,000
+- profitAfter: 8,000,000
+- qasaAfter: 6,000,000
 
-### S11: S11: Installment - after one installment — ناجح
+**Actual:**
+- profitBefore: 8,000,000
+- profitAfter: 8,000,000
+- qasaAfter: 7,000,000
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+## S24: Edit general expense
 
-### S12: S12: Installment - after all payments — ناجح
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** qasa after edit: expected -2000000, got -1000000 (diff 1000000)
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+**Expected:**
+- qasa: -2,000,000
+- profit: -2,000,000
 
-### S22: S22: General expense — ناجح
+**Actual:**
+- qasa: -1,000,000
+- profit: -2,000,000
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+## S26: Investor deposit
 
-### S23: S23: General expense after car profit — ناجح
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** investments: expected 10000000, got 0 (diff 10000000)
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+**Expected:**
+- qasa: 10,000,000
+- partnerCash: 0
+- profit: 0
+- investments: 10,000,000
 
-### S25: S25: Delete general expense — ناجح
+**Actual:**
+- qasa: 10,000,000
+- partnerCash: 0
+- profit: 0
+- investments: 0
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+## S27: Investor withdrawal
 
-### S47: S47: Partner deposits — ناجح
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** investments: expected 6000000, got 0 (diff 6000000)
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+**Expected:**
+- qasa: 6,000,000
+- investments: 6,000,000
 
-### S49: S49: Block third partner — ناجح
+**Actual:**
+- qasa: 6,000,000
+- investments: 0
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+## S28: Investor + car purchase
 
-### S50: S50: Block partner deletion — ناجح
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** investments: expected 20000000, got 0 (diff 20000000)
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+**Expected:**
+- qasa: 10,000,000
+- inventory: 10,000,000
+- investments: 20,000,000
 
-### S53: S53: Delete available car — ناجح
+**Actual:**
+- qasa: 10,000,000
+- inventory: 10,000,000
+- investments: 0
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+## S29: Delete investor with balance
 
-### S54: S54: Delete sold cash car — ناجح
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** investments before: expected 5000000, got 0 (diff 5000000)
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+**Expected:**
+- investmentsBefore: 5,000,000
+- investmentsAfter: 0
+- qasaAfter: 0
 
-### S56: S56: Company status mixed ops — ناجح
+**Actual:**
+- investmentsBefore: 0
+- investmentsAfter: 0
+- qasaAfter: 0
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+## S31: Funder repayment
 
-### S59: S59: Profit tab = profit card — ناجح
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** qasa: expected -10000000, got 0 (diff 10000000); partnerCash: expected -10000000, got 0 (diff 10000000)
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+**Expected:**
+- qasa: -10,000,000
+- partnerCash: -10,000,000
+- inventory: 10,000,000
 
-### S60: S60: IQD/USD separation — ناجح
+**Actual:**
+- qasa: 0
+- partnerCash: 0
+- inventory: 10,000,000
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+## S32: Partial funder repayment
 
-### S61: S61: USD general expense — ناجح
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** qasa: expected -4000000, got 0 (diff 4000000); partnerCash: expected -4000000, got 0 (diff 4000000)
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+**Expected:**
+- qasa: -4,000,000
+- partnerCash: -4,000,000
 
-### S63: S63: Read-only safety — ناجح
+**Actual:**
+- qasa: 0
+- partnerCash: 0
 
-- ORACLE: ناجح
-- BACKEND_DB: ناجح
-- CHROMIUM_UI: ناجح
+## S33: Funder repayment with commission
+
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** qasa: expected -10500000, got 0 (diff 10500000); partnerCash: expected -10500000, got 0 (diff 10500000)
+
+**Expected:**
+- qasa: -10,500,000
+- partnerCash: -10,500,000
+
+**Actual:**
+- qasa: 0
+- partnerCash: 0
+
+## S36: Company repayment
+
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** qasa: expected -10000000, got 0 (diff 10000000); partnerCash: expected -10000000, got 0 (diff 10000000)
+
+**Expected:**
+- qasa: -10,000,000
+- partnerCash: -10,000,000
+
+**Actual:**
+- qasa: 0
+- partnerCash: 0
+
+## S37: Partial company repayment
+
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** qasa: expected -3000000, got 0 (diff 3000000); partnerCash: expected -3000000, got 0 (diff 3000000)
+
+**Expected:**
+- qasa: -3,000,000
+- partnerCash: -3,000,000
+
+**Actual:**
+- qasa: 0
+- partnerCash: 0
+
+## S42: Delete one agency transaction
+
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** one agency remains: expected 1, got 0
+
+**Expected:**
+- remainingCount: 1
+- deletedGone: 0
+
+**Actual:**
+- remainingCount: 0
+- deletedGone: 0
+
+## S51: Edit available car purchase
+
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** qasa after edit: expected -15000000, got -10000000 (diff 5000000)
+
+**Expected:**
+- inventoryBefore: 10,000,000
+- qasaBefore: -10,000,000
+- inventoryAfter: 15,000,000
+- qasaAfter: -15,000,000
+
+**Actual:**
+- inventoryBefore: 10,000,000
+- qasaBefore: -10,000,000
+- inventoryAfter: 15,000,000
+- qasaAfter: -10,000,000
+
+## S55: Delete sold installment car
+
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** qasa after delete: expected 0, got 1000000; profit after delete: expected 0, got 500000
+
+**Expected:**
+- qasaBefore: -4,000,000
+- qasaAfter: 0
+- profitAfter: 0
+- inventoryAfter: 0
+
+**Actual:**
+- qasaBefore: -4,000,000
+- qasaAfter: 1,000,000
+- profitAfter: 500,000
+- inventoryAfter: 0
+
+## S69: Funder cycle
+
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** qasa: expected 8000000, got 18000000 (diff 10000000)
+
+**Expected:**
+- qasa: 8,000,000
+- profit: 8,000,000
+
+**Actual:**
+- qasa: 18,000,000
+- profit: 8,000,000
+
+## S70: Company cycle
+
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** qasa: expected 8000000, got 18000000 (diff 10000000)
+
+**Expected:**
+- qasa: 8,000,000
+- profit: 8,000,000
+
+**Actual:**
+- qasa: 18,000,000
+- profit: 8,000,000
+
+## S71: Investor cycle
+
+- **Layer:** BACKEND_DB
+- **Backend Mode:** E2E_BRIDGE
+- **Failure Reason:** investments: expected 20000000, got 0 (diff 20000000)
+
+**Expected:**
+- qasa: 28,000,000
+- profit: 8,000,000
+- investments: 20,000,000
+
+**Actual:**
+- qasa: 28,000,000
+- profit: 8,000,000
+- investments: 0
