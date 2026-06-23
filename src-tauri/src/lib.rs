@@ -2870,7 +2870,8 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
             || tx_type.starts_with("مقدمة بيع سيارة")
             || tx_type.starts_with("سحب مصروف")
             || tx_type.starts_with("سحب تسديد")
-            || tx_type.starts_with("ايداع ارباح وكالة")
+        || tx_type == "ايداع وكالة"
+        || tx_type.starts_with("ايداع ارباح وكالة")
             || tx_type.starts_with("ايداع ارباح سيارة")
             || tx_type.starts_with("تسديد قسط")
             || tx_type.starts_with("باقي")
@@ -6442,7 +6443,7 @@ fn set_customer_installment_status(
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
 
     // Verify installment exists and belongs to this customer
-    let (orig_type, _orig_amount, _orig_date, _orig_notes, orig_related_source_type, orig_related_source_id): (String, f64, String, Option<String>, String, String) = db.query_row(
+    let (orig_type, orig_amount, orig_date, orig_notes, orig_related_source_type, orig_related_source_id): (String, f64, String, Option<String>, String, String) = db.query_row(
         "SELECT type, amount, date, notes, COALESCE(related_source_type, ''), COALESCE(related_source_id, '') FROM partner_transactions WHERE id = ?1 AND partner_name = ?2 AND kind = 'زبون'",
         params![installment_id, &partner_name],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
@@ -6456,7 +6457,7 @@ fn set_customer_installment_status(
     // Resolve car number from installment row or its notes
     let installment_car_number: Option<String> = if orig_related_source_type == "car" && !orig_related_source_id.is_empty() {
         Some(orig_related_source_id.clone())
-    } else if let Some(notes) = &_orig_notes {
+    } else if let Some(notes) = &orig_notes {
         extract_car_number_from_notes(notes)
     } else {
         None
@@ -6476,9 +6477,37 @@ fn set_customer_installment_status(
         })
         .unwrap_or_else(|_| "00:00".to_string());
 
+    // ---- Load future unpaid installments for rebalance (both paths) ----
+    let mut future_installments: Vec<(i64, f64)> = Vec::new();
+    if let Some(ref car_number) = installment_car_number {
+        let mut stmt = db.prepare(
+            "SELECT id, amount FROM partner_transactions
+             WHERE kind = 'زبون'
+               AND partner_name = ?1
+               AND type LIKE 'باقي%'
+               AND source_type = 'customer_installment_schedule'
+               AND source_role = 'installment_schedule'
+               AND related_source_type = 'car'
+               AND related_source_id = ?2
+               AND id != ?3
+               AND (date > ?4 OR (date = ?4 AND id > ?3))
+             ORDER BY date ASC, id ASC"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(params![&partner_name, car_number, installment_id, &orig_date], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?))
+        }).map_err(|e| e.to_string())?;
+        for row in rows {
+            let (fid, famount) = row.map_err(|e| e.to_string())?;
+            future_installments.push((fid, famount));
+        }
+    }
+
+    let future_total: f64 = future_installments.iter().map(|(_, a)| a).sum();
+    let future_count = future_installments.len();
+
     if paid {
         // ============================================================
-        // PAID = TRUE: Convert باقي -> واصل
+        // PAID = TRUE: Convert باقي -> واصل + rebalance
         // ============================================================
 
         // Delete any old linked payment rows to prevent duplicates
@@ -6505,7 +6534,6 @@ fn set_customer_installment_status(
         .map_err(|e| e.to_string())?;
 
         for cpid in &old_customer_payment_ids {
-            // Delete partner cash rows for this customer payment
             let cash_ids: Vec<i64> = db.prepare(
                 "SELECT id FROM partner_transactions WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'cash_movement' AND kind = 'شريك'"
             ).map_err(|e| e.to_string())?
@@ -6519,7 +6547,6 @@ fn set_customer_installment_status(
                 let _ = db.execute("DELETE FROM partner_transactions WHERE id = ?1", [cid]);
             }
 
-            // Delete profit recognition rows
             let profit_ids: Vec<i64> = db.prepare(
                 "SELECT id FROM partner_transactions WHERE source_type = 'customer_payment' AND source_id = ?1 AND source_role = 'profit_recognition' AND kind = 'شريك'"
             ).map_err(|e| e.to_string())?
@@ -6551,10 +6578,23 @@ fn set_customer_installment_status(
             let _ = db.execute("DELETE FROM partner_transactions WHERE id = ?1", [fid]);
         }
 
+        // ---- Rebalance calculation ----
+        let paid_amount = amount;
+        let total_unpaid_before = orig_amount + future_total;
+
+        if paid_amount <= 0.0 {
+            return Err("مبلغ الدفع يجب أن يكون أكبر من صفر".to_string());
+        }
+        if paid_amount > total_unpaid_before {
+            return Err("المبلغ المدفوع أكبر من إجمالي المتبقي".to_string());
+        }
+
+        let new_remaining_total = total_unpaid_before - paid_amount;
+
         // Update the original installment row to "واصل قسط"
         db.execute(
             "UPDATE partner_transactions SET type = 'واصل قسط', amount = ?1, date = ?2, notes = ?3, currency = ?4, payment_type = ?5 WHERE id = ?6",
-            params![amount, &date, &updated_notes, &currency, &payment_type, installment_id],
+            params![paid_amount, &date, &updated_notes, &currency, &payment_type, installment_id],
         ).map_err(|e| e.to_string())?;
 
         // Insert one customer payment row
@@ -6566,7 +6606,7 @@ fn set_customer_installment_status(
         db.execute(
             "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_role, affects_qasa, affects_partner_cash, affects_profit, related_source_type, related_source_id)
              VALUES (?1, 'زبون', 'تسديد قسط سيارة', ?2, ?3, ?4, ?5, ?6, ?7, 'customer_payment', 'customer_payment', 0, 0, 0, 'installment', ?8)",
-            params![&partner_name, amount, &date, &time_str, &customer_payment_notes, &currency, &payment_type, installment_id],
+            params![&partner_name, paid_amount, &date, &time_str, &customer_payment_notes, &currency, &payment_type, installment_id],
         ).map_err(|e| e.to_string())?;
         let customer_payment_id = db.last_insert_rowid();
 
@@ -6577,7 +6617,7 @@ fn set_customer_installment_status(
         record_partner_ledger_entries(&db, customer_payment_id)?;
 
         // Create exactly two partner cash rows (50/50 split)
-        let half_amount = amount / 2.0;
+        let half_amount = paid_amount / 2.0;
         let partners: Vec<String> = db.prepare(
             "SELECT partner_name FROM partners WHERE kind = 'شريك' ORDER BY partner_name"
         ).map_err(|e| e.to_string())?
@@ -6611,12 +6651,51 @@ fn set_customer_installment_status(
             recalculate_partner_total(&db, partner, "شريك")?;
         }
 
+        // ---- Rebalance future installments ----
+        if new_remaining_total <= 0.0 {
+            // Fully paid: delete all future unpaid installment rows
+            for (fid, _) in &future_installments {
+                db.execute("DELETE FROM partner_transactions WHERE id = ?1", params![fid])
+                    .map_err(|e| e.to_string())?;
+            }
+        } else if future_count > 0 {
+            // Redistribute remaining equally across future installments
+            let base_amount = (new_remaining_total / future_count as f64).floor();
+            let last_amount = new_remaining_total - base_amount * (future_count - 1) as f64;
+            for (i, (fid, _)) in future_installments.iter().enumerate() {
+                let new_amt = if i == future_count - 1 { last_amount } else { base_amount };
+                if new_amt > 0.0 {
+                    db.execute(
+                        "UPDATE partner_transactions SET amount = ?1 WHERE id = ?2",
+                        params![new_amt, fid],
+                    ).map_err(|e| e.to_string())?;
+                } else {
+                    db.execute("DELETE FROM partner_transactions WHERE id = ?1", params![fid])
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        } else {
+            // No future installments but still remaining balance: create one
+            let new_date = add_months_to_date(&date, 1);
+            let new_notes = format!("باقي قسط بعد تسديد جزئي | {}", installment_marker);
+            let source_id = if let Some(ref cn) = installment_car_number {
+                format!("{}:rebalance:{}", cn, installment_id)
+            } else {
+                format!("rebalance:{}", installment_id)
+            };
+            db.execute(
+                "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit, related_source_type, related_source_id)
+                 VALUES (?1, 'زبون', 'باقي قسط', ?2, ?3, ?4, ?5, ?6, 'قاصه', 'customer_installment_schedule', ?7, 'installment_schedule', 0, 0, 0, 'car', ?8)",
+                params![&partner_name, new_remaining_total, &new_date, &time_str, &new_notes, &currency, &source_id, installment_car_number.as_deref().unwrap_or("")],
+            ).map_err(|e| e.to_string())?;
+        }
+
         // Recalculate customer total
         recalculate_partner_total(&db, &partner_name, "زبون")?;
 
     } else {
         // ============================================================
-        // PAID = FALSE: Convert واصل -> باقي
+        // PAID = FALSE: Convert واصل -> باقي + rebalance
         // ============================================================
 
         // Find all customer payment rows linked to this installment
@@ -6702,11 +6781,41 @@ fn set_customer_installment_status(
             let _ = db.execute("DELETE FROM partner_transactions WHERE id = ?1", [tid]);
         }
 
-        // Update the original installment row back to "باقي قسط"
-        db.execute(
-            "UPDATE partner_transactions SET type = 'باقي قسط', amount = ?1, date = ?2, notes = ?3, currency = ?4, payment_type = ?5 WHERE id = ?6",
-            params![amount, &date, &updated_notes, &currency, &payment_type, installment_id],
-        ).map_err(|e| e.to_string())?;
+        // ---- Rebalance calculation ----
+        let total_to_redistribute = amount + future_total;
+        let total_count = 1 + future_count;
+
+        if total_count == 1 && total_to_redistribute <= 0.0 {
+            // Only this installment with zero amount: delete it
+            db.execute("DELETE FROM partner_transactions WHERE id = ?1", params![installment_id])
+                .map_err(|e| e.to_string())?;
+        } else {
+            let base_amount = (total_to_redistribute / total_count as f64).floor();
+            let last_amount = total_to_redistribute - base_amount * (total_count - 1) as f64;
+
+            // Update the original installment row back to "باقي قسط"
+            let selected_new_amount = if total_count == 1 { last_amount } else { base_amount };
+            db.execute(
+                "UPDATE partner_transactions SET type = 'باقي قسط', amount = ?1, date = ?2, notes = ?3, currency = ?4, payment_type = ?5 WHERE id = ?6",
+                params![selected_new_amount, &date, &updated_notes, &currency, &payment_type, installment_id],
+            ).map_err(|e| e.to_string())?;
+
+            // Rebalance future installments
+            if future_count > 0 {
+                for (i, (fid, _)) in future_installments.iter().enumerate() {
+                    let new_amt = if i == future_count - 1 { last_amount } else { base_amount };
+                    if new_amt > 0.0 {
+                        db.execute(
+                            "UPDATE partner_transactions SET amount = ?1 WHERE id = ?2",
+                            params![new_amt, fid],
+                        ).map_err(|e| e.to_string())?;
+                    } else {
+                        db.execute("DELETE FROM partner_transactions WHERE id = ?1", params![fid])
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+            }
+        }
 
         // Recalculate totals
         let partners: Vec<String> = db.prepare(
@@ -8256,16 +8365,7 @@ fn agency_profit_note(old_agent_name: &str, new_agent_name: &str) -> String {
     .replace("  ", " ")
 }
 
-fn delete_agency_profit_distributions(
-    db: &Connection,
-    agency_id: i64,
-) -> Result<(), String> {
-    // Phase 14: Delete by source fields instead of name/date/notes
-    delete_partner_transactions_by_source_with_ledger(db, "agency", &agency_id.to_string(), Some("profit_recognition"))?;
-    Ok(())
-}
-
-fn distribute_agency_base_profit(db: &Connection, agency_id: i64) -> Result<(), String> {
+fn rebuild_agency_partner_entries(db: &Connection, agency_id: i64) -> Result<(), String> {
     let agency_info: Result<(String, String, f64, f64, String), rusqlite::Error> = db.query_row(
         "SELECT old_agent_name, new_agent_name, amount_usd, amount_iqd, date FROM agencies WHERE id = ?1",
         [agency_id],
@@ -8278,11 +8378,32 @@ fn distribute_agency_base_profit(db: &Connection, agency_id: i64) -> Result<(), 
         Err(e) => return Err(e.to_string()),
     };
 
-    // Phase 14: Delete by agency_id
-    delete_agency_profit_distributions(db, agency_id)?;
-    let note = agency_profit_note(&old_agent_name, &new_agent_name);
+    // Delete ALL old partner rows (cash_movement + profit_recognition) for this agency
+    delete_partner_transactions_by_source_with_ledger(db, "agency", &agency_id.to_string(), None)?;
+
+    let cash_note = format!("ايداع وكالة {} {} رئيسي", old_agent_name.trim(), new_agent_name.trim())
+        .trim()
+        .replace("  ", " ");
+    let profit_note = agency_profit_note(&old_agent_name, &new_agent_name);
 
     if amount_usd > 0.0 {
+        // Cash movement (affects Qasa/Cash/Partner balance)
+        distribute_to_partners_50_with_effects(
+            db,
+            amount_usd,
+            "USD",
+            &date,
+            "قاصه",
+            "ايداع وكالة",
+            &cash_note,
+            "agency",
+            &agency_id.to_string(),
+            "cash_movement",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
+            false, // affects_profit
+        )?;
+        // Profit recognition (affects Profit Distribution only)
         distribute_to_partners_50_with_effects(
             db,
             amount_usd,
@@ -8290,7 +8411,7 @@ fn distribute_agency_base_profit(db: &Connection, agency_id: i64) -> Result<(), 
             &date,
             "قاصه",
             "ايداع ارباح وكالة",
-            &note,
+            &profit_note,
             "agency",
             &agency_id.to_string(),
             "profit_recognition",
@@ -8299,7 +8420,25 @@ fn distribute_agency_base_profit(db: &Connection, agency_id: i64) -> Result<(), 
             true,  // affects_profit
         )?;
     }
+
     if amount_iqd > 0.0 {
+        // Cash movement (affects Qasa/Cash/Partner balance)
+        distribute_to_partners_50_with_effects(
+            db,
+            amount_iqd,
+            "IQD",
+            &date,
+            "قاصه",
+            "ايداع وكالة",
+            &cash_note,
+            "agency",
+            &agency_id.to_string(),
+            "cash_movement",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
+            false, // affects_profit
+        )?;
+        // Profit recognition (affects Profit Distribution only)
         distribute_to_partners_50_with_effects(
             db,
             amount_iqd,
@@ -8307,7 +8446,7 @@ fn distribute_agency_base_profit(db: &Connection, agency_id: i64) -> Result<(), 
             &date,
             "قاصه",
             "ايداع ارباح وكالة",
-            &note,
+            &profit_note,
             "agency",
             &agency_id.to_string(),
             "profit_recognition",
@@ -8404,7 +8543,7 @@ fn add_agency(
 
     // Record setup entries in ledger
     record_agency_ledger_entries(&db, new_id)?;
-    distribute_agency_base_profit(&db, new_id)?;
+    rebuild_agency_partner_entries(&db, new_id)?;
 
     Ok(new_id)
 }
@@ -8427,8 +8566,8 @@ fn update_agency(
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    // Phase 14: Delete by agency_id
-    delete_agency_profit_distributions(&db, id)?;
+    // Phase 14: Delete all partner rows by agency_id (cash_movement + profit_recognition)
+    delete_partner_transactions_by_source_with_ledger(&db, "agency", &id.to_string(), None)?;
 
     // تحديث جدول الوكالات بالبيانات الجديدة
     db.execute(
@@ -8451,7 +8590,7 @@ fn update_agency(
 
     // Record setup entries in ledger
     record_agency_ledger_entries(&db, id)?;
-    distribute_agency_base_profit(&db, id)?;
+    rebuild_agency_partner_entries(&db, id)?;
 
     Ok(())
 }
@@ -8583,7 +8722,24 @@ fn add_agency_transaction(
         )
         .trim()
         .replace("  ", " ");
-        // Phase 14: Use source fields for transaction profit
+        // Phase 14: Use source fields for transaction cash movement + profit
+        // Cash movement (affects Qasa/Cash/Partner balance)
+        distribute_to_partners_50_with_effects(
+            &db,
+            amount,
+            &curr,
+            date.trim(),
+            "قاصه",
+            "ايداع وكالة",
+            &agency_note,
+            "agency_transaction",
+            &tx_id.to_string(),
+            "cash_movement",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
+            false, // affects_profit
+        )?;
+        // Profit recognition (affects Profit Distribution only)
         distribute_to_partners_50_with_effects(
             &db,
             amount,
