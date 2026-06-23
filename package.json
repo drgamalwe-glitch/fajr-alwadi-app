@@ -27,7 +27,10 @@
     "test:accounting:scan-scenario": "node e2e-bridge/server.mjs & BRIDGE_PID=$!; sleep 1; npx tsx test/accounting/runners/fast-scan-no-fix.ts --scenario; RESULT=$?; kill $BRIDGE_PID 2>/dev/null; exit $RESULT",
     "test:accounting:real-tauri": "cd src-tauri && cargo test accounting_real_backend --features accounting-test-support -- --nocapture",
     "test:accounting:real-report": "npx tsx test/accounting/runners/generate-real-tauri-report.ts",
-    "test:accounting:final-verify": "npm run test:accounting:real-tauri && npm run test:accounting:real-report"
+    "test:accounting:final-verify": "npm run test:accounting:real-tauri && npm run test:accounting:real-report",
+    "test:accounting:real-tauri-full-71": "cd src-tauri && cargo test accounting_real_backend_full_71 --features accounting-test-support -- --nocapture",
+    "test:accounting:real-full-71-report": "npx tsx test/accounting/runners/generate-real-full-71-report.ts",
+    "test:accounting:final-full-verify": "npm run test:accounting:real-tauri-full-71 && npm run test:accounting:real-full-71-report"
   },
   "dependencies": {
     "@radix-ui/react-select": "^2.2.6",

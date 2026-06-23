@@ -5,6 +5,7 @@
     "related_scenarios": [
       "S04"
     ],
+    "group": "",
     "status": "PASS",
     "expected": {
       "inventory_value_iqd": 0.0,
@@ -30,6 +31,7 @@
     "related_scenarios": [
       "S13"
     ],
+    "group": "",
     "status": "PASS",
     "expected": {
       "amir_profit_iqd": 5000000.0,
@@ -60,6 +62,7 @@
     "related_scenarios": [
       "S15"
     ],
+    "group": "",
     "status": "PASS",
     "expected": {
       "amir_profit_iqd": 1200000.0,
@@ -87,6 +90,7 @@
     "related_scenarios": [
       "S19"
     ],
+    "group": "",
     "status": "PASS",
     "expected": {
       "profit_after": 8000000.0,
@@ -113,6 +117,7 @@
     "related_scenarios": [
       "S24"
     ],
+    "group": "",
     "status": "PASS",
     "expected": {
       "cash_iqd": -2000000.0,
@@ -143,6 +148,7 @@
       "S29",
       "S71"
     ],
+    "group": "",
     "status": "PASS",
     "expected": {
       "delete_blocked": 1.0,
@@ -184,6 +190,7 @@
       "S33",
       "S69"
     ],
+    "group": "",
     "status": "PASS",
     "expected": {
       "cash_after": -10000000.0,
@@ -219,6 +226,7 @@
       "S37",
       "S70"
     ],
+    "group": "",
     "status": "PASS",
     "expected": {
       "cash_after": -10000000.0,
@@ -249,6 +257,7 @@
     "related_scenarios": [
       "S51"
     ],
+    "group": "",
     "status": "PASS",
     "expected": {
       "inventory_after": 15000000.0,
@@ -276,6 +285,7 @@
     "related_scenarios": [
       "S55"
     ],
+    "group": "",
     "status": "PASS",
     "expected": {
       "debtors_after": 0.0,
@@ -308,6 +318,7 @@
     "related_scenarios": [
       "S42"
     ],
+    "group": "",
     "status": "PASS",
     "expected": {
       "deleted_gone": 0.0,
@@ -333,6 +344,7 @@
     "related_scenarios": [
       "S01"
     ],
+    "group": "",
     "status": "PASS",
     "expected": {
       "inventory_value_iqd": 10000000.0,
@@ -356,6 +368,7 @@
     "related_scenarios": [
       "S05"
     ],
+    "group": "",
     "status": "PASS",
     "expected": {
       "inventory_value_iqd": 0.0,
@@ -380,6 +393,7 @@
     "related_scenarios": [
       "S63"
     ],
+    "group": "",
     "status": "PASS",
     "expected": {
       "inventory_unchanged": 5000000.0,

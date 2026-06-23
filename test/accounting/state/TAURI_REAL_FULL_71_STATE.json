@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-06-23T06:17:20.521Z",
+  "backendMode": "REAL_TAURI_RUST_FULL_71",
+  "totalScenarios": 71,
+  "completedScenarios": 71,
+  "passedScenarios": 71,
+  "failedScenarios": 0,
+  "pendingScenarios": 0,
+  "coveragePercent": 100,
+  "finalVerdict": "PASS",
+  "missingScenarioIds": [],
+  "duplicateScenarioIds": [],
+  "isComplete": true,
+  "isConsistent": true,
+  "resultsPath": "/Users/alsyd/Documents/coding/fajir alwadi/fajir alwadi/test/accounting/state/TAURI_REAL_FULL_71_RESULTS.json"
+}
