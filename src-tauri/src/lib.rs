@@ -6419,16 +6419,25 @@ fn set_customer_installment_status(
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
 
     // Verify installment exists and belongs to this customer
-    let (orig_type, _orig_amount, _orig_date, _orig_notes): (String, f64, String, Option<String>) = db.query_row(
-        "SELECT type, amount, date, notes FROM partner_transactions WHERE id = ?1 AND partner_name = ?2 AND kind = 'زبون'",
+    let (orig_type, _orig_amount, _orig_date, _orig_notes, orig_related_source_type, orig_related_source_id): (String, f64, String, Option<String>, String, String) = db.query_row(
+        "SELECT type, amount, date, notes, COALESCE(related_source_type, ''), COALESCE(related_source_id, '') FROM partner_transactions WHERE id = ?1 AND partner_name = ?2 AND kind = 'زبون'",
         params![installment_id, &partner_name],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
     ).map_err(|_| format!("القسط رقم {} غير موجود أو لا ينتمي لـ {}", installment_id, partner_name))?;
 
     // Verify it's an installment row
     if !orig_type.contains("قسط") {
         return Err("الصف المحدد ليس قسطاً".to_string());
     }
+
+    // Resolve car number from installment row or its notes
+    let installment_car_number: Option<String> = if orig_related_source_type == "car" && !orig_related_source_id.is_empty() {
+        Some(orig_related_source_id.clone())
+    } else if let Some(notes) = &_orig_notes {
+        extract_car_number_from_notes(notes)
+    } else {
+        None
+    };
 
     let installment_marker = format!("قسط#{}", installment_id);
     let clean_notes = notes.as_deref().unwrap_or("").replace(&format!(" | {}", installment_marker), "").replace(&installment_marker, "").trim().to_string();
@@ -6526,10 +6535,15 @@ fn set_customer_installment_status(
         ).map_err(|e| e.to_string())?;
 
         // Insert one customer payment row
+        let customer_payment_notes = if let Some(ref cn) = installment_car_number {
+            format!("تسديد قسط سيارة | {} | #بيع_سيارة_{}", installment_marker, cn)
+        } else {
+            format!("تسديد قسط سيارة | {}", installment_marker)
+        };
         db.execute(
             "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_role, affects_qasa, affects_partner_cash, affects_profit, related_source_type, related_source_id)
              VALUES (?1, 'زبون', 'تسديد قسط سيارة', ?2, ?3, ?4, ?5, ?6, ?7, 'customer_payment', 'customer_payment', 0, 0, 0, 'installment', ?8)",
-            params![&partner_name, amount, &date, &time_str, format!("تسديد قسط سيارة | {}", installment_marker), &currency, &payment_type, installment_id],
+            params![&partner_name, amount, &date, &time_str, &customer_payment_notes, &currency, &payment_type, installment_id],
         ).map_err(|e| e.to_string())?;
         let customer_payment_id = db.last_insert_rowid();
 
@@ -6554,11 +6568,20 @@ fn set_customer_installment_status(
         }
 
         for partner in &partners {
-            let cash_note = format!("دفعة قسط من {} | {}", partner_name, installment_marker);
+            let partner_note = if let Some(ref cn) = installment_car_number {
+                format!("دفعة قسط من {} | {} | #بيع_سيارة_{}", partner_name, installment_marker, cn)
+            } else {
+                format!("دفعة قسط من {} | {}", partner_name, installment_marker)
+            };
+            let (rel_type, rel_id): (&str, &str) = if let Some(ref cn) = installment_car_number {
+                ("car", cn)
+            } else {
+                ("installment", &installment_id.to_string())
+            };
             db.execute(
                 "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit, related_source_type, related_source_id)
-                 VALUES (?1, 'شريك', 'دفعة قسط زبون', ?2, ?3, ?4, ?5, ?6, ?7, 'customer_payment', ?8, 'cash_movement', 1, 1, 0, 'installment', ?9)",
-                params![partner, half_amount, &date, &time_str, &cash_note, &currency, &payment_type, customer_payment_id.to_string(), installment_id],
+                 VALUES (?1, 'شريك', 'ايداع دفعة قسط زبون', ?2, ?3, ?4, ?5, ?6, ?7, 'customer_payment', ?8, 'cash_movement', 1, 1, 0, ?9, ?10)",
+                params![partner, half_amount, &date, &time_str, &partner_note, &currency, &payment_type, customer_payment_id.to_string(), rel_type, rel_id],
             ).map_err(|e| e.to_string())?;
             let partner_tx_id = db.last_insert_rowid();
             record_partner_ledger_entries(&db, partner_tx_id)?;
@@ -7271,7 +7294,9 @@ fn get_cash_register_entries(
                 } else if is_withdrawal {
                     -raw_amount
                 } else {
-                    0.0
+                    // Phase 3 path: rows with affects_qasa/affects_partner_cash are already
+                    // known cash movements by flag. Default to positive if not a known withdrawal.
+                    raw_amount
                 };
 
                 // Phase 3: Show original transaction type for clear audit trail
@@ -8993,6 +9018,54 @@ fn current_profit_period_start(
     Ok(latest_reset.unwrap_or((month_start, String::new())))
 }
 
+/// Resolve car number for a customer installment payment.
+/// This allows profit calculation even when notes don't contain #بيع_سيارة_.
+fn resolve_car_number_for_installment_payment(
+    db: &Connection,
+    notes: &str,
+    related_source_type: &str,
+    related_source_id: &str,
+    source_id: &str,
+) -> Option<String> {
+    // Strategy 1: partner row directly links to car
+    if related_source_type == "car" && !related_source_id.is_empty() {
+        return Some(related_source_id.to_string());
+    }
+    // Strategy 2: notes contain #بيع_سيارة_ marker
+    if let Some(car_num) = extract_car_number_from_notes(notes) {
+        return Some(car_num);
+    }
+    // Strategy 3: load the original customer payment row from source_id
+    if let Ok(pid) = source_id.parse::<i64>() {
+        if pid > 0 {
+            if let Ok((cst, csi)) = db.query_row(
+                "SELECT COALESCE(related_source_type, ''), COALESCE(related_source_id, '') FROM partner_transactions WHERE id = ?1",
+                params![pid],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            ) {
+                if cst == "car" && !csi.is_empty() {
+                    return Some(csi);
+                }
+                // Strategy 4: customer payment links to installment, load installment
+                if cst == "installment" {
+                    if let Ok(iid) = csi.parse::<i64>() {
+                        if let Ok((ist, isi)) = db.query_row(
+                            "SELECT COALESCE(related_source_type, ''), COALESCE(related_source_id, '') FROM partner_transactions WHERE id = ?1",
+                            params![iid],
+                            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                        ) {
+                            if ist == "car" && !isi.is_empty() {
+                                return Some(isi);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Calculate analytical installment profit for partner payments in a date range.
 /// This replaces the old profit_recognition rows that were created as hidden partner transactions.
 /// Profit is calculated as: payment_amount * (full_car_profit / selling_price)
@@ -9008,10 +9081,10 @@ fn calculate_analytical_installment_profit(
 ) -> Result<f64, String> {
     // Find all customer payment rows (cash_movement) for this partner's currency
     // These represent actual installment payments received
-    let payments: Vec<(f64, String)> = if !partner_name.is_empty() {
+    let payments: Vec<(f64, String, String, String, String)> = if !partner_name.is_empty() {
         if use_time {
             let mut stmt = db.prepare(
-                "SELECT pt.amount, pt.notes FROM partner_transactions pt
+                "SELECT pt.amount, pt.notes, COALESCE(pt.related_source_type, ''), COALESCE(pt.related_source_id, ''), COALESCE(pt.source_id, '') FROM partner_transactions pt
                  WHERE pt.kind = 'شريك' AND pt.partner_name = ?4 AND pt.source_role = 'cash_movement'
                    AND pt.source_type = 'customer_payment'
                    AND COALESCE(pt.currency, 'IQD') = ?1
@@ -9021,25 +9094,25 @@ fn calculate_analytical_installment_profit(
                    )"
             ).map_err(|e| e.to_string())?;
             let result = stmt.query_map(params![currency_filter, start_date, effective_start_time, partner_name], |row| {
-                Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?))
+                Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?))
             })
             .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<(f64, String)>, _>>()
+            .collect::<Result<Vec<(f64, String, String, String, String)>, _>>()
             .map_err(|e| e.to_string())?;
             result
         } else {
             let mut stmt = db.prepare(
-                "SELECT pt.amount, pt.notes FROM partner_transactions pt
+                "SELECT pt.amount, pt.notes, COALESCE(pt.related_source_type, ''), COALESCE(pt.related_source_id, ''), COALESCE(pt.source_id, '') FROM partner_transactions pt
                  WHERE pt.kind = 'شريك' AND pt.partner_name = ?4 AND pt.source_role = 'cash_movement'
                    AND pt.source_type = 'customer_payment'
                    AND COALESCE(pt.currency, 'IQD') = ?1
                    AND pt.date >= ?2 AND pt.date <= ?3"
             ).map_err(|e| e.to_string())?;
             let result = stmt.query_map(params![currency_filter, start_date, end_date, partner_name], |row| {
-                Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?))
+                Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?))
             })
             .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<(f64, String)>, _>>()
+            .collect::<Result<Vec<(f64, String, String, String, String)>, _>>()
             .map_err(|e| e.to_string())?;
             result
         }
@@ -9048,7 +9121,7 @@ fn calculate_analytical_installment_profit(
         // Each row is already partner's share, so no division needed
         if use_time {
             let mut stmt = db.prepare(
-                "SELECT pt.amount, pt.notes FROM partner_transactions pt
+                "SELECT pt.amount, pt.notes, COALESCE(pt.related_source_type, ''), COALESCE(pt.related_source_id, ''), COALESCE(pt.source_id, '') FROM partner_transactions pt
                  WHERE pt.kind = 'شريك' AND pt.source_role = 'cash_movement'
                    AND pt.source_type = 'customer_payment'
                    AND COALESCE(pt.currency, 'IQD') = ?1
@@ -9058,25 +9131,25 @@ fn calculate_analytical_installment_profit(
                    )"
             ).map_err(|e| e.to_string())?;
             let result = stmt.query_map(params![currency_filter, start_date, effective_start_time], |row| {
-                Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?))
+                Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?))
             })
             .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<(f64, String)>, _>>()
+            .collect::<Result<Vec<(f64, String, String, String, String)>, _>>()
             .map_err(|e| e.to_string())?;
             result
         } else {
             let mut stmt = db.prepare(
-                "SELECT pt.amount, pt.notes FROM partner_transactions pt
+                "SELECT pt.amount, pt.notes, COALESCE(pt.related_source_type, ''), COALESCE(pt.related_source_id, ''), COALESCE(pt.source_id, '') FROM partner_transactions pt
                  WHERE pt.kind = 'شريك' AND pt.source_role = 'cash_movement'
                    AND pt.source_type = 'customer_payment'
                    AND COALESCE(pt.currency, 'IQD') = ?1
                    AND pt.date >= ?2 AND pt.date <= ?3"
             ).map_err(|e| e.to_string())?;
             let result = stmt.query_map(params![currency_filter, start_date, end_date], |row| {
-                Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?))
+                Ok((row.get::<_, f64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?))
             })
             .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<(f64, String)>, _>>()
+            .collect::<Result<Vec<(f64, String, String, String, String)>, _>>()
             .map_err(|e| e.to_string())?;
             result
         }
@@ -9085,9 +9158,9 @@ fn calculate_analytical_installment_profit(
     let mut total_profit = 0.0;
     let mut car_profit_map: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
 
-    for (payment_amount, notes) in &payments {
-        // Extract car number from notes (format: ... #بيع_سيارة_XXX)
-        let car_num = extract_car_number_from_notes(notes);
+    for (payment_amount, notes, rel_type, rel_id, sid) in &payments {
+        // Resolve car number using multiple strategies
+        let car_num = resolve_car_number_for_installment_payment(db, notes, rel_type, rel_id, sid);
         if let Some(car_number) = car_num {
             // Get or calculate car profit info
             let car_total_profit = match car_profit_map.get(&format!("total_{}", car_number)) {

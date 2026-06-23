@@ -1467,29 +1467,34 @@ export function PartnersTab({
   };
 
   const totalDeposits = cashTransactions
-    .filter((t) => t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية"))
+    .filter((t) => t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية") || t.type_.startsWith("دفعة"))
     .reduce((sum, t) => sum + t.amount, 0);
   const totalWithdrawals = cashTransactions
     .filter((t) => t.type_.startsWith("سحب") || t.type_.startsWith("باقي"))
     .reduce((sum, t) => sum + t.amount, 0);
 
+  const depositPrefixes = (t: { type_: string }) =>
+    t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة")
+    || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد")
+    || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية") || t.type_.startsWith("دفعة");
+
   const partnerIqdBalance = accountsTab === "personal" && partnerToView
     ? isFinancialClientKind(form.kind)
       ? cashTransactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
-      - cashTransactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      - cashTransactions.filter((t) => depositPrefixes(t) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       : form.kind === "زبون"
         ? transactions.filter((t) => isCustomerRemainingBalanceTx(t) && (t.currency || "IQD") === "IQD").reduce((s, t) => s + t.amount, 0)
-        : cashTransactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+        : cashTransactions.filter((t) => depositPrefixes(t) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       - cashTransactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
     : currencyTotals[0];
 
   const partnerUsdBalance = accountsTab === "personal" && partnerToView
     ? isFinancialClientKind(form.kind)
       ? cashTransactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
-      - cashTransactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      - cashTransactions.filter((t) => depositPrefixes(t) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       : form.kind === "زبون"
         ? transactions.filter((t) => isCustomerRemainingBalanceTx(t) && t.currency === "USD").reduce((s, t) => s + t.amount, 0)
-        : cashTransactions.filter((t) => (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+        : cashTransactions.filter((t) => depositPrefixes(t) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
       - cashTransactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
     : currencyTotals[1];
 
@@ -1519,7 +1524,7 @@ export function PartnersTab({
       return cashTransactions
         .filter((t) => (t.currency || "IQD") === currency && !t.type_.startsWith("تحويل"))
         .reduce((sum, t) => {
-          if (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("تسوية") || t.type_.startsWith("مقدمة") || t.type_.startsWith("إعادة استثمار")) return sum - t.amount;
+          if (depositPrefixes(t)) return sum - t.amount;
           if (t.type_.startsWith("سحب") || t.type_.startsWith("باقي") || t.type_.startsWith("تسليم")) return sum + t.amount;
           return sum;
         }, 0);
