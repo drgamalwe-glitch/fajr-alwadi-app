@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { readAllResults, type LayerResult } from "../tests/shared/result-collector";
+import { readAllResults, type LayerResult } from "../shared/result-collector";
 
 const ROOT = process.cwd();
 
@@ -294,7 +294,7 @@ function main() {
 
   // Write reports
   const resultsMd = lines.join("\n");
-  fs.writeFileSync(path.join(ROOT, "ACCOUNTING_TEST_RESULTS.md"), resultsMd, "utf-8");
+  fs.writeFileSync(path.join(ROOT, "test/accounting/reports/current/ACCOUNTING_TEST_RESULTS.md"), resultsMd, "utf-8");
 
   // Summary JSON
   const summary = {
@@ -318,7 +318,7 @@ function main() {
       };
     }),
   };
-  fs.writeFileSync(path.join(ROOT, "ACCOUNTING_TEST_SUMMARY.json"), JSON.stringify(summary, null, 2), "utf-8");
+  fs.writeFileSync(path.join(ROOT, "test/accounting/reports/current/ACCOUNTING_TEST_SUMMARY.json"), JSON.stringify(summary, null, 2), "utf-8");
 
   // Failures MD
   const failLines: string[] = [];
@@ -398,7 +398,7 @@ function main() {
     }
   }
 
-  fs.writeFileSync(path.join(ROOT, "ACCOUNTING_TEST_FAILURES.md"), failLines.join("\n"), "utf-8");
+  fs.writeFileSync(path.join(ROOT, "test/accounting/reports/current/ACCOUNTING_TEST_FAILURES.md"), failLines.join("\n"), "utf-8");
 
   console.log(`\n${"═".repeat(60)}`);
   console.log("  تقرير اختبارات المحاسبة — فجر الوادي");

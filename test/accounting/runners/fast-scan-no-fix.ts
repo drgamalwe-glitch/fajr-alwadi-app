@@ -3,12 +3,12 @@ import * as path from "node:path";
 
 const BRIDGE_URL = process.env.E2E_BRIDGE_URL || "http://127.0.0.1:3899";
 const ROOT = process.cwd();
-const RESULTS_DIR = path.join(ROOT, ".test-results");
-const FIX_LOG_PATH = path.join(ROOT, "ACCOUNTING_FIX_LOG.md");
-const FAILURES_MD = path.join(ROOT, "ACCOUNTING_TEST_FAILURES.md");
-const SUMMARY_JSON = path.join(ROOT, "ACCOUNTING_TEST_SUMMARY.json");
-const COVERAGE_MD = path.join(ROOT, "ACCOUNTING_TEST_COVERAGE.md");
-const RESULTS_MD = path.join(ROOT, "ACCOUNTING_TEST_RESULTS.md");
+const RESULTS_DIR = path.join(ROOT, "test/accounting/state");
+const FIX_LOG_PATH = path.join(ROOT, "test/accounting/reports/current/ACCOUNTING_FIX_LOG.md");
+const FAILURES_MD = path.join(ROOT, "test/accounting/reports/current/ACCOUNTING_TEST_FAILURES.md");
+const SUMMARY_JSON = path.join(ROOT, "test/accounting/reports/current/ACCOUNTING_TEST_SUMMARY.json");
+const COVERAGE_MD = path.join(ROOT, "test/accounting/reports/current/ACCOUNTING_TEST_COVERAGE.md");
+const RESULTS_MD = path.join(ROOT, "test/accounting/reports/current/ACCOUNTING_TEST_RESULTS.md");
 const CHECKPOINT_PATH = path.join(RESULTS_DIR, "ACCOUNTING_TEST_CHECKPOINT.json");
 const PROGRESS_PATH = path.join(RESULTS_DIR, "ACCOUNTING_TEST_PROGRESS.json");
 
@@ -1797,7 +1797,7 @@ async function main() {
     } else {
       console.log(`[FAST_SCAN] Result: FAIL`);
       console.log(`[FAST_SCAN] Failure reason: ${failureReason}`);
-      console.log(`[FAST_SCAN] Failure logged in ACCOUNTING_FIX_LOG.md`);
+      console.log(`[FAST_SCAN] Failure logged in test/accounting/reports/current/ACCOUNTING_FIX_LOG.md`);
       console.log(`[FAST_SCAN] No fix applied. Continuing to next scenario.`);
       totalFailed.push(scenario.id);
     }
@@ -1868,8 +1868,8 @@ async function main() {
   console.log(`  Pending: ${TOTAL_PLANNED - (lockedPass.size + finalPassed)}`);
   console.log(`  Coverage: ${finalCoverage}%`);
   console.log(`  Elapsed: ${fmtTime(finalTotalElapsed)}`);
-  console.log(`  Failures logged in: ACCOUNTING_FIX_LOG.md`);
-  console.log(`  Next action: fix scenarios listed in ACCOUNTING_FIX_LOG.md`);
+  console.log(`  Failures logged in: test/accounting/reports/current/ACCOUNTING_FIX_LOG.md`);
+  console.log(`  Next action: fix scenarios listed in test/accounting/reports/current/ACCOUNTING_FIX_LOG.md`);
   console.log(`${"═".repeat(60)}`);
   console.log(`\nNo fixes were applied during this run.`);
   console.log(`This was E2E_BRIDGE fast scan only.`);

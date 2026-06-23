@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { bridgeInvoke, bridgeReset } from "../e2e-bridge/e2e-commands";
+import { bridgeInvoke, bridgeReset } from "../bridge/e2e-commands";
 import { appendResult, type LayerResult } from "../shared/result-collector";
 
 describe("S63 — Read-only functions do not write", () => {

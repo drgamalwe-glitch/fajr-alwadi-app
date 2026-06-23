@@ -5,7 +5,7 @@ import type { LayerResult, UiCheck } from "../shared/result-collector";
 
 const BRIDGE_URL = "http://127.0.0.1:3899";
 const BASE_URL = "http://localhost:1420";
-const RESULTS_DIR = path.resolve(process.cwd(), ".test-results");
+const RESULTS_DIR = path.resolve(process.cwd(), "test/accounting/state");
 const RESULTS_FILE = path.join(RESULTS_DIR, "all-results.json");
 
 function ensureDir() {

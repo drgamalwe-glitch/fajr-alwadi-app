@@ -4,10 +4,10 @@ import {
   scenarioInstallmentOracle,
   scenarioGeneralExpenseOracle,
   type ScenarioOracleResult,
-} from "../accounting-oracle/oracle";
-import { assertExact, assertNear, allPassed, type AssertionResult } from "../accounting-oracle/assertions";
-import { bridgeInvoke, bridgeReset, bridgeHealth } from "../e2e-bridge/e2e-commands";
-import { writeAllReports, type ScenarioResult } from "../accounting-oracle/result-writer";
+} from "../oracle/oracle";
+import { assertExact, assertNear, allPassed, type AssertionResult } from "../oracle/assertions";
+import { bridgeInvoke, bridgeReset, bridgeHealth } from "../bridge/e2e-commands";
+import { writeAllReports, type ScenarioResult } from "../oracle/result-writer";
 import { appendResult, type LayerResult } from "../shared/result-collector";
 
 const BACKEND_MODE = "E2E_BRIDGE" as const;

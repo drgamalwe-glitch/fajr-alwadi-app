@@ -1,7 +1,7 @@
-import { bridgeInvoke, bridgeReset } from "../e2e-bridge/e2e-commands";
-import { assertExact, assertNear, allPassed, type AssertionResult } from "../accounting-oracle/assertions";
+import { bridgeInvoke, bridgeReset } from "../bridge/e2e-commands";
+import { assertExact, assertNear, allPassed, type AssertionResult } from "../oracle/assertions";
 import { appendResult, type LayerResult } from "../shared/result-collector";
-import type { ScenarioOracleResult } from "../accounting-oracle/oracle";
+import type { ScenarioOracleResult } from "../oracle/oracle";
 
 const BACKEND_MODE = "E2E_BRIDGE";
 

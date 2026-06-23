@@ -62,11 +62,11 @@ function main() {
 
   lines.push(`## التقرير النهائي\n`);
   lines.push(`يجب أن تنتج الأوامر التالية:\n`);
-  lines.push(`- \`ACCOUNTING_TEST_RESULTS.md\` — النتائج التفصيلية بالعربية`);
-  lines.push(`- \`ACCOUNTING_TEST_SUMMARY.json\` — ملخص JSON`);
-  lines.push(`- \`ACCOUNTING_TEST_FAILURES.md\` — تقرير الفشل`);
-  lines.push(`- \`ACCOUNTING_TEST_COVERAGE.md\` — مصفوفة التغطية`);
-  lines.push(`- \`ACCOUNTING_TEST_PLAN.md\` — هذه الخطة\n`);
+  lines.push(`- \`test/accounting/reports/current/ACCOUNTING_TEST_RESULTS.md\` — النتائج التفصيلية بالعربية`);
+  lines.push(`- \`test/accounting/reports/current/ACCOUNTING_TEST_SUMMARY.json\` — ملخص JSON`);
+  lines.push(`- \`test/accounting/reports/current/ACCOUNTING_TEST_FAILURES.md\` — تقرير الفشل`);
+  lines.push(`- \`test/accounting/reports/current/ACCOUNTING_TEST_COVERAGE.md\` — مصفوفة التغطية`);
+  lines.push(`- \`test/accounting/reports/current/ACCOUNTING_TEST_PLAN.md\` — هذه الخطة\n`);
 
   lines.push(`## قواعد الحكم\n`);
   lines.push(`- **PASS:** كل سيناريو ناجح في الطبقات الثلاث`);
@@ -74,8 +74,8 @@ function main() {
   lines.push(`- **FAIL:** أي طبقة فاشلة`);
   lines.push(`- **NOT_VALID_FOR_REAL_ACCOUNTING:** استخدام MOCK`);
 
-  fs.writeFileSync(path.join(ROOT, "ACCOUNTING_TEST_PLAN.md"), lines.join("\n"), "utf-8");
-  console.log("Test plan written to ACCOUNTING_TEST_PLAN.md");
+  fs.writeFileSync(path.join(ROOT, "test/accounting/reports/current/ACCOUNTING_TEST_PLAN.md"), lines.join("\n"), "utf-8");
+  console.log("Test plan written to test/accounting/reports/current/ACCOUNTING_TEST_PLAN.md");
 }
 
 main();

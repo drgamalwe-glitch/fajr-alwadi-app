@@ -8,7 +8,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["tests/accounting-oracle/**/*.test.ts", "tests/backend/**/*.spec.ts"],
+    include: ["test/accounting/oracle/**/*.test.ts", "test/accounting/backend/**/*.spec.ts"],
     testTimeout: 30_000,
     fileParallelism: false,
   },

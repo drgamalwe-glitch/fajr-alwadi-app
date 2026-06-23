@@ -5,7 +5,7 @@ import {
   assertExact, assertNear, appendResult,
   type FinancialSummary, type PartnerTx,
 } from "./helpers";
-import { bridgeInvoke } from "../e2e-bridge/e2e-commands";
+import { bridgeInvoke } from "../bridge/e2e-commands";
 
 describe("S53 — Delete available car", () => {
   beforeEach(resetDb);

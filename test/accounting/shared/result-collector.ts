@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const RESULTS_DIR = path.resolve(process.cwd(), ".test-results");
+const RESULTS_DIR = path.resolve(process.cwd(), "test/accounting/state");
 const RESULTS_FILE = path.join(RESULTS_DIR, "all-results.json");
 
 export interface LayerResult {

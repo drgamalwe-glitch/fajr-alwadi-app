@@ -1,6 +1,6 @@
 # خطة اختبارات المحاسبة — فجر الوادي
 
-**التاريخ:** 2026-06-23T02:30:33.100Z
+**التاريخ:** 2026-06-23T05:16:46.887Z
 
 ## البنية
 
@@ -108,11 +108,11 @@ npm run test:accounting:full   # ORACLE + BACKEND_DB + CHROMIUM_UI + consolidate
 
 يجب أن تنتج الأوامر التالية:
 
-- `ACCOUNTING_TEST_RESULTS.md` — النتائج التفصيلية بالعربية
-- `ACCOUNTING_TEST_SUMMARY.json` — ملخص JSON
-- `ACCOUNTING_TEST_FAILURES.md` — تقرير الفشل
-- `ACCOUNTING_TEST_COVERAGE.md` — مصفوفة التغطية
-- `ACCOUNTING_TEST_PLAN.md` — هذه الخطة
+- `test/accounting/reports/current/ACCOUNTING_TEST_RESULTS.md` — النتائج التفصيلية بالعربية
+- `test/accounting/reports/current/ACCOUNTING_TEST_SUMMARY.json` — ملخص JSON
+- `test/accounting/reports/current/ACCOUNTING_TEST_FAILURES.md` — تقرير الفشل
+- `test/accounting/reports/current/ACCOUNTING_TEST_COVERAGE.md` — مصفوفة التغطية
+- `test/accounting/reports/current/ACCOUNTING_TEST_PLAN.md` — هذه الخطة
 
 ## قواعد الحكم
 

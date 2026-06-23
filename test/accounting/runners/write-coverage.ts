@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { readAllResults } from "../tests/shared/result-collector";
+import { readAllResults } from "../shared/result-collector";
 
 const ROOT = process.cwd();
 
@@ -179,8 +179,8 @@ function main() {
   lines.push(`\n## سيناريوهات مؤرشفة (Legacy)\n`);
   lines.push("Legacy scenarios A/B/C were replaced by official S-series scenarios and are excluded from final verdict.\n");
 
-  fs.writeFileSync(path.join(ROOT, "ACCOUNTING_TEST_COVERAGE.md"), lines.join("\n"), "utf-8");
-  console.log("Coverage report written to ACCOUNTING_TEST_COVERAGE.md");
+  fs.writeFileSync(path.join(ROOT, "test/accounting/reports/current/ACCOUNTING_TEST_COVERAGE.md"), lines.join("\n"), "utf-8");
+  console.log("Coverage report written to test/accounting/reports/current/ACCOUNTING_TEST_COVERAGE.md");
 }
 
 main();
