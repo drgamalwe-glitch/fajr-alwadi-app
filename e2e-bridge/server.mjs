@@ -329,6 +329,113 @@ function distribute50(
   }
 }
 
+function getCarExpensesSum(carNum) {
+  return db
+    .prepare("SELECT COALESCE(SUM(amount),0) AS v FROM car_expenses WHERE car_number=?")
+    .get(carNum).v;
+}
+
+function getCarFullProfit(carNum) {
+  const car = db
+    .prepare("SELECT purchase_price, selling_price FROM cars WHERE car_number=?")
+    .get(carNum);
+  if (!car) return 0;
+  return Math.max(
+    0,
+    (Number(car.selling_price) || 0) -
+      (Number(car.purchase_price) || 0) -
+      getCarExpensesSum(carNum),
+  );
+}
+
+function getCarProfitRatio(carNum) {
+  const car = db.prepare("SELECT selling_price FROM cars WHERE car_number=?").get(carNum);
+  const selling = Number(car?.selling_price) || 0;
+  if (selling <= 0) return 0;
+  return getCarFullProfit(carNum) / selling;
+}
+
+function getRecognizedProfitForCar(carNum) {
+  return db
+    .prepare(
+      `SELECT COALESCE(SUM(amount),0) AS v FROM partner_transactions
+       WHERE kind='شريك' AND affects_profit=1
+       AND (
+         (source_type IN ('car_sale','customer_installment') AND source_id=?)
+         OR (related_source_type='car' AND related_source_id=?)
+       )`,
+    )
+    .get(carNum, carNum).v;
+}
+
+function calculatePaymentProfitCapped(carNum, paymentAmount) {
+  const theoretical = paymentAmount * getCarProfitRatio(carNum);
+  if (theoretical <= 0) return 0;
+  const remaining = getCarFullProfit(carNum) - getRecognizedProfitForCar(carNum);
+  if (remaining <= 0) return 0;
+  return Math.min(theoretical, remaining);
+}
+
+function rebuildInstallmentProfitsAfterCostChange(carNum) {
+  const car = db.prepare("SELECT * FROM cars WHERE car_number=?").get(carNum);
+  if (!car || car.status !== "مبيوعة") return;
+  const paymentType = car.payment_type || "";
+  if (paymentType !== "اقساط" && paymentType !== "موعد") return;
+
+  db.prepare(
+    `DELETE FROM partner_transactions
+     WHERE kind='شريك' AND affects_profit=1
+     AND source_type IN ('car_sale','customer_installment') AND source_id=?`,
+  ).run(carNum);
+
+  const ratio = getCarProfitRatio(carNum);
+  const fullProfit = getCarFullProfit(carNum);
+  let recognized = 0;
+  const currency = car.sale_currency || car.currency || "IQD";
+  const saleDate = car.sale_date || todayIso();
+
+  function addProfit(paymentAmount, sourceType, note) {
+    const theoretical = paymentAmount * ratio;
+    const remaining = fullProfit - recognized;
+    const profit = Math.min(theoretical, Math.max(0, remaining));
+    if (profit > 0) {
+      distribute50(
+        profit,
+        currency,
+        saleDate,
+        "قاصه",
+        "ايداع ارباح سيارة",
+        note,
+        sourceType,
+        carNum,
+        "profit_recognition",
+        false,
+        false,
+        true,
+        "car",
+        carNum,
+      );
+      recognized += profit;
+    }
+  }
+
+  const amountPaid = Number(car.amount_paid) || 0;
+  if (amountPaid > 0) {
+    addProfit(amountPaid, "car_sale", `ارباح مقدمة سيارة ${carNum}`);
+  }
+
+  const payments = db
+    .prepare(
+      `SELECT amount FROM partner_transactions
+       WHERE kind='زبون' AND type LIKE 'تسديد قسط%' AND notes LIKE ?
+       ORDER BY id`,
+    )
+    .all(`%${carNum}%`);
+  for (const pmt of payments) {
+    addProfit(Number(pmt.amount) || 0, "customer_installment", `ارباح قسط — سيارة ${carNum}`);
+  }
+}
+
 function recalcPartnerTotal(name, kind) {
   if (kind === "شريك") {
     const depIqd = db
@@ -371,6 +478,48 @@ function recalcPartnerTotal(name, kind) {
            AND type NOT LIKE 'تحويل%'`,
       )
       .get(name).val;
+    const iqd = depIqd - wdrIqd;
+    const usd = depUsd - wdrUsd;
+    db.prepare(
+      "UPDATE partners SET total_amount=?, iqd_balance=?, usd_balance=? WHERE partner_name=? AND kind=?",
+    ).run(iqd + usd, iqd, usd, name, kind);
+  } else if (kind === "مستثمر" || kind === "ممول" || kind === "شركة") {
+    const depIqd = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount),0) AS val FROM partner_transactions
+         WHERE partner_name=? AND kind=? AND COALESCE(currency,'IQD')='IQD'
+           AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+           AND type NOT LIKE 'تحويل%'`,
+      )
+      .get(name, kind).val;
+    const wdrIqd = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount),0) AS val FROM partner_transactions
+         WHERE partner_name=? AND kind=? AND COALESCE(currency,'IQD')='IQD'
+           AND (type LIKE 'سحب%' OR type LIKE 'باقي%')
+           AND type NOT LIKE 'تحويل%'`,
+      )
+      .get(name, kind).val;
+    const depUsd = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount),0) AS val FROM partner_transactions
+         WHERE partner_name=? AND kind=? AND COALESCE(currency,'IQD')='USD'
+           AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+           AND type NOT LIKE 'تحويل%'`,
+      )
+      .get(name, kind).val;
+    const wdrUsd = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount),0) AS val FROM partner_transactions
+         WHERE partner_name=? AND kind=? AND COALESCE(currency,'IQD')='USD'
+           AND (type LIKE 'سحب%' OR type LIKE 'باقي%')
+           AND type NOT LIKE 'تحويل%'`,
+      )
+      .get(name, kind).val;
     const iqd = depIqd - wdrIqd;
     const usd = depUsd - wdrUsd;
     db.prepare(
@@ -483,6 +632,26 @@ function cmdAddCar(args) {
       true, true, false,
       "car", num,
     );
+  } else if (
+    !isNew &&
+    existing &&
+    existing.status === "متوفرة" &&
+    purchaseType === "كاش" &&
+    purchase > 0 &&
+    existing.purchase_price !== purchase
+  ) {
+    db.prepare(
+      "DELETE FROM partner_transactions WHERE source_type='car_purchase' AND source_id=?",
+    ).run(num);
+    const pDate = purchaseDate || todayIso();
+    const note = `سحب شراء سيارة ${name} (شاصي: ${chassis})`;
+    distribute50(
+      purchase, currency, pDate, purchasePaymentType,
+      "سحب شراء سيارة", note,
+      "car_purchase", num, "cash_payment",
+      true, true, false,
+      "car", num,
+    );
   }
 
   // Sale partner transactions (if sold and not skip)
@@ -505,7 +674,8 @@ function cmdAddCar(args) {
         "car", num,
       );
       // Profit recognition
-      const profit = saleAmount * profitRatio;
+      const fullProfit = selling - purchase - expensesSum;
+      const profit = Math.min(saleAmount * profitRatio, Math.max(0, fullProfit));
       if (profit > 0) {
         const profitNote = `ايداع ارباح سيارة ${name} ${chassis}`;
         distribute50(
@@ -809,10 +979,18 @@ function cmdGetFinancialSummary(args) {
   const allCars = db.prepare("SELECT * FROM cars").all();
   const allCarExpenses = db.prepare("SELECT * FROM car_expenses").all();
   const invIqd = allCars
-    .filter((c) => c.status === "متوفرة")
+    .filter((c) => c.status === "متوفرة" && (c.currency || "IQD") === "IQD")
     .reduce((sum, c) => {
       const exp = allCarExpenses
         .filter((e) => e.car_number === c.car_number)
+        .reduce((s, e) => s + e.amount, 0);
+      return sum + c.purchase_price + exp;
+    }, 0);
+  const invUsd = allCars
+    .filter((c) => c.status === "متوفرة" && (c.currency || "IQD") === "USD")
+    .reduce((sum, c) => {
+      const exp = allCarExpenses
+        .filter((e) => e.car_number === c.car_number && (e.currency || "IQD") === "USD")
         .reduce((s, e) => s + e.amount, 0);
       return sum + c.purchase_price + exp;
     }, 0);
@@ -829,10 +1007,33 @@ function cmdGetFinancialSummary(args) {
     )
     .get().v;
 
-  // Investments
+  // Investments: net investor liability from transactions
   const invtIqd = db
     .prepare(
-      "SELECT COALESCE(SUM(total_amount),0) AS v FROM partners WHERE kind='مستثمر' AND total_amount>0",
+      `SELECT COALESCE(SUM(
+         CASE WHEN (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                     OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                     OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                    AND type NOT LIKE 'تحويل%' THEN amount
+              WHEN (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                    AND type NOT LIKE 'تحويل%' THEN -amount
+              ELSE 0 END), 0) AS v
+       FROM partner_transactions
+       WHERE kind='مستثمر' AND COALESCE(currency,'IQD')='IQD'`,
+    )
+    .get().v;
+  const invtUsd = db
+    .prepare(
+      `SELECT COALESCE(SUM(
+         CASE WHEN (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                     OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'إعادة استثمار%'
+                     OR type LIKE 'تسوية%' OR type LIKE 'تسديد%')
+                    AND type NOT LIKE 'تحويل%' THEN amount
+              WHEN (type LIKE 'سحب%' OR type LIKE 'باقي%')
+                    AND type NOT LIKE 'تحويل%' THEN -amount
+              ELSE 0 END), 0) AS v
+       FROM partner_transactions
+       WHERE kind='مستثمر' AND COALESCE(currency,'IQD')='USD'`,
     )
     .get().v;
 
@@ -884,9 +1085,9 @@ function cmdGetFinancialSummary(args) {
     qasa_iqd: qasaIqd,
     qasa_usd: qasaUsd,
     inventory_value_iqd: invIqd,
-    inventory_value_usd: 0,
+    inventory_value_usd: invUsd,
     total_investments_iqd: invtIqd,
-    total_investments_usd: 0,
+    total_investments_usd: invtUsd,
     total_partner_capital_iqd: capIqd,
     total_partner_capital_usd: capUsd,
     total_debtors_iqd: debtIqd,
@@ -1273,30 +1474,30 @@ function cmdAddPartnerTransaction(args) {
   const notes = args.notes ? String(args.notes) : null;
   const currency = String(args.currency || "IQD");
   const paymentType = String(args.payment_type || args.paymentType || "قاصه");
+  const isInvestor = kind === "مستثمر";
+  const isCustomerInstallment = kind === "زبون" && type.startsWith("تسديد قسط") && amount > 0;
 
-  // Record the customer transaction
-  insertPartnerTx(
+  const txId = insertPartnerTx(
     name, kind, type, amount, date, paymentType, notes, currency,
-    "", "", "",
-    true, true, false, "", "",
+    isInvestor ? "investor_transaction" : "",
+    "",
+    isInvestor ? (isDepositType(type) ? "deposit" : "withdrawal") : "",
+    true, !isInvestor, false, "", "",
   );
 
+  if (isInvestor && txId) {
+    db.prepare("UPDATE partner_transactions SET source_id=? WHERE id=?").run(String(txId), txId);
+    recalcPartnerTotal(name, kind);
+  }
+
   // If this is a customer installment payment, create partner cash_movement + profit_recognition
-  if (kind === "زبون" && type.startsWith("تسديد قسط") && amount > 0) {
+  if (isCustomerInstallment) {
     // Extract car number from notes (format: "تسديد قسط سيارة <carNum>")
     const match = notes?.match(/تسديد قسط سيارة\s+(.+)/);
     if (match) {
       const carNum = match[1].trim();
       const car = db.prepare("SELECT * FROM cars WHERE car_number = ?").get(carNum);
       if (car) {
-        const purchasePrice = Number(car.purchase_price) || 0;
-        const sellingPrice = Number(car.selling_price) || 0;
-        const expensesSum = (db.prepare(
-          "SELECT COALESCE(SUM(amount), 0) AS v FROM car_expenses WHERE car_number = ?"
-        ).get(carNum)).v || 0;
-        const fullProfit = sellingPrice - purchasePrice - expensesSum;
-        const profitRatio = sellingPrice > 0 ? fullProfit / sellingPrice : 0;
-
         // Partner cash movement (the payment enters partner cash)
         distribute50(
           amount, currency, date, "قاصه",
@@ -1306,8 +1507,8 @@ function cmdAddPartnerTransaction(args) {
           "car", carNum,
         );
 
-        // Partner profit recognition
-        const profit = amount * profitRatio;
+        // Partner profit recognition (capped)
+        const profit = calculatePaymentProfitCapped(carNum, amount);
         if (profit > 0) {
           distribute50(
             profit, currency, date, "قاصه",
@@ -1354,13 +1555,25 @@ function cmdUpdatePartnerTransaction(args) {
 
 function cmdDeleteCar(args) {
   const num = String(args.num || "").trim();
-  db.prepare("DELETE FROM partner_transactions WHERE source_type IN ('car_purchase','car_sale') AND source_id=?").run(num);
+  db.prepare(
+    "DELETE FROM partner_transactions WHERE source_type IN ('car_purchase','car_sale') AND source_id=?",
+  ).run(num);
+  db.prepare(
+    `DELETE FROM partner_transactions
+     WHERE source_type IN ('customer_installment','customer_payment')
+       AND (source_id=? OR related_source_id=?)`,
+  ).run(num, num);
+  db.prepare(
+    "DELETE FROM partner_transactions WHERE kind='زبون' AND notes LIKE ?",
+  ).run(`%${num}%`);
   const carExpenses = db.prepare("SELECT id FROM car_expenses WHERE car_number=?").all(num);
   for (const exp of carExpenses) {
-    db.prepare("DELETE FROM partner_transactions WHERE source_type='car_expense' AND source_id=?").run(String(exp.id));
+    db.prepare(
+      "DELETE FROM partner_transactions WHERE source_type='car_expense' AND source_id=?",
+    ).run(String(exp.id));
   }
-  db.prepare("DELETE FROM cars WHERE car_number=?").run(num);
   db.prepare("DELETE FROM car_expenses WHERE car_number=?").run(num);
+  db.prepare("DELETE FROM cars WHERE car_number=?").run(num);
   recalcAllPartners();
   return undefined;
 }
@@ -1376,6 +1589,10 @@ function cmdDeleteExpense(args) {
 }
 
 function cmdUpdateExpense(args) {
+  const id = Number(args.id);
+  db.prepare(
+    "DELETE FROM partner_transactions WHERE source_type='expense' AND source_id=? AND source_role='cash_payment'",
+  ).run(String(id));
   db.prepare(
     "UPDATE expenses SET description=?, amount=?, date=?, notes=?, currency=? WHERE id=?",
   ).run(
@@ -1384,8 +1601,21 @@ function cmdUpdateExpense(args) {
     String(args.date || ""),
     args.notes ? String(args.notes) : null,
     String(args.currency || "IQD"),
-    Number(args.id),
+    id,
   );
+  const amount = Number(args.amount) || 0;
+  const currency = String(args.currency || "IQD");
+  const date = String(args.date || todayIso());
+  if (amount > 0) {
+    distribute50(
+      amount, currency, date, "قاصه",
+      "سحب مصروف عام", String(args.description || ""),
+      "expense", String(id), "cash_payment",
+      true, true, false,
+      "expense", String(id),
+    );
+  }
+  recalcAllPartners();
   return undefined;
 }
 
@@ -1415,6 +1645,7 @@ function cmdAddCarExpenseRecord(args) {
       "car", cn,
     );
   }
+  rebuildInstallmentProfitsAfterCostChange(cn);
   return expId;
 }
 
@@ -1432,13 +1663,62 @@ function cmdPayFinancierFromPartners(args) {
   const name = String(args.financier_name || args.financierName || "").trim();
   const kind = String(args.financier_kind || args.financierKind || "ممول").trim();
   const amount = Number(args.amount) || 0;
-  const date = String(args.date || "");
+  const date = String(args.date || todayIso());
   const currency = String(args.currency || "IQD");
-  insertPartnerTx(
-    name, kind, "سحب", amount, date, "قاصه",
-    args.notes ? String(args.notes) : null, currency,
-    "", "", "", true, true, false, "", "",
+  const notes = args.notes ? String(args.notes) : null;
+
+  const srcType =
+    kind === "مستثمر"
+      ? "investor_transaction"
+      : kind === "شركة"
+        ? "company_transaction"
+        : "funder_transaction";
+  const affectsQasa = kind === "مستثمر" ? 1 : 0;
+
+  const txId = insertPartnerTx(
+    name,
+    kind,
+    "سحب",
+    amount,
+    date,
+    "قاصه",
+    notes,
+    currency,
+    srcType,
+    "",
+    "repayment_account_movement",
+    affectsQasa,
+    0,
+    0,
+    "",
+    "",
   );
+  db.prepare("UPDATE partner_transactions SET source_id=? WHERE id=?").run(String(txId), txId);
+
+  recalcPartnerTotal(name, kind);
+
+  const partnerSourceType =
+    kind === "شركة" ? "company_payment" : kind === "مستثمر" ? "investor_transaction" : "funder_payment";
+  const accountLabel =
+    kind === "شركة" ? "الشركة" : kind === "مستثمر" ? "المستثمر" : "الممول";
+  distribute50(
+    amount,
+    currency,
+    date,
+    "قاصه",
+    "سحب تسديد",
+    `سحب لتسديد ${accountLabel} ${name}`,
+    partnerSourceType,
+    String(txId),
+    "partner_cash_payment",
+    true,
+    true,
+    false,
+    "",
+    "",
+  );
+
+  recalcAllPartners();
   return undefined;
 }
 
@@ -1474,22 +1754,86 @@ function cmdOpenWhatsapp() {
 
 // ─── agency stubs ───────────────────────────────────────────────────
 
-function cmdAddAgency() {
-  return Date.now();
+function cmdAddAgency(args) {
+  const date = args.date ? String(args.date) : todayIso();
+  const time = args.time ? String(args.time) : nowTime();
+  db.prepare(
+    `INSERT INTO agencies
+       (old_agent_name, car_type, car_number, car_model, color, new_agent_name, phone, amount_usd, amount_iqd, notes, date, time)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+  ).run(
+    String(args.old_agent_name || ""),
+    String(args.car_type || ""),
+    String(args.car_number || ""),
+    String(args.car_model || ""),
+    String(args.color || ""),
+    String(args.new_agent_name || ""),
+    String(args.phone || ""),
+    Number(args.amount_usd) || 0,
+    Number(args.amount_iqd) || 0,
+    String(args.notes || ""),
+    date,
+    time,
+  );
+  return db.prepare("SELECT last_insert_rowid() AS id").get().id;
 }
-function cmdUpdateAgency() {
+function cmdUpdateAgency(args) {
+  const id = Number(args.id);
+  db.prepare(
+    `UPDATE agencies SET old_agent_name=?, car_type=?, car_number=?, car_model=?, color=?,
+        new_agent_name=?, phone=?, amount_usd=?, amount_iqd=?, notes=?
+     WHERE id=?`,
+  ).run(
+    String(args.old_agent_name || ""),
+    String(args.car_type || ""),
+    String(args.car_number || ""),
+    String(args.car_model || ""),
+    String(args.color || ""),
+    String(args.new_agent_name || ""),
+    String(args.phone || ""),
+    Number(args.amount_usd) || 0,
+    Number(args.amount_iqd) || 0,
+    String(args.notes || ""),
+    id,
+  );
   return undefined;
 }
-function cmdDeleteAgency() {
+function cmdDeleteAgency(args) {
+  const id = Number(args.id);
+  db.prepare("DELETE FROM partner_transactions WHERE source_type='agency' AND source_id=?").run(String(id));
+  db.prepare("DELETE FROM agency_transactions WHERE agency_id=?").run(id);
+  db.prepare("DELETE FROM agencies WHERE id=?").run(id);
   return undefined;
 }
-function cmdGetAgencyTransactions() {
-  return [];
+function cmdGetAgencyTransactions(args) {
+  const agencyId = args.agency_id ?? args.agencyId;
+  if (agencyId != null) {
+    return db
+      .prepare("SELECT * FROM agency_transactions WHERE agency_id=? ORDER BY id")
+      .all(Number(agencyId));
+  }
+  return db.prepare("SELECT * FROM agency_transactions ORDER BY id").all();
 }
-function cmdAddAgencyTransaction() {
-  return undefined;
+function cmdAddAgencyTransaction(args) {
+  db.prepare(
+    "INSERT INTO agency_transactions (agency_id, date, time, type_, amount, currency, notes) VALUES (?,?,?,?,?,?,?)",
+  ).run(
+    Number(args.agency_id ?? args.agencyId),
+    String(args.date || todayIso()),
+    String(args.time || nowTime()),
+    String(args.type_ || args.type || ""),
+    Number(args.amount) || 0,
+    String(args.currency || "IQD"),
+    args.notes ? String(args.notes) : null,
+  );
+  return db.prepare("SELECT last_insert_rowid() AS id").get().id;
 }
-function cmdDeleteAgencyTransaction() {
+function cmdDeleteAgencyTransaction(args) {
+  const id = Number(args.id);
+  db.prepare(
+    "DELETE FROM partner_transactions WHERE source_type='agency_transaction' AND source_id=?",
+  ).run(String(id));
+  db.prepare("DELETE FROM agency_transactions WHERE id=?").run(id);
   return undefined;
 }
 

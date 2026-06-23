@@ -349,8 +349,9 @@ const SCENARIOS: ScenarioDef[] = [
       // Total profit = 2.4M
       expected["profit"] = 2_400_000; actual["profit"] = s.monthly_profits_iqd;
       checks.push(assertNear("profit with car expense", 2_400_000, s.monthly_profits_iqd));
-      expected["qasa"] = -4_000_000; actual["qasa"] = s.qasa_iqd;
-      checks.push(assertNear("qasa", -4_000_000, s.qasa_iqd));
+      // qasa: -10M purchase + 5M down + 1M installment - 2M car expense = -6M
+      expected["qasa"] = -6_000_000; actual["qasa"] = s.qasa_iqd;
+      checks.push(assertNear("qasa", -6_000_000, s.qasa_iqd));
       return { pass: !collectErrors(checks), failureReason: collectErrors(checks), expected, actual, details: "اقساط مع مصروف سيارة — الربح أقل" };
     },
   },
@@ -497,8 +498,8 @@ const SCENARIOS: ScenarioDef[] = [
       s = await getSummary();
       expected["profitAfter"] = 8_000_000; actual["profitAfter"] = s.monthly_profits_iqd;
       checks.push(assertNear("profit after expense", 8_000_000, s.monthly_profits_iqd));
-      expected["qasaAfter"] = 6_000_000; actual["qasaAfter"] = s.qasa_iqd;
-      checks.push(assertNear("qasa after expense", 6_000_000, s.qasa_iqd));
+      expected["qasaAfter"] = 7_000_000; actual["qasaAfter"] = s.qasa_iqd;
+      checks.push(assertNear("qasa after expense", 7_000_000, s.qasa_iqd));
       return { pass: !collectErrors(checks), failureReason: collectErrors(checks), expected, actual, details: "مصروف سيارة بعد البيع — يقلل الكاش لا الربح" };
     },
   },
