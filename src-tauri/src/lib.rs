@@ -984,6 +984,27 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         let _ = conn.execute("INSERT INTO db_version (version) VALUES (14)", []);
     }
 
+    // Version 15: Normalize currencies and include currency in unique index for dual-currency support
+    if version < 15 {
+        let _ = conn.execute(
+            "UPDATE partner_transactions SET currency = 'IQD' WHERE currency IS NULL OR TRIM(currency) = ''",
+            [],
+        );
+        let _ = conn.execute("DROP INDEX IF EXISTS idx_partner_tx_source_unique", []);
+        let _ = conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_partner_tx_source_unique
+             ON partner_transactions(source_type, source_id, source_role, partner_name, kind, currency)
+             WHERE source_type IS NOT NULL
+               AND source_id IS NOT NULL
+               AND source_role IS NOT NULL
+               AND source_type != ''
+               AND source_id != ''
+               AND source_role != ''",
+            [],
+        );
+        let _ = conn.execute("INSERT INTO db_version (version) VALUES (15)", []);
+    }
+
     // Performance indexes
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cars_status ON cars(status)",
@@ -1908,11 +1929,36 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
         return Ok(());
     }
 
+    // Phase 16: Handle agency_profit rows — create cash entry only (no capital)
+    // These rows have affects_qasa=1 and affects_partner_cash=1, so they must create
+    // a real cash ledger entry. The revenue side is already handled by agency_ledger_entries.
+    if (source_type == "agency" || source_type == "agency_transaction")
+        && source_role == "agency_profit"
+        && should_create_cash_entry
+    {
+        record_ledger_entry(
+            conn,
+            &tx_date,
+            &tx_time,
+            "cash",
+            Some(&payment_type),
+            amount,
+            0.0,
+            &curr,
+            "partner_transaction",
+            &ref_id,
+            "ايداع ارباح وكالة",
+            &format!("إيداع أرباح وكالة للشريك {}", p_name),
+            Some(&notes),
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
     if tx_type.starts_with("سحب شراء سيارة")
         || tx_type.starts_with("ايداع بيع سيارة")
         || tx_type.starts_with("مقدمة بيع سيارة")
         || tx_type.starts_with("سحب مصروف")
-        || tx_type.starts_with("ايداع ارباح وكالة")
         || tx_type.starts_with("ايداع ارباح سيارة")
         || tx_type.starts_with("تسديد قسط")
         || tx_type.starts_with("باقي")
@@ -4132,40 +4178,8 @@ fn sell_car_with_accounting(
             Some(&car_number),
         )?;
 
-        // 2. Profit recognition (profit = selling_price - purchase_price - expenses_sum)
-        let purchase_price: f64 = db.query_row(
-            "SELECT COALESCE(purchase_price, 0.0) FROM cars WHERE car_number = ?1",
-            [&car_number],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
-
-        let expenses_sum: f64 = db.query_row(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
-            [&car_number],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
-
-        let profit = selling_price - purchase_price - expenses_sum;
-        if profit > 0.0 {
-            let profit_note = format!("ارباح بيع سيارة {} ({})", car_label, car_number);
-            distribute_to_partners_50_with_effects_and_related(
-                &db,
-                profit,
-                &sale_currency,
-                &sale_date,
-                "قاصه",
-                "ايداع ارباح سيارة",
-                &profit_note,
-                "car_sale",
-                &car_number,
-                "profit_recognition",
-                false, // affects_qasa
-                false, // affects_partner_cash
-                true,  // affects_profit
-                Some("car"),
-                Some(&car_number),
-            )?;
-        }
+        // 2. Profit is NOT recorded as a partner transaction.
+        // Cash car sale profit is calculated analytically in get_profit_distribution_summary.
     }
 
     // ============================================================
@@ -4748,34 +4762,8 @@ fn update_sold_car_with_accounting(
             Some(&car_number),
         )?;
 
-        // 2. Profit recognition
-        let expenses_sum: f64 = db.query_row(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
-            [&car_number],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
-
-        let profit = selling_price - purchase_price - expenses_sum;
-        if profit > 0.0 {
-            let profit_note = format!("ارباح بيع سيارة {} ({})", car_name, car_number);
-            distribute_to_partners_50_with_effects_and_related(
-                &db,
-                profit,
-                &sale_currency,
-                &sale_date,
-                "قاصه",
-                "ايداع ارباح سيارة",
-                &profit_note,
-                "car_sale",
-                &car_number,
-                "profit_recognition",
-                false, // affects_qasa
-                false, // affects_partner_cash
-                true,  // affects_profit
-                Some("car"),
-                Some(&car_number),
-            )?;
-        }
+        // 2. Profit is NOT recorded as a partner transaction.
+        // Cash car sale profit is calculated analytically in get_profit_distribution_summary.
     }
 
     // ============================================================
@@ -5065,33 +5053,8 @@ fn save_and_sell_car_with_accounting(
             Some(&car_number),
         )?;
 
-        // 2. Profit recognition
-        let expenses_sum: f64 = db.query_row(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
-            [&car_number],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
-        let profit = selling - purchase - expenses_sum;
-        if profit > 0.0 {
-            let profit_note = format!("ارباح بيع سيارة {} ({})", clean_name, car_number);
-            distribute_to_partners_50_with_effects_and_related(
-                &db,
-                profit,
-                &sale_curr,
-                sale_date_str,
-                "قاصه",
-                "ايداع ارباح سيارة",
-                &profit_note,
-                "car_sale",
-                &car_number,
-                "profit_recognition",
-                false, // affects_qasa
-                false, // affects_partner_cash
-                true,  // affects_profit
-                Some("car"),
-                Some(&car_number),
-            )?;
-        }
+        // 2. Profit is NOT recorded as a partner transaction.
+        // Cash car sale profit is calculated analytically in get_profit_distribution_summary.
     }
 
     // ============================================================
@@ -7617,9 +7580,9 @@ fn rebuild_sold_car_accounting_after_cost_change(
     delete_car_sale_ledger_entries(db, car_number)?;
     record_car_sale_ledger_entries(db, car_number)?;
 
-    // 3. For cash sales: rebuild car_sale cash_movement + profit_recognition
+    // 3. For cash sales: rebuild car_sale cash_movement only
     if payment_type == "كاش" {
-        // Delete old car_sale partner rows (cash_movement + profit_recognition)
+        // Delete old car_sale partner rows (cash_movement + any legacy profit_recognition)
         delete_generated_car_sale_partner_transactions(db, car_number)?;
 
         // Also clean up any legacy customer_sale_payment rows from the old bug
@@ -7654,7 +7617,7 @@ fn rebuild_sold_car_accounting_after_cost_change(
             [car_number],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         );
-        let (purchase_price, selling_price, car_name, sale_currency, sale_date) = match car_data {
+        let (_purchase_price, selling_price, car_name, sale_currency, sale_date) = match car_data {
             Ok(d) => d,
             Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
             Err(e) => return Err(e.to_string()),
@@ -7680,33 +7643,8 @@ fn rebuild_sold_car_accounting_after_cost_change(
             Some(car_number),
         )?;
 
-        // Recreate profit_recognition with updated profit
-        let expenses_sum: f64 = db.query_row(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
-            [car_number],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
-        let profit = selling_price - purchase_price - expenses_sum;
-        if profit > 0.0 {
-            let profit_note = format!("ارباح بيع سيارة {} ({}) بعد تغيير التكلفة", car_name, car_number);
-            distribute_to_partners_50_with_effects_and_related(
-                db,
-                profit,
-                &sale_currency,
-                &sale_date,
-                "قاصه",
-                "ايداع ارباح سيارة",
-                &profit_note,
-                "car_sale",
-                car_number,
-                "profit_recognition",
-                false, // affects_qasa
-                false, // affects_partner_cash
-                true,  // affects_profit
-                Some("car"),
-                Some(car_number),
-            )?;
-        }
+        // Profit is NOT recreated. Cash car sale profit is calculated analytically
+        // in get_profit_distribution_summary from car data.
     } // For installment/موعد: only ledger entries are rebuilt above; manual customer payments are preserved
 
     Ok(())
@@ -8378,32 +8316,14 @@ fn rebuild_agency_partner_entries(db: &Connection, agency_id: i64) -> Result<(),
         Err(e) => return Err(e.to_string()),
     };
 
-    // Delete ALL old partner rows (cash_movement + profit_recognition) for this agency
+    // Delete ALL old partner rows for this agency
+    // Handles legacy cash_movement, profit_recognition, and current agency_profit rows
     delete_partner_transactions_by_source_with_ledger(db, "agency", &agency_id.to_string(), None)?;
 
-    let cash_note = format!("ايداع وكالة {} {} رئيسي", old_agent_name.trim(), new_agent_name.trim())
-        .trim()
-        .replace("  ", " ");
-    let profit_note = agency_profit_note(&old_agent_name, &new_agent_name);
+    let note = agency_profit_note(&old_agent_name, &new_agent_name);
 
     if amount_usd > 0.0 {
-        // Cash movement (affects Qasa/Cash/Partner balance)
-        distribute_to_partners_50_with_effects(
-            db,
-            amount_usd,
-            "USD",
-            &date,
-            "قاصه",
-            "ايداع وكالة",
-            &cash_note,
-            "agency",
-            &agency_id.to_string(),
-            "cash_movement",
-            true,  // affects_qasa
-            true,  // affects_partner_cash
-            false, // affects_profit
-        )?;
-        // Profit recognition (affects Profit Distribution only)
+        // Single active row per partner: affects Qasa, Cash, AND Profit Distribution
         distribute_to_partners_50_with_effects(
             db,
             amount_usd,
@@ -8411,34 +8331,18 @@ fn rebuild_agency_partner_entries(db: &Connection, agency_id: i64) -> Result<(),
             &date,
             "قاصه",
             "ايداع ارباح وكالة",
-            &profit_note,
+            &note,
             "agency",
             &agency_id.to_string(),
-            "profit_recognition",
-            false, // affects_qasa
-            false, // affects_partner_cash
+            "agency_profit",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
             true,  // affects_profit
         )?;
     }
 
     if amount_iqd > 0.0 {
-        // Cash movement (affects Qasa/Cash/Partner balance)
-        distribute_to_partners_50_with_effects(
-            db,
-            amount_iqd,
-            "IQD",
-            &date,
-            "قاصه",
-            "ايداع وكالة",
-            &cash_note,
-            "agency",
-            &agency_id.to_string(),
-            "cash_movement",
-            true,  // affects_qasa
-            true,  // affects_partner_cash
-            false, // affects_profit
-        )?;
-        // Profit recognition (affects Profit Distribution only)
+        // Single active row per partner: affects Qasa, Cash, AND Profit Distribution
         distribute_to_partners_50_with_effects(
             db,
             amount_iqd,
@@ -8446,12 +8350,12 @@ fn rebuild_agency_partner_entries(db: &Connection, agency_id: i64) -> Result<(),
             &date,
             "قاصه",
             "ايداع ارباح وكالة",
-            &profit_note,
+            &note,
             "agency",
             &agency_id.to_string(),
-            "profit_recognition",
-            false, // affects_qasa
-            false, // affects_partner_cash
+            "agency_profit",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
             true,  // affects_profit
         )?;
     }
@@ -8717,7 +8621,7 @@ fn add_agency_transaction(
     // Record ledger entry
     record_agency_transaction_ledger_entries(&db, tx_id)?;
 
-    // توزيع 50% من أرباح الوكالة على حسابات الشركاء (فائدة الإيداع فقط)
+    // توزيع أرباح الوكالة على حسابات الشركاء (صف واحد نشط لكل عملة)
     if type_.trim() == "ايداع" && amount > 0.0 {
         let curr = currency.unwrap_or_else(|| "IQD".to_string());
         let (old_agent_name, new_agent_name): (String, String) = db
@@ -8734,24 +8638,7 @@ fn add_agency_transaction(
         )
         .trim()
         .replace("  ", " ");
-        // Phase 14: Use source fields for transaction cash movement + profit
-        // Cash movement (affects Qasa/Cash/Partner balance)
-        distribute_to_partners_50_with_effects(
-            &db,
-            amount,
-            &curr,
-            date.trim(),
-            "قاصه",
-            "ايداع وكالة",
-            &agency_note,
-            "agency_transaction",
-            &tx_id.to_string(),
-            "cash_movement",
-            true,  // affects_qasa
-            true,  // affects_partner_cash
-            false, // affects_profit
-        )?;
-        // Profit recognition (affects Profit Distribution only)
+        // Single active row per partner: affects Qasa, Cash, AND Profit Distribution
         distribute_to_partners_50_with_effects(
             &db,
             amount,
@@ -8762,9 +8649,9 @@ fn add_agency_transaction(
             &agency_note,
             "agency_transaction",
             &tx_id.to_string(),
-            "profit_recognition",
-            false, // affects_qasa
-            false, // affects_partner_cash
+            "agency_profit",
+            true,  // affects_qasa
+            true,  // affects_partner_cash
             true,  // affects_profit
         )?;
     }
@@ -9113,12 +9000,14 @@ fn calculate_profit_totals_since(
     let effective_time = if time_filter.is_empty() { "00:00" } else { time_filter };
     let use_time = !start_time.trim().is_empty();
 
-    // Exclude customer_payment profit_recognition rows (no longer created, but old data may exist)
+    // Exclude customer_payment and car_sale profit_recognition rows
+    // Car sale profit is calculated analytically below
     let realized_profit_iqd: f64 = db.query_row(
         "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
          WHERE kind = 'شريك' AND COALESCE(currency, 'IQD') = 'IQD'
            AND affects_profit = 1
            AND NOT (source_type = 'customer_payment' AND source_role = 'profit_recognition')
+           AND NOT (source_type = 'car_sale' AND source_role = 'profit_recognition')
            AND (
              date > ?1
              OR (date = ?1 AND COALESCE(time, '00:00') >= ?2)
@@ -9132,6 +9021,7 @@ fn calculate_profit_totals_since(
          WHERE kind = 'شريك' AND COALESCE(currency, 'IQD') = 'USD'
            AND affects_profit = 1
            AND NOT (source_type = 'customer_payment' AND source_role = 'profit_recognition')
+           AND NOT (source_type = 'car_sale' AND source_role = 'profit_recognition')
            AND (
              date > ?1
              OR (date = ?1 AND COALESCE(time, '00:00') >= ?2)
@@ -9146,6 +9036,43 @@ fn calculate_profit_totals_since(
     ).unwrap_or(0.0);
     let installment_profit_usd = calculate_analytical_installment_profit(
         db, "", "USD", start_date, "9999-12-31", use_time, effective_time
+    ).unwrap_or(0.0);
+
+    // Add analytical cash car sale profit (no profit_recognition rows are created)
+    let cash_car_profit_iqd: f64 = db.query_row(
+        "SELECT COALESCE(SUM(
+          CASE WHEN (selling_price - purchase_price - (
+            SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_expenses.car_number = cars.car_number
+          )) > 0
+          THEN (selling_price - purchase_price - (
+            SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_expenses.car_number = cars.car_number
+          ))
+          ELSE 0
+          END
+        ), 0.0) FROM cars
+         WHERE status = 'مبيعة' AND payment_type = 'كاش'
+           AND COALESCE(sale_currency, 'IQD') = 'IQD'
+           AND sale_date >= ?1",
+        params![start_date],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
+
+    let cash_car_profit_usd: f64 = db.query_row(
+        "SELECT COALESCE(SUM(
+          CASE WHEN (selling_price - purchase_price - (
+            SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_expenses.car_number = cars.car_number
+          )) > 0
+          THEN (selling_price - purchase_price - (
+            SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_expenses.car_number = cars.car_number
+          ))
+          ELSE 0
+          END
+        ), 0.0) FROM cars
+         WHERE status = 'مبيعة' AND payment_type = 'كاش'
+           AND COALESCE(sale_currency, 'IQD') = 'USD'
+           AND sale_date >= ?1",
+        params![start_date],
+        |row| row.get(0),
     ).unwrap_or(0.0);
 
     // Only general expenses (not linked to a car)
@@ -9174,8 +9101,8 @@ fn calculate_profit_totals_since(
     ).unwrap_or(0.0);
 
     Ok((
-        realized_profit_iqd + installment_profit_iqd - general_expenses_iqd,
-        realized_profit_usd + installment_profit_usd - general_expenses_usd,
+        realized_profit_iqd + installment_profit_iqd + cash_car_profit_iqd - general_expenses_iqd,
+        realized_profit_usd + installment_profit_usd + cash_car_profit_usd - general_expenses_usd,
     ))
 }
 
@@ -9438,23 +9365,63 @@ fn get_profit_distribution_summary(
         &db, "", "USD", &start, &end, use_time, effective_start_time
     ).unwrap_or(0.0);
 
+    // Calculate analytical cash car sale profit from car data (no profit_recognition rows created)
+    let total_cash_car_profit_iqd: f64 = db.query_row(
+        "SELECT COALESCE(SUM(
+          CASE WHEN (selling_price - purchase_price - (
+            SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_expenses.car_number = cars.car_number
+          )) > 0
+          THEN (selling_price - purchase_price - (
+            SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_expenses.car_number = cars.car_number
+          ))
+          ELSE 0
+          END
+        ), 0.0) FROM cars
+         WHERE status = 'مبيعة' AND payment_type = 'كاش'
+           AND COALESCE(sale_currency, 'IQD') = 'IQD'
+           AND sale_date >= ?1 AND sale_date <= ?2",
+        params![&start, &end],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
+
+    let total_cash_car_profit_usd: f64 = db.query_row(
+        "SELECT COALESCE(SUM(
+          CASE WHEN (selling_price - purchase_price - (
+            SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_expenses.car_number = cars.car_number
+          )) > 0
+          THEN (selling_price - purchase_price - (
+            SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_expenses.car_number = cars.car_number
+          ))
+          ELSE 0
+          END
+        ), 0.0) FROM cars
+         WHERE status = 'مبيعة' AND payment_type = 'كاش'
+           AND COALESCE(sale_currency, 'IQD') = 'USD'
+           AND sale_date >= ?1 AND sale_date <= ?2",
+        params![&start, &end],
+        |row| row.get(0),
+    ).unwrap_or(0.0);
+
     // Count partners for splitting
     let partner_count = partners_list.len() as f64;
     let per_partner_installment_iqd = if partner_count > 0.0 { total_installment_profit_iqd / partner_count } else { 0.0 };
     let per_partner_installment_usd = if partner_count > 0.0 { total_installment_profit_usd / partner_count } else { 0.0 };
+    let per_partner_cash_car_iqd = if partner_count > 0.0 { total_cash_car_profit_iqd / partner_count } else { 0.0 };
+    let per_partner_cash_car_usd = if partner_count > 0.0 { total_cash_car_profit_usd / partner_count } else { 0.0 };
 
     let mut partners = Vec::new();
     for name in partners_list {
         // Phase 9: Use affects_profit = 1 instead of type names
         // Issue 8: Use time-aware filtering
         // Exclude customer_payment profit_recognition rows (no longer created, but old data may exist)
-        // Keep car_sale and agency profit_recognition rows
+        // Exclude car_sale profit_recognition rows (no longer created; profit is analytical)
         let existing_profit_iqd: f64 = if use_time {
             db.query_row(
                 "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
                  WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'IQD'
                    AND affects_profit = 1
                    AND NOT (source_type = 'customer_payment' AND source_role = 'profit_recognition')
+                   AND NOT (source_type = 'car_sale' AND source_role = 'profit_recognition')
                    AND (
                      date > ?2
                      OR (date = ?2 AND COALESCE(time, '00:00') >= ?3)
@@ -9468,13 +9435,14 @@ fn get_profit_distribution_summary(
                  WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'IQD'
                    AND affects_profit = 1
                    AND NOT (source_type = 'customer_payment' AND source_role = 'profit_recognition')
+                   AND NOT (source_type = 'car_sale' AND source_role = 'profit_recognition')
                    AND date >= ?2 AND date <= ?3",
                 params![&name, &start, &end],
                 |row| row.get(0),
             ).unwrap_or(0.0)
         };
 
-        let profit_iqd = existing_profit_iqd + per_partner_installment_iqd;
+        let profit_iqd = existing_profit_iqd + per_partner_installment_iqd + per_partner_cash_car_iqd;
 
         let existing_profit_usd: f64 = if use_time {
             db.query_row(
@@ -9482,6 +9450,7 @@ fn get_profit_distribution_summary(
                  WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'USD'
                    AND affects_profit = 1
                    AND NOT (source_type = 'customer_payment' AND source_role = 'profit_recognition')
+                   AND NOT (source_type = 'car_sale' AND source_role = 'profit_recognition')
                    AND (
                      date > ?2
                      OR (date = ?2 AND COALESCE(time, '00:00') >= ?3)
@@ -9495,13 +9464,14 @@ fn get_profit_distribution_summary(
                  WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'USD'
                    AND affects_profit = 1
                    AND NOT (source_type = 'customer_payment' AND source_role = 'profit_recognition')
+                   AND NOT (source_type = 'car_sale' AND source_role = 'profit_recognition')
                    AND date >= ?2 AND date <= ?3",
                 params![&name, &start, &end],
                 |row| row.get(0),
             ).unwrap_or(0.0)
         };
 
-        let profit_usd = existing_profit_usd + per_partner_installment_usd;
+        let profit_usd = existing_profit_usd + per_partner_installment_usd + per_partner_cash_car_usd;
 
         // Query IQD drawings (only type = 'سحب شريك', excluding expenses)
         let drawings_iqd: f64 = db.query_row(
@@ -10049,10 +10019,12 @@ fn calculate_car_total_profit(db: &Connection, car_number: &str) -> Result<f64, 
 }
 
 fn get_recognized_profit_for_car(db: &Connection, car_number: &str) -> Result<f64, String> {
-    // Use related_source_id for new rows (source_id is payment ID, not car number)
-    let recognized_new: f64 = db.query_row(
+    // Only customer_payment profit_recognition rows (installment profit)
+    // Car_sale profit_recognition rows are no longer created (profit is analytical)
+    let recognized: f64 = db.query_row(
         "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
          WHERE kind = 'شريك' AND affects_profit = 1
+           AND source_type = 'customer_payment'
            AND source_role = 'profit_recognition'
            AND related_source_type = 'car'
            AND related_source_id = ?1",
@@ -10060,19 +10032,7 @@ fn get_recognized_profit_for_car(db: &Connection, car_number: &str) -> Result<f6
         |row| row.get(0),
     ).unwrap_or(0.0);
 
-    // Legacy fallback for old rows without related_source_id
-    let pattern = format!("%#بيع_سيارة_{}%", car_number);
-    let recognized_legacy: f64 = db.query_row(
-        "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-         WHERE kind = 'شريك' AND affects_profit = 1
-           AND source_role = 'profit_recognition'
-           AND (related_source_id IS NULL OR related_source_id = '')
-           AND notes LIKE ?1",
-        [&pattern],
-        |row| row.get(0),
-    ).unwrap_or(0.0);
-
-    Ok(recognized_new + recognized_legacy)
+    Ok(recognized)
 }
 
 fn calculate_customer_payment_profit_capped(

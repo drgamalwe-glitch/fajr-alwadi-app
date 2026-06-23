@@ -159,6 +159,13 @@ export function CarFormPanel({
 
   const prevAutoType = useRef(form.paymentType);
 
+  // When car status changes to not sold, switch away from sale details tab
+  useEffect(() => {
+    if (!isSold && formPage === 1) {
+      setFormPage(0);
+    }
+  }, [isSold, formPage]);
+
   useEffect(() => {
     const pt = form.paymentType;
     if (pt === prevAutoType.current) return;
@@ -422,7 +429,7 @@ export function CarFormPanel({
         <div className="flex justify-center gap-4 border-b border-[var(--car-border)] pb-3 flex-shrink-0">
           {[
             { page: 0, label: "مواصفات السيارة" },
-            { page: 1, label: "تفاصيل البيع" },
+            ...(isSold ? [{ page: 1, label: "تفاصيل البيع" }] : []),
           ].map(({ page, label }) => (
             <button
               key={page}

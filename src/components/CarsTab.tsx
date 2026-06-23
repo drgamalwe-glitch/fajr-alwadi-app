@@ -28,6 +28,8 @@ interface CarsTabProps {
   requestCloseRef?: React.MutableRefObject<{ request: (afterClose?: () => void) => void } | null>;
   initialSubTab?: "available" | "sold" | null;
   onInitialSubTabSet?: () => void;
+  returnState?: { section: string; subTab?: string } | null;
+  onReturn?: () => void;
 }
 
 /** وضع اللوحة الجانبية */
@@ -128,6 +130,8 @@ export function CarsTab({
   requestCloseRef,
   initialSubTab,
   onInitialSubTabSet,
+  returnState,
+  onReturn,
 }: CarsTabProps) {
   const [form, setForm] = useState<CarFormState>(emptyForm);
   const formRef = useRef<CarFormState>(emptyForm());
@@ -1151,6 +1155,15 @@ export function CarsTab({
       {/* ── شريط الأدوات (دائماً ظاهر) ── */}
       <div className="cars-page__toolbar unified-toolbar">
         <div className="unified-toolbar__right">
+          {returnState && onReturn && (
+            <GoldFxButton
+              type="button"
+              isBack
+              onClick={onReturn}
+            >
+              <span className="gold-fx-btn__icon">↩</span>
+            </GoldFxButton>
+          )}
           {/* تبويبات الحالة */}
           <div className="cars-tabs financial-tabs">
             {CARS_TABS.map((tab) => {

@@ -14,6 +14,7 @@ import { LoginScreen } from "./components/LoginScreen";
 import { UsersTab } from "./components/UsersTab";
 import type { Car, Partner, TabId, UserInfo } from "./types";
 import { APP_VERSION } from "./version";
+import { SECTION_TABS } from "./constants";
 
 type PartnerOpenTarget = {
   name: string;
@@ -22,6 +23,7 @@ type PartnerOpenTarget = {
   transactionId?: number | null;
 };
 
+type DashboardSubTab = "dashboard" | "company-status";
 type PartnersFinancialSubTab = "customers" | "personal" | "receivables" | "liabilities";
 
 // Static array of background paths to optimize build size and prevent file duplication
@@ -45,10 +47,12 @@ const DEFAULT_BG = "/backgrounds/bg.jpg";
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
 
+  const [dashboardSubTab, setDashboardSubTab] = useState<DashboardSubTab | null>(null);
   const [partnersFinancialSubTab, setPartnersFinancialSubTab] = useState<PartnersFinancialSubTab | null>(null);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [carsSubTab, setCarsSubTab] = useState<"available" | "sold" | null>(null);
+  const [financialSubTab, setFinancialSubTab] = useState<"قاصه" | "الكاش">("قاصه");
 
   // List of available backgrounds state
   const [bgPaths, setBgPaths] = useState<string[]>(() => {
@@ -128,6 +132,8 @@ export default function App() {
   const [partnersSearchOpen, setPartnersSearchOpen] = useState(false);
   const [partnerActions, setPartnerActions] = useState<{ onDeposit: () => void; onWithdraw: () => void; depositLabel?: string; withdrawLabel?: string } | null>(null);
   const [carFormActions, setCarFormActions] = useState<{ onSave: () => void; onCancel: () => void } | null>(null);
+  const [returnState, setReturnState] = useState<{ section: TabId; subTab?: string } | null>(null);
+
   const [addAccountAction, setAddAccountAction] = useState<{ action: () => void } | null>(null);
   const [addCarAction, setAddCarAction] = useState<{ action: () => void } | null>(null);
   const [addBatchCarAction, setAddBatchCarAction] = useState<{ action: () => void } | null>(null);
@@ -164,6 +170,22 @@ export default function App() {
     setPartnerActions(null);
   }, []);
 
+  const clearReturnState = useCallback(() => {
+    setReturnState(prev => {
+      if (!prev) return null;
+      const rs = prev;
+      navigateTo(rs.section);
+      if (rs.section === "dashboard" && rs.subTab) {
+        setDashboardSubTab(rs.subTab as DashboardSubTab);
+      } else if (rs.section === "cars" && rs.subTab) {
+        setCarsSubTab(rs.subTab as any);
+      } else if (rs.section === "partners-financial" && rs.subTab) {
+        setPartnersFinancialSubTab(rs.subTab as PartnersFinancialSubTab);
+      }
+      return null;
+    });
+  }, [navigateTo]);
+
   const handleDirtyChange = useCallback((dirty: boolean) => {
     dirtyRef.current = dirty;
   }, []);
@@ -181,6 +203,53 @@ export default function App() {
     }
     navigateTo(nextTab);
   }, [navigateTo]);
+
+  // Sidebar section click with sub-tab cycling
+  const handleSidebarSectionClick = useCallback((section: TabId) => {
+    const doNavigate = () => {
+      const tabs = SECTION_TABS[section];
+      if (!tabs || tabs.length <= 1) {
+        navigateTo(section);
+        return;
+      }
+      if (section !== activeTab) {
+        navigateTo(section);
+        if (section === "dashboard") setDashboardSubTab("dashboard");
+        else if (section === "cars") setCarsSubTab("available");
+        else if (section === "partners-financial") setPartnersFinancialSubTab("customers");
+      } else {
+        if (section === "dashboard") {
+          setDashboardSubTab(prev => {
+            const arr: DashboardSubTab[] = ["dashboard", "company-status"];
+            const idx = arr.indexOf(prev ?? "dashboard");
+            return arr[(idx + 1) % arr.length];
+          });
+        } else if (section === "cars") {
+          setCarsSubTab(prev => {
+            const arr: ("available" | "sold")[] = ["available", "sold"];
+            const idx = arr.indexOf(prev ?? "available");
+            return arr[(idx + 1) % arr.length];
+          });
+        } else if (section === "partners-financial") {
+          setPartnersFinancialSubTab(prev => {
+            const arr: PartnersFinancialSubTab[] = ["customers", "personal", "receivables", "liabilities"];
+            const idx = arr.indexOf(prev ?? "customers");
+            return arr[(idx + 1) % arr.length];
+          });
+        }
+      }
+    };
+    if (tabCloseRequestRef.current) {
+      pendingTabRef.current = section;
+      tabCloseRequestRef.current.request(() => {
+        const pending = pendingTabRef.current;
+        pendingTabRef.current = null;
+        if (pending) doNavigate();
+      });
+      return;
+    }
+    doNavigate();
+  }, [activeTab, navigateTo]);
 
   const refreshData = useCallback(async () => {
     setError(null);
@@ -390,9 +459,7 @@ export default function App() {
         <Header
           activeTab={activeTab}
           onTabChange={handleTabChange}
-          onCarsSearchToggle={() => setCarsSearchOpen((v) => !v)}
-          onPartnersSearchToggle={() => setPartnersSearchOpen((v) => !v)}
-          onAgenciesSearchToggle={() => setAgenciesSearchOpen((v) => !v)}
+          onSidebarSectionClick={handleSidebarSectionClick}
           onDeposit={partnerActions?.onDeposit}
           onWithdraw={partnerActions?.onWithdraw}
           depositLabel={partnerActions?.depositLabel}
@@ -438,11 +505,16 @@ export default function App() {
                     cars={cars}
                     partners={partners}
                     onRefresh={refreshData}
+                    initialSubTab={dashboardSubTab}
+                    onInitialSubTabSet={() => setDashboardSubTab(null)}
+                    returnState={returnState}
+                    onReturn={clearReturnState}
                     onOpenCarForm={(mode, car) => {
                       handleTabChange("cars");
                       setCarFormTrigger({ mode, car });
                     }}
                     onNavigateToPartner={(target) => {
+                      setReturnState({ section: "dashboard", subTab: dashboardSubTab ?? "company-status" });
                       navigateTo("partners-financial");
                       setPendingPartnerOpen(typeof target === "string" ? { name: target } : target);
                     }}
@@ -451,6 +523,8 @@ export default function App() {
                         setPartnersFinancialSubTab(subTab as any);
                       } else if (tab === "cars") {
                         setCarsSubTab(subTab as any);
+                      } else if (tab === "financial-accounts") {
+                        setFinancialSubTab((subTab as any) || "قاصه");
                       }
                       handleTabChange(tab);
                     }}
@@ -461,6 +535,8 @@ export default function App() {
                     cars={cars}
                     partners={partners}
                     onRefresh={refreshData}
+                    returnState={returnState}
+                    onReturn={clearReturnState}
                     carFormTrigger={carFormTrigger}
                     onClearCarFormTrigger={() => setCarFormTrigger(null)}
                     searchOpen={carsSearchOpen}
@@ -489,6 +565,8 @@ export default function App() {
                     onDirtyChange={handleDirtyChange}
                     initialSubTab={partnersFinancialSubTab}
                     onInitialSubTabSet={() => setPartnersFinancialSubTab(null)}
+                    returnState={returnState}
+                    onReturn={clearReturnState}
                   />
                 )}
                 {activeTab === "expenses" && (
@@ -498,7 +576,7 @@ export default function App() {
                     onDirtyChange={handleDirtyChange}
                   />
                 )}
-                {activeTab === "financial-accounts" && <FinancialAccountsTab />}
+                {activeTab === "financial-accounts" && <FinancialAccountsTab initialPaymentTab={financialSubTab} />}
                 {activeTab === "agencies" && (
                   <AgenciesTab
                     onRefresh={refreshData}

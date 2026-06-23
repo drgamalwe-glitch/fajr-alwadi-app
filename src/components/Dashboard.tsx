@@ -23,10 +23,6 @@ import {
   Phone,
 } from "lucide-react";
 import { CompanyStatusTab } from "./CompanyStatusTab";
-import { QasaCard } from "./dashboard/QasaCard";
-import { CapitalCard } from "./dashboard/CapitalCard";
-import { ProfitCard } from "./dashboard/ProfitCard";
-import { InventoryCard } from "./dashboard/InventoryCard";
 
 // ── نظام الألوان مُستمَد من colors.css ──────────────────
 // --red:   #4d000a   (أحمر داكن — للتحذيرات / المصاريف / الأخطار)
@@ -39,6 +35,10 @@ interface DashboardProps {
   cars: Car[];
   partners: Partner[];
   onRefresh: () => Promise<void>;
+  initialSubTab?: "dashboard" | "company-status" | null;
+  onInitialSubTabSet?: () => void;
+  returnState?: { section: string; subTab?: string } | null;
+  onReturn?: () => void;
   onOpenCarForm: (mode: "new" | "edit", car?: Car) => void;
   onNavigateToPartner?: (target: string | { name: string; kind?: string | null; action?: "deposit" | "withdraw" | "settle_installment"; transactionId?: number | null }) => void;
   onNavigateToTab?: (tab: any, subTab?: string) => void;
@@ -311,9 +311,17 @@ function CreditorRow({
 // ════════════════════════════════════════════════════════
 // ── المكون الرئيسي: لوحة التحكم ─────────────────────
 // ════════════════════════════════════════════════════════
-export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigateToPartner, onNavigateToTab }: DashboardProps) {
+export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialSubTabSet, returnState, onReturn, onOpenCarForm, onNavigateToPartner, onNavigateToTab }: DashboardProps) {
 
   const [activeSubTab, setActiveSubTab] = useState<"dashboard" | "company-status">("dashboard");
+
+  // Handle sub-tab override from sidebar cycling
+  useEffect(() => {
+    if (initialSubTab) {
+      setActiveSubTab(initialSubTab);
+      onInitialSubTabSet?.();
+    }
+  }, [initialSubTab, onInitialSubTabSet]);
   const [summary, setSummary] = useState<FinancialSummary | null>(null);
   const [unifiedAccounts, setUnifiedAccounts] = useState<UnifiedAccount[]>([]);
   const [installments, setInstallments] = useState<InstallmentAlert[]>([]);
@@ -640,8 +648,6 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
     }
   };
 
-  const monthName = new Date().toLocaleDateString("ar-IQ", { month: "long", year: "numeric" });
-
   return (
     <div
       className="dashboard"
@@ -651,6 +657,15 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
       {/* ── شريط الأدوات الموحد ── */}
       <div className="cars-page__toolbar unified-toolbar">
         <div className="unified-toolbar__right">
+          {returnState && onReturn && (
+            <GoldFxButton
+              type="button"
+              isBack
+              onClick={onReturn}
+            >
+              <span className="gold-fx-btn__icon">↩</span>
+            </GoldFxButton>
+          )}
           <div className="cars-tabs financial-tabs">
             <button
               type="button"
@@ -691,19 +706,9 @@ export function Dashboard({ cars, partners, onRefresh, onOpenCarForm, onNavigate
       </div>
 
       {activeSubTab === "company-status" ? (
-        <CompanyStatusTab summary={summary} unifiedAccounts={unifiedAccounts} partners={partners} onNavigateToTab={onNavigateToTab} />
+        <CompanyStatusTab summary={summary} unifiedAccounts={unifiedAccounts} partners={partners} onNavigateToTab={onNavigateToTab} onNavigateToPartner={onNavigateToPartner} />
       ) : (
         <>
-          {/* ═══════════════════════════════════════════════════
-              بطاقات الملخص المالي
-          ═══════════════════════════════════════════════════ */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "1rem", marginBottom: "1.25rem", marginTop: "1.5rem" }}>
-            <QasaCard cashIqd={summary?.qasa_iqd || 0} cashUsd={summary?.qasa_usd || 0} />
-            <InventoryCard valueIqd={summary?.inventory_value_iqd || 0} valueUsd={summary?.inventory_value_usd || 0} availableCarsCount={cars.filter((c) => c.status === "متوفرة").length} />
-            <CapitalCard capitalIqd={summary?.net_capital_iqd || 0} capitalUsd={summary?.net_capital_usd || 0} />
-            <ProfitCard profitIqd={summary?.monthly_profits_iqd || 0} profitUsd={summary?.monthly_profits_usd || 0} monthName={monthName} />
-          </div>
-
           {/* ═══════════════════════════════════════════════════
           القسم السفلي: الأقساط + الديون
       ═══════════════════════════════════════════════════ */}

@@ -17,3 +17,9 @@ export const AGENCY_TABS = [
 export const FINANCIAL_ACCOUNT_TABS = [
   { id: "قاصه" as const, label: "قاصه" },
 ] as const;
+
+export const SECTION_TABS: Record<string, readonly string[]> = {
+  dashboard: ["dashboard", "company-status"],
+  cars: ["available", "sold"],
+  "partners-financial": ["customers", "personal", "receivables", "liabilities"],
+};

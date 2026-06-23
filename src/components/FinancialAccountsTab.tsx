@@ -12,8 +12,15 @@ const PAYMENT_TABS: { id: PaymentTab; label: string }[] = [
 ];
 
 
-export function FinancialAccountsTab() {
-  const [activeTab, setActiveTab] = useState<PaymentTab>("قاصه");
+export function FinancialAccountsTab({ initialPaymentTab }: { initialPaymentTab?: PaymentTab }) {
+  const [activeTab, setActiveTab] = useState<PaymentTab>(initialPaymentTab || "قاصه");
+
+  useEffect(() => {
+    if (initialPaymentTab) {
+      setActiveTab(initialPaymentTab);
+    }
+  }, [initialPaymentTab]);
+
   const [balance, setBalance] = useState<{ iqd: number; usd: number }>({ iqd: 0, usd: 0 });
   const [loadingBalance, setLoadingBalance] = useState(true);
 

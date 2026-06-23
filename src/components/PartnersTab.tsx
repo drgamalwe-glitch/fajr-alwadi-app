@@ -36,6 +36,8 @@ interface PartnersTabProps {
   requestCloseRef?: React.MutableRefObject<{ request: (afterClose?: () => void) => void } | null>;
   initialSubTab?: AccountsTabId | null;
   onInitialSubTabSet?: () => void;
+  returnState?: { section: string; subTab?: string } | null;
+  onReturn?: () => void;
 }
 
 const createEmptyForm = (kind: string) => ({
@@ -187,6 +189,8 @@ export function PartnersTab({
   requestCloseRef,
   initialSubTab,
   onInitialSubTabSet,
+  returnState,
+  onReturn,
 }: PartnersTabProps) {
   const [unifiedAccounts, setUnifiedAccounts] = useState<UnifiedAccount[]>([]);
   const [page, setPage] = useState(0);
@@ -1671,7 +1675,17 @@ export function PartnersTab({
                   </div>
                 </div>
               ) : (
-                ACCOUNTS_TABS.map((tab) => {
+                <>
+                  {returnState && onReturn && (
+                    <GoldFxButton
+                      type="button"
+                      isBack
+                      onClick={onReturn}
+                    >
+                      <span className="gold-fx-btn__icon">↩</span>
+                    </GoldFxButton>
+                  )}
+                {ACCOUNTS_TABS.map((tab) => {
                   const isActive = accountsTab === tab.id;
                   const isPersonalActive = tab.id === "personal" && accountsTab === "personal";
                   const primaryTab = tab.id === "customers";
@@ -1710,7 +1724,8 @@ export function PartnersTab({
                       {tab.label}
                     </button>
                   );
-                })
+                })}
+                </>
               )}
             </div>
             <div className="unified-toolbar__center">

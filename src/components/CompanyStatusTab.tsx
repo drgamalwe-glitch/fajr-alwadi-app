@@ -26,11 +26,13 @@ export function CompanyStatusTab({
   unifiedAccounts,
   partners,
   onNavigateToTab,
+  onNavigateToPartner,
 }: {
   summary: FinancialSummary | null;
   unifiedAccounts: UnifiedAccount[];
   partners: Partner[];
   onNavigateToTab?: (tab: any, subTab?: string) => void;
+  onNavigateToPartner?: (target: string | { name: string; kind?: string | null }) => void;
 }) {
   const sharikPartners = partners.filter((p) => p.kind === "شريك");
   const amirPartner = sharikPartners.find((p) => normalizePartnerName(p.partner_name).includes("امير"));
@@ -103,7 +105,15 @@ export function CompanyStatusTab({
     if (!partner) return null;
     const imgSrc = getPartnerImage(partner.partner_name);
     return (
-      <div className={`partner-capital-card ${colorClass}`} data-testid={`partner-card-${partner.partner_name}`}>
+      <div
+        className={`partner-capital-card ${colorClass}`}
+        data-testid={`partner-card-${partner.partner_name}`}
+        style={{ cursor: "pointer" }}
+        role="button"
+        tabIndex={0}
+        onClick={() => onNavigateToPartner?.(partner.partner_name)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onNavigateToPartner?.(partner.partner_name); }}
+      >
         <div className="partner-capital-card__header">
           <div className="partner-capital-card__icon">
             {imgSrc ? (
@@ -207,7 +217,7 @@ export function CompanyStatusTab({
             }}
           >
             <div className="card-labels">
-              <div className="label">الكاش</div>
+              <div className="label">الشركاء</div>
             </div>
             <div className="card-values">
               <div className="number">{formatCompact(netCashIqd)} <span className="card-currency-iq">IQ</span></div>
@@ -283,6 +293,104 @@ export function CompanyStatusTab({
               <div className="number">{formatCompact(liabilitiesIqd)} <span className="card-currency-iq">IQ</span></div>
               {liabilitiesUsd !== 0 && (
                 <div className="card-sub-val">{formatCompact(liabilitiesUsd)} <span className="card-currency-usd">USD</span></div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="stats">
+          <div
+            className="card qasa-bottom"
+            data-testid="card-qasa-bottom"
+            style={{ cursor: "pointer" }}
+            role="button"
+            tabIndex={0}
+            onClick={() => onNavigateToTab?.("financial-accounts", "قاصه")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                onNavigateToTab?.("financial-accounts", "قاصه");
+              }
+            }}
+          >
+            <div className="card-labels">
+              <div className="label">القاصة</div>
+            </div>
+            <div className="card-values">
+              <div className="number">{formatCompact(summary.qasa_iqd)} <span className="card-currency-iq">IQ</span></div>
+              {summary.qasa_usd !== 0 && (
+                <div className="card-sub-val">{formatCompact(summary.qasa_usd)} <span className="card-currency-usd">USD</span></div>
+              )}
+            </div>
+          </div>
+
+          <div
+            className="card cash-bottom"
+            data-testid="card-cash-bottom"
+            style={{ cursor: "pointer" }}
+            role="button"
+            tabIndex={0}
+            onClick={() => onNavigateToTab?.("financial-accounts", "الكاش")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                onNavigateToTab?.("financial-accounts", "الكاش");
+              }
+            }}
+          >
+            <div className="card-labels">
+              <div className="label">الكاش</div>
+            </div>
+            <div className="card-values">
+              <div className="number">{formatCompact(summary.cash_iqd)} <span className="card-currency-iq">IQ</span></div>
+              {summary.cash_usd !== 0 && (
+                <div className="card-sub-val">{formatCompact(summary.cash_usd)} <span className="card-currency-usd">USD</span></div>
+              )}
+            </div>
+          </div>
+
+          <div
+            className="card expenses"
+            data-testid="card-expenses"
+            style={{ cursor: "pointer" }}
+            role="button"
+            tabIndex={0}
+            onClick={() => onNavigateToTab?.("expenses")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                onNavigateToTab?.("expenses");
+              }
+            }}
+          >
+            <div className="card-labels">
+              <div className="label">المصروفات</div>
+            </div>
+            <div className="card-values">
+              <div className="number">{formatCompact(summary.total_expenses_iqd)} <span className="card-currency-iq">IQ</span></div>
+              {summary.total_expenses_usd !== 0 && (
+                <div className="card-sub-val">{formatCompact(summary.total_expenses_usd)} <span className="card-currency-usd">USD</span></div>
+              )}
+            </div>
+          </div>
+
+          <div
+            className="card profit-bottom"
+            data-testid="card-profit-bottom"
+            style={{ cursor: "pointer" }}
+            role="button"
+            tabIndex={0}
+            onClick={() => onNavigateToTab?.("profit-distribution")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                onNavigateToTab?.("profit-distribution");
+              }
+            }}
+          >
+            <div className="card-labels">
+              <div className="label">صافي الأرباح</div>
+            </div>
+            <div className="card-values">
+              <div className="number">{formatCompact(summary.monthly_profits_iqd)} <span className="card-currency-iq">IQ</span></div>
+              {summary.monthly_profits_usd !== 0 && (
+                <div className="card-sub-val">{formatCompact(summary.monthly_profits_usd)} <span className="card-currency-usd">USD</span></div>
               )}
             </div>
           </div>

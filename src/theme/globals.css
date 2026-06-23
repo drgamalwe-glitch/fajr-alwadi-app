@@ -5565,7 +5565,7 @@ textarea::placeholder {
   -webkit-backdrop-filter: blur(28px) saturate(140%) !important;
   border-radius: 20px !important;
   border: 1px solid rgba(255, 255, 255, 0.075) !important;
-  padding: 26px;
+  padding: 18px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
   direction: rtl;
 }
@@ -5575,8 +5575,8 @@ textarea::placeholder {
   position: relative;
   overflow: hidden;
   text-align: center;
-  margin-bottom: 28px;
-  padding: 28px 22px 22px;
+  margin-bottom: 14px;
+  padding: 18px 18px 16px;
   border-radius: 18px;
   background: rgba(30, 30, 40, 0.16);
   backdrop-filter: blur(24px);
@@ -5674,7 +5674,7 @@ textarea::placeholder {
   grid-template-columns: minmax(220px, 1fr) minmax(340px, 1.22fr) minmax(220px, 1fr);
   gap: 16px;
   align-items: stretch;
-  margin-bottom: 22px;
+  margin-bottom: 14px;
 }
 
 .company-value-center {
@@ -5702,7 +5702,7 @@ textarea::placeholder {
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255, 255, 255, 0.06);
   transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1), border-color 0.4s ease;
-  min-height: 236px;
+  min-height: 200px;
   direction: rtl;
 }
 
@@ -5835,13 +5835,16 @@ textarea::placeholder {
 .wadhisharikah-container .line {
   height: 1px;
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06) 50%, transparent);
-  margin: 20px 0;
+  margin: 10px 0;
 }
 
 .wadhisharikah-container .stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
+  gap: 10px;
+}
+.wadhisharikah-container .stats + .stats {
+  margin-top: 10px;
 }
 
 /* Unified Card structure in Company Status Tab */
@@ -5852,8 +5855,8 @@ textarea::placeholder {
   flex-direction: column;
   align-items: stretch;
   justify-content: space-between;
-  min-height: 150px;
-  padding: 18px;
+  min-height: 130px;
+  padding: 14px;
   border-radius: 18px;
   background: rgba(30, 30, 40, 0.14);
   backdrop-filter: blur(24px);
@@ -5918,6 +5921,30 @@ textarea::placeholder {
 .wadhisharikah-container .card.receivable {
   --card-color: #dc2626;
   border-color: rgba(220, 38, 38, 0.12);
+}
+
+/* 5. Qasa Card (القاصة) - Bottom row */
+.wadhisharikah-container .card.qasa-bottom {
+  --card-color: #e2e8f0;
+  border-color: rgba(226, 232, 240, 0.12);
+}
+
+/* 6. Cash Card (الكاش) - Bottom row */
+.wadhisharikah-container .card.cash-bottom {
+  --card-color: #22c55e;
+  border-color: rgba(34, 197, 94, 0.12);
+}
+
+/* 7. Expenses Card (المصروفات) */
+.wadhisharikah-container .card.expenses {
+  --card-color: #ea580c;
+  border-color: rgba(234, 88, 12, 0.12);
+}
+
+/* 8. Profit Card (صافي الأرباح) - Bottom row */
+.wadhisharikah-container .card.profit-bottom {
+  --card-color: #10b981;
+  border-color: rgba(16, 185, 129, 0.12);
 }
 
 .wadhisharikah-container .card-labels {

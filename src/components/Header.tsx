@@ -1,4 +1,3 @@
-import { useRef } from "react";
 import type { TabId } from "../types";
 import { BrandLogo } from "./BrandLogo";
 import { GoldFxButton } from "./ui/GoldFxButton";
@@ -7,9 +6,7 @@ import { UnifiedDateField } from "./UnifiedDateField";
 interface HeaderProps {
   activeTab: TabId;
   onTabChange: (tab: TabId) => void;
-  onCarsSearchToggle?: () => void;
-  onPartnersSearchToggle?: () => void;
-  onAgenciesSearchToggle?: () => void;
+  onSidebarSectionClick?: (tab: TabId) => void;
   onDeposit?: () => void;
   onWithdraw?: () => void;
   depositLabel?: string;
@@ -43,9 +40,7 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
 export function Header({
   activeTab,
   onTabChange,
-  onCarsSearchToggle,
-  onPartnersSearchToggle,
-  onAgenciesSearchToggle,
+  onSidebarSectionClick,
   onDeposit,
   onWithdraw,
   depositLabel = "إيداع",
@@ -63,43 +58,12 @@ export function Header({
   onFromDateChange,
   onToDateChange,
 }: HeaderProps) {
-  // track double-click on cars tab
-  const lastCarsClickAt = useRef(0);
-  // track double-click on partners tab
-  const lastPartnersClickAt = useRef(0);
-  // track double-click on agencies tab
-  const lastAgenciesClickAt = useRef(0);
-
   const handleTabClick = (tabId: TabId) => {
-    if (tabId === "cars") {
-      const now = Date.now();
-      if (activeTab === "cars" && now - lastCarsClickAt.current < 400) {
-        // نقرتان متتاليتان على تبويب المعرض → تبديل البحث
-        lastCarsClickAt.current = 0;
-        onCarsSearchToggle?.();
-        return;
-      }
-      lastCarsClickAt.current = now;
-    } else if (tabId === "partners-financial") {
-      const now = Date.now();
-      if (activeTab === "partners-financial" && now - lastPartnersClickAt.current < 400) {
-        // نقرتان متتاليتان على تبويب حسابات العملاء → تبديل البحث
-        lastPartnersClickAt.current = 0;
-        onPartnersSearchToggle?.();
-        return;
-      }
-      lastPartnersClickAt.current = now;
-    } else if (tabId === "agencies") {
-      const now = Date.now();
-      if (activeTab === "agencies" && now - lastAgenciesClickAt.current < 400) {
-        // نقرتان متتاليتان على تبويب الوكالات → تبديل البحث
-        lastAgenciesClickAt.current = 0;
-        onAgenciesSearchToggle?.();
-        return;
-      }
-      lastAgenciesClickAt.current = now;
+    if (onSidebarSectionClick) {
+      onSidebarSectionClick(tabId);
+    } else {
+      onTabChange(tabId);
     }
-    onTabChange(tabId);
   };
 
   return (
