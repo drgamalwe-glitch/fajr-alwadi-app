@@ -1,47 +1,69 @@
 import type { Car, Partner } from "../types";
+import {
+  compareMoney,
+  formatMoney,
+  moneyAdd,
+  moneyDiv,
+  moneyMul,
+  moneySub,
+  moneySum,
+  type MoneyValue,
+} from "./money";
 
-export function carNetProfit(car: Car): number {
-  if (car.status !== "مبيوعة") return 0;
-  const totalCost = car.purchase_price + (car.expenses_sum || 0);
-  return car.selling_price - totalCost;
+export function carNetProfit(car: Car): MoneyValue {
+  if (car.status !== "مبيوعة") return "0";
+  // Fixed: calculate car profit with Decimal so sale price, purchase price, and car expenses do not pass through JS floating point.
+  const totalCost = moneyAdd(car.purchase_price, car.expenses_sum || 0);
+  return moneySub(car.selling_price, totalCost);
+}
+
+export function compareCarNetProfit(left: Car, right: Car): number {
+  return compareMoney(carNetProfit(left), carNetProfit(right));
 }
 
 export function carProfitPercentage(car: Car): string {
-  const totalCost = car.purchase_price + (car.expenses_sum || 0);
-  const profit = car.selling_price - totalCost;
-  if (profit <= 0 || totalCost <= 0) return "0.0";
-  return ((profit / totalCost) * 100).toFixed(1);
+  // Fixed: Instructions.md defines profit ratio as full profit / selling price, not full profit / car cost.
+  const totalCost = moneyAdd(car.purchase_price, car.expenses_sum || 0);
+  const profit = moneySub(car.selling_price, totalCost);
+  const sellingPrice = moneyAdd(car.selling_price);
+  if (!profit.isPositive() || !sellingPrice.isPositive()) return "0.0";
+  return moneyMul(moneyDiv(profit, sellingPrice), 100).toDecimalPlaces(1).toFixed(1);
 }
 
-export function formatIqd(amount: number): string {
-  const num = amount.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+export function formatIqd(amount: MoneyValue): string {
+  const num = formatMoney(amount, "IQD");
   return `${num} IQ`;
 }
 
 /** الرقم فقط بدون وحدة */
-export function formatNumber(amount: number): string {
-  return amount.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+export function formatNumber(amount: MoneyValue): string {
+  return formatMoney(amount, "IQD");
 }
 
 export function computeDashboardStats(cars: Car[], partners: Partner[] = []) {
   const availableCars = cars.filter((c) => c.status === "متوفرة");
-  const totalInventoryValue = availableCars.reduce((sum, c) => sum + c.purchase_price, 0);
-  const iqdInventory = availableCars
-    .filter((c) => c.currency !== "USD")
-    .reduce((sum, c) => sum + c.purchase_price, 0);
-  const usdInventory = availableCars
-    .filter((c) => c.currency === "USD")
-    .reduce((sum, c) => sum + c.purchase_price, 0);
+  // Fixed: dashboard inventory/capital totals use Decimal and include available cars only.
+  const totalInventoryValue = moneySum(availableCars, (c) => c.purchase_price);
+  const iqdInventory = moneySum(
+    availableCars.filter((c) => c.currency !== "USD"),
+    (c) => c.purchase_price,
+  );
+  const usdInventory = moneySum(
+    availableCars.filter((c) => c.currency === "USD"),
+    (c) => c.purchase_price,
+  );
 
-  const partnersTotal = partners
-    .filter((p) => p.kind === "شريك")
-    .reduce((sum, p) => sum + p.total_amount, 0);
+  const partnersTotal = moneySum(
+    partners.filter((p) => p.kind === "شريك"),
+    (p) => p.total_amount,
+  );
 
-  const investorsTotal = partners
-    .filter((p) => p.kind === "مستثمر")
-    .reduce((sum, p) => sum + p.total_amount, 0);
+  const investorsTotal = moneySum(
+    partners.filter((p) => p.kind === "مستثمر"),
+    (p) => p.total_amount,
+  );
 
-  const netCapital = totalInventoryValue + partnersTotal - investorsTotal;
+  const netCapital = moneySub(moneyAdd(totalInventoryValue, partnersTotal), investorsTotal);
 
   return {
     totalInventoryValue,

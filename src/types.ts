@@ -1,10 +1,12 @@
+import type { MoneyValue } from "./utils/money";
+
 export type CarStatus = "متوفرة" | "مبيوعة";
 export type PaymentType = "كاش" | "موعد" | "اقساط";
 
 export interface CarPartner {
   car_number: string;
   partner_name: string;
-  amount: number;
+  amount: MoneyValue;
   currency: string;
   kind?: string | null;
 }
@@ -18,15 +20,15 @@ export interface Car {
   car_name: string;
   color: string;
   details: string;
-  purchase_price: number;
-  selling_price: number;
+  purchase_price: MoneyValue;
+  selling_price: MoneyValue;
   status: CarStatus;
   payment_type?: PaymentType | null;
-  cash_price?: number | null;
-  amount_paid?: number | null;
-  amount_remaining?: number | null;
+  cash_price?: MoneyValue;
+  amount_paid?: MoneyValue;
+  amount_remaining?: MoneyValue;
   installment_months?: number | null;
-  monthly_payment?: number | null;
+  monthly_payment?: MoneyValue;
   buyer_name?: string | null;
   buyer_phone?: string | null;
   purchase_date?: string | null;
@@ -35,7 +37,7 @@ export interface Car {
   first_payment_date?: string | null;
   purchase_time?: string | null;
   sale_time?: string | null;
-  expenses_sum?: number | null;
+  expenses_sum?: MoneyValue;
   currency?: string | null;
   sale_currency?: string | null;
   purchase_payment_type?: string | null;
@@ -43,25 +45,25 @@ export interface Car {
   purchase_type?: string | null;
   financer_name?: string | null;
   commission_type?: string | null;
-  commission_value?: number | null;
+  commission_value?: MoneyValue;
   car_partners?: CarPartner[] | null;
 }
 
 export interface Partner {
   partner_name: string;
   phone: string;
-  total_amount: number;
-  iqd_balance: number;
-  usd_balance: number;
+  total_amount: MoneyValue;
+  iqd_balance: MoneyValue;
+  usd_balance: MoneyValue;
   kind: string;
-  total_withdrawals: number;
+  total_withdrawals: MoneyValue;
 }
 
 export interface UnifiedAccount {
   partner_name: string;
   phone: string | null;
-  iqd_balance: number;
-  usd_balance: number;
+  iqd_balance: MoneyValue;
+  usd_balance: MoneyValue;
   kind: string;
 }
 
@@ -70,7 +72,7 @@ export interface PartnerTransaction {
   partner_name: string;
   kind: string;
   type_: string;
-  amount: number;
+  amount: MoneyValue;
   date: string;
   notes: string | null;
   currency?: string | null;
@@ -90,7 +92,7 @@ export interface PartnerTransaction {
 export interface ExpenseEntry {
   id: number;
   description: string;
-  amount: number;
+  amount: MoneyValue;
   date: string;
   time: string;
   notes: string | null;
@@ -102,7 +104,7 @@ export interface CarExpenseRecord {
   id: number;
   car_number: string;
   description: string;
-  amount: number;
+  amount: MoneyValue;
   date: string;
   currency?: string | null;
 }
@@ -112,10 +114,10 @@ export interface CashRegisterEntry {
   date: string;
   time: string;
   type_: string;
-  amount: number;
+  amount: MoneyValue;
   description: string;
   notes: string | null;
-  balance: number;
+  balance: MoneyValue;
   currency?: string | null;
 }
 
@@ -128,8 +130,8 @@ export interface Agency {
   color: string;
   new_agent_name: string;
   phone: string;
-  amount_usd: number;
-  amount_iqd: number;
+  amount_usd: MoneyValue;
+  amount_iqd: MoneyValue;
   notes: string;
   date: string;
   time: string;
@@ -141,7 +143,7 @@ export interface AgencyTransaction {
   date: string;
   time: string;
   type_: string;
-  amount: number;
+  amount: MoneyValue;
   currency?: string | null;
   notes: string | null;
 }
@@ -162,24 +164,28 @@ export interface LoginResult {
 export type TabId = "dashboard" | "company-status" | "cars" | "partners-financial" | "cashregister" | "expenses" | "financial-accounts" | "financial-transactions" | "agencies" | "profit-distribution" | "users";
 
 export interface FinancialSummary {
-  cash_iqd: number;
-  cash_usd: number;
-  qasa_iqd: number;
-  qasa_usd: number;
-  inventory_value_iqd: number;
-  inventory_value_usd: number;
-  total_investments_iqd: number;
-  total_investments_usd: number;
-  total_partner_capital_iqd: number;
-  total_partner_capital_usd: number;
-  total_debtors_iqd: number;
-  total_debtors_usd: number;
-  total_expenses_iqd: number;
-  total_expenses_usd: number;
-  net_capital_iqd: number;
-  net_capital_usd: number;
-  monthly_profits_iqd: number;
-  monthly_profits_usd: number;
+  cash_iqd: MoneyValue;
+  cash_usd: MoneyValue;
+  qasa_iqd: MoneyValue;
+  qasa_usd: MoneyValue;
+  inventory_value_iqd: MoneyValue;
+  inventory_value_usd: MoneyValue;
+  total_investments_iqd: MoneyValue;
+  total_investments_usd: MoneyValue;
+  total_partner_capital_iqd: MoneyValue;
+  total_partner_capital_usd: MoneyValue;
+  total_debtors_iqd: MoneyValue;
+  total_debtors_usd: MoneyValue;
+  total_expenses_iqd: MoneyValue;
+  total_expenses_usd: MoneyValue;
+  deferred_revenue_iqd: MoneyValue;
+  deferred_revenue_usd: MoneyValue;
+  deferred_expense_iqd: MoneyValue;
+  deferred_expense_usd: MoneyValue;
+  net_capital_iqd: MoneyValue;
+  net_capital_usd: MoneyValue;
+  monthly_profits_iqd: MoneyValue;
+  monthly_profits_usd: MoneyValue;
 }
 
 export interface CarFormState {
@@ -216,33 +222,33 @@ export interface CarFormState {
 
 export interface PartnerDistributionInfo {
   partner_name: string;
-  profit_iqd: number;
-  profit_usd: number;
-  drawings_iqd: number;
-  drawings_usd: number;
+  profit_iqd: MoneyValue;
+  profit_usd: MoneyValue;
+  drawings_iqd: MoneyValue;
+  drawings_usd: MoneyValue;
 }
 
 export interface ProfitDistributionSummary {
-  undistributed_iqd: number;
-  undistributed_usd: number;
+  undistributed_iqd: MoneyValue;
+  undistributed_usd: MoneyValue;
   partners: PartnerDistributionInfo[];
-  expenses_iqd: number;
-  expenses_usd: number;
+  expenses_iqd: MoneyValue;
+  expenses_usd: MoneyValue;
 }
 
 export interface PartnerProfitShareInput {
   partner_name: string;
-  profit_share: number;
-  drawings_deducted: number;
-  amount_reinvested: number;
-  amount_paid: number;
+  profit_share: MoneyValue;
+  drawings_deducted: MoneyValue;
+  amount_reinvested: MoneyValue;
+  amount_paid: MoneyValue;
 }
 
 export interface ProfitDistribution {
   id: number;
   date: string;
   time: string;
-  total_profit: number;
+  total_profit: MoneyValue;
   currency: string;
   notes: string | null;
 }
@@ -251,10 +257,10 @@ export interface PartnerProfitShare {
   id: number;
   distribution_id: number;
   partner_name: string;
-  profit_share: number;
-  drawings_deducted: number;
-  amount_reinvested: number;
-  amount_paid: number;
+  profit_share: MoneyValue;
+  drawings_deducted: MoneyValue;
+  amount_reinvested: MoneyValue;
+  amount_paid: MoneyValue;
   currency: string;
 }
 

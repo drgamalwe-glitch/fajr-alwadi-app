@@ -63,7 +63,7 @@
 
   /* ═══ BACKGROUNDS ═══ */
   --background: url('/backgrounds/bg.jpg');
-  --background-overlay: rgba(123, 123, 123, 0.537);
+  --background-overlay: rgba(60, 60, 60, 0.525);
   /* لتغيير مستوى ألوان الخلفية (تفتيح/تعتيم أو تلوين: مثلاً rgba(0,0,0,0.3)) */
   --background-brightness: 1;
   /* لتغيير مستوى سطوع الصورة (مثلاً 0.8 لتعتيم الصورة) */
@@ -4223,6 +4223,14 @@ textarea::placeholder {
   box-shadow: var(--partner-dialog-shadow) !important;
 }
 
+.modal-dialog--kind-شركة {
+  background: linear-gradient(135deg, rgba(251, 146, 60, 0.08) 0%, rgba(251, 146, 60, 0.01) 100%), var(--partner-sharika-dialog-bg, var(--background-secondary)) !important;
+  border: 1px solid var(--partner-sharika-border, var(--border-master)) !important;
+  backdrop-filter: var(--partner-dialog-blur) saturate(var(--partner-dialog-saturation)) !important;
+  -webkit-backdrop-filter: var(--partner-dialog-blur) saturate(var(--partner-dialog-saturation)) !important;
+  box-shadow: var(--partner-dialog-shadow) !important;
+}
+
 /* Gold FX buttons, sidebar-actions, sidebar-divider moved to buttons.css */
 
 .modal-dialog.modal-dialog--overflow-visible {
@@ -5843,7 +5851,8 @@ textarea::placeholder {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
-.wadhisharikah-container .stats + .stats {
+
+.wadhisharikah-container .stats+.stats {
   margin-top: 10px;
 }
 
@@ -11214,7 +11223,7 @@ textarea::placeholder {
   white-space: nowrap !important;
 }
 
-.batch-data-table td > *,
+.batch-data-table td>*,
 .batch-data-table .input,
 .batch-data-table input,
 .batch-data-table .price-input,

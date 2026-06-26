@@ -3,6 +3,7 @@ import { callTauri } from "../api/tauri";
 import type { FinancialSummary } from "../types";
 import { CashRegisterTab } from "./CashRegisterTab";
 import { PriceDisplay } from "@/components/ui";
+import type { MoneyValue } from "../utils/money";
 
 type PaymentTab = "قاصه" | "الكاش";
 
@@ -21,7 +22,7 @@ export function FinancialAccountsTab({ initialPaymentTab }: { initialPaymentTab?
     }
   }, [initialPaymentTab]);
 
-  const [balance, setBalance] = useState<{ iqd: number; usd: number }>({ iqd: 0, usd: 0 });
+  const [balance, setBalance] = useState<{ iqd: MoneyValue; usd: MoneyValue }>({ iqd: 0, usd: 0 });
   const [loadingBalance, setLoadingBalance] = useState(true);
 
   const loadBalance = useCallback(async (tab: PaymentTab) => {

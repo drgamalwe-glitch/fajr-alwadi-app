@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { callTauri } from "../api/tauri";
 import type { ProfitDistributionSummary } from "../types";
 import { PriceDisplay } from "./ui";
+import { moneyDiv, moneySub, moneySum } from "../utils/money";
 
 interface ProfitDistributionTabProps {
   onRefreshAllData: () => Promise<void>;
@@ -25,8 +26,8 @@ export function ProfitDistributionTab({ onRefreshAllData, onDistributeChange, fr
       });
       setSummary(sumData);
       await onRefreshAllData();
-    } catch (err: any) {
-      setError(err.toString() || "فشل تحميل بيانات توزيع الأرباح");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err) || "فشل تحميل بيانات توزيع الأرباح");
     } finally {
       setLoading(false);
     }
@@ -49,12 +50,13 @@ export function ProfitDistributionTab({ onRefreshAllData, onDistributeChange, fr
   // Calculate totals for summary cards
   const totalExpensesUSD = summary?.expenses_usd || 0;
   const totalExpensesIQD = summary?.expenses_iqd || 0;
-  const totalProfitUSD = partners.reduce((sum, p) => sum + p.profit_usd, 0) - totalExpensesUSD;
-  const totalProfitIQD = partners.reduce((sum, p) => sum + p.profit_iqd, 0) - totalExpensesIQD;
+  // Fixed: profit distribution totals use Decimal and subtract general expenses only.
+  const totalProfitUSD = moneySub(moneySum(partners, (p) => p.profit_usd), totalExpensesUSD);
+  const totalProfitIQD = moneySub(moneySum(partners, (p) => p.profit_iqd), totalExpensesIQD);
 
   // Each partner's share of expenses (50/50 split)
-  const partnerExpensesIQD = totalExpensesIQD / Math.max(1, partners.length);
-  const partnerExpensesUSD = totalExpensesUSD / Math.max(1, partners.length);
+  const partnerExpensesIQD = moneyDiv(totalExpensesIQD, Math.max(1, partners.length));
+  const partnerExpensesUSD = moneyDiv(totalExpensesUSD, Math.max(1, partners.length));
 
   return (
     <div className="dashboard">
@@ -118,8 +120,8 @@ export function ProfitDistributionTab({ onRefreshAllData, onDistributeChange, fr
                 </thead>
                 <tbody>
                   {partners.map((partner, idx) => {
-                    const netIQD = partner.profit_iqd - partnerExpensesIQD - partner.drawings_iqd;
-                    const netUSD = partner.profit_usd - partnerExpensesUSD - partner.drawings_usd;
+                    const netIQD = moneySub(moneySub(partner.profit_iqd, partnerExpensesIQD), partner.drawings_iqd);
+                    const netUSD = moneySub(moneySub(partner.profit_usd, partnerExpensesUSD), partner.drawings_usd);
                     return (
                       <tr key={partner.partner_name}>
                         <td className="font-bold">{idx + 1}</td>

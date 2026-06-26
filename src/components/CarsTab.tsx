@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buildCarInvokeArgs, callTauri } from "../api/tauri";
-import type { Car, CarFormState, Partner, PartnerTransaction } from "../types";
-import { carNetProfit, carProfitPercentage } from "../utils/finance";
+import type { Car, CarExpenseRecord, CarFormState, Partner, PartnerTransaction } from "../types";
+import { compareCarNetProfit, carProfitPercentage } from "../utils/finance";
 import { cleanAndNormalizeNumbers, toEnglishDigits } from "../utils/numberInput";
+import { compareMoney, moneyAdd, moneySum } from "../utils/money";
 import { todayIsoDate } from "../utils/dateSegments";
 import { CarFormPanel } from "./CarFormPanel";
 import { ActionButton, PriceDisplay, TextInput, PriceInput } from "@/components/ui";
@@ -10,6 +11,7 @@ import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
 import { GoldFxButton } from "./ui/GoldFxButton";
 import { SearchableCombobox } from "./SearchableCombobox";
+import { QuickAddPartnerModal } from "./QuickAddPartnerModal";
 import { toChassisText } from "../utils/keyboardLayout";
 import { YearScrollField } from "./YearScrollField";
 
@@ -104,13 +106,13 @@ function carToForm(car: Car): CarFormState {
     firstPaymentDate: car.first_payment_date ?? "",
     currency: (car.currency as "IQD" | "USD") ?? "IQD",
     saleCurrency: (car.sale_currency as "IQD" | "USD") ?? "IQD",
-    purchasePaymentType: "قاصه" as any,
-    salePaymentType: "قاصه" as any,
+    purchasePaymentType: "قاصه",
+    salePaymentType: "قاصه",
     purchaseType: car.purchase_type === "تمويل" || car.purchase_type === "شركة" || car.purchase_type === "دين"
       ? (car.purchase_type === "دين" ? "تمويل" : car.purchase_type)
       : "كاش",
     financerName: car.financer_name ?? "",
-    commissionType: (car.commission_type as any) ?? "لا يوجد",
+    commissionType: (car.commission_type as CarFormState["commissionType"]) ?? "لا يوجد",
     commissionValue: String(car.commission_value ?? 0),
   };
 }
@@ -157,6 +159,20 @@ export function CarsTab({
   const [showBatchCountModal, setShowBatchCountModal] = useState(false);
   const [batchCountDraft, setBatchCountDraft] = useState(10);
 
+  // Duplicate detection state
+  interface BatchDuplicateConflict {
+    rowIdx: number;
+    rowNum: string;
+    rowChassis: string;
+    conflictType: "num" | "chassis" | "both";
+    conflictWith: string; // description of the conflicting source
+  }
+  const [showBatchDuplicateModal, setShowBatchDuplicateModal] = useState(false);
+  const [batchDuplicateConflicts, setBatchDuplicateConflicts] = useState<BatchDuplicateConflict[]>([]);
+  const [pendingBatchRowsAfterDupeCheck, setPendingBatchRowsAfterDupeCheck] = useState<BatchCarRow[]>([]);
+  // نافذة الإضافة السريعة للممول / الشركة في نموذج المجموعة
+  const [quickAddKindBatch, setQuickAddKindBatch] = useState<"ممول" | "شركة" | null>(null);
+
   const handleRow1Change = (patch: Partial<BatchCarRow>) => {
     setBatchRows((prev) => {
       return prev.map((row, idx) => {
@@ -200,7 +216,7 @@ export function CarsTab({
   };
 
   const startNewBatch = (count = batchCountDraft) => {
-    const safeCount = Math.max(1, Math.min(50, Number(count) || 10));
+    const safeCount = Math.max(1, Math.min(1000, Number(count) || 10));
     setBatchRows(
       createEmptyBatchRows(safeCount)
     );
@@ -259,12 +275,13 @@ export function CarsTab({
   const [expenseDirty, setExpenseDirty] = useState(false);
 
   const availableCarsList = useMemo(() => cars.filter((c) => c.status === "متوفرة"), [cars]);
-  const purchaseIqd = useMemo(() => availableCarsList.filter((c) => c.currency !== "USD").reduce((sum, c) => sum + c.purchase_price + (c.expenses_sum || 0), 0), [availableCarsList]);
-  const purchaseUsd = useMemo(() => availableCarsList.filter((c) => c.currency === "USD").reduce((sum, c) => sum + c.purchase_price + (c.expenses_sum || 0), 0), [availableCarsList]);
+  // Fixed: inventory totals use Decimal and include car expenses without counting sold cars.
+  const purchaseIqd = useMemo(() => moneySum(availableCarsList.filter((c) => c.currency !== "USD"), (c) => moneyAdd(c.purchase_price, c.expenses_sum || 0)), [availableCarsList]);
+  const purchaseUsd = useMemo(() => moneySum(availableCarsList.filter((c) => c.currency === "USD"), (c) => moneyAdd(c.purchase_price, c.expenses_sum || 0)), [availableCarsList]);
 
   const soldCarsList = useMemo(() => cars.filter((c) => c.status === "مبيوعة"), [cars]);
-  const salesIqd = useMemo(() => soldCarsList.filter((c) => c.sale_currency !== "USD").reduce((sum, c) => sum + (c.selling_price || 0), 0), [soldCarsList]);
-  const salesUsd = useMemo(() => soldCarsList.filter((c) => c.sale_currency === "USD").reduce((sum, c) => sum + (c.selling_price || 0), 0), [soldCarsList]);
+  const salesIqd = useMemo(() => moneySum(soldCarsList.filter((c) => c.sale_currency !== "USD"), (c) => c.selling_price || 0), [soldCarsList]);
+  const salesUsd = useMemo(() => moneySum(soldCarsList.filter((c) => c.sale_currency === "USD"), (c) => c.selling_price || 0), [soldCarsList]);
 
   const replaceForm = (next: CarFormState) => {
     formRef.current = next;
@@ -317,12 +334,12 @@ export function CarsTab({
       const sign = sortConfig.direction === "asc" ? 1 : -1;
       result = [...result].sort((a, b) => {
         if (sortConfig.key === "purchase") {
-          const totalA = a.purchase_price + (a.expenses_sum || 0);
-          const totalB = b.purchase_price + (b.expenses_sum || 0);
-          return (totalA - totalB) * sign;
+          const totalA = moneyAdd(a.purchase_price, a.expenses_sum || 0);
+          const totalB = moneyAdd(b.purchase_price, b.expenses_sum || 0);
+          return compareMoney(totalA, totalB) * sign;
         }
-        if (sortConfig.key === "selling") return (a.selling_price - b.selling_price) * sign;
-        if (sortConfig.key === "profit") return (carNetProfit(a) - carNetProfit(b)) * sign;
+        if (sortConfig.key === "selling") return compareMoney(a.selling_price, b.selling_price) * sign;
+        if (sortConfig.key === "profit") return compareCarNetProfit(a, b) * sign;
         const av = sortConfig.key === "model" ? (a.car_model || a.car_name)
           : sortConfig.key === "year" ? (a.car_year ?? "")
             : sortConfig.key === "color" ? (a.color ?? "")
@@ -769,6 +786,30 @@ export function CarsTab({
     }
   };
 
+  // Executes the actual saving after duplicate check is resolved
+  const executeBatchSave = async (rowsToSave: BatchCarRow[]) => {
+    setBatchSaving(true);
+    setBatchProgress({ current: 0, total: rowsToSave.length });
+    try {
+      const purchaseDate = todayIsoDate();
+      for (let i = 0; i < rowsToSave.length; i++) {
+        setBatchProgress({ current: i + 1, total: rowsToSave.length });
+        const row = rowsToSave[i];
+        const formState = rowToFormState(row, purchaseDate);
+        await callTauri("add_car", buildCarInvokeArgs(formState));
+        await handlePurchaseAutomation(formState, undefined);
+      }
+      showToast(`تم حفظ ${rowsToSave.length} سيارة بنجاح.`);
+      closePanel();
+      await onRefresh();
+    } catch (err) {
+      console.error("Failed to save batch:", err);
+      showToast("حدث خطأ أثناء حفظ المجموعة.");
+    } finally {
+      setBatchSaving(false);
+    }
+  };
+
   const handleBatchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -819,33 +860,66 @@ export function CarsTab({
       return;
     }
 
-    // 3. Sequential saving
-    setBatchSaving(true);
-    setBatchProgress({ current: 0, total: batchRows.length });
+    // 3. Duplicate detection — check within batch rows and against existing cars
+    const conflicts: BatchDuplicateConflict[] = [];
+    const seenNums = new Map<string, number>(); // num -> first row index
+    const seenChassis = new Map<string, number>(); // chassis -> first row index
 
-    try {
-      const purchaseDate = todayIsoDate();
-      for (let i = 0; i < batchRows.length; i++) {
-        setBatchProgress({ current: i + 1, total: batchRows.length });
-        const row = batchRows[i];
-        const formState = rowToFormState(row, purchaseDate);
+    batchRows.forEach((row, idx) => {
+      const num = row.num.trim().toUpperCase();
+      const chassis = row.chassis.trim().toUpperCase();
 
-        // Save car in Tauri command
-        await callTauri("add_car", buildCarInvokeArgs(formState));
+      let numConflict = "";
+      let chassisConflict = "";
 
-        // Execute companion automation for financer or company
-        await handlePurchaseAutomation(formState, undefined);
+      // Check within batch (row vs row)
+      if (seenNums.has(num)) {
+        numConflict = `الصف ${(seenNums.get(num)! + 1)}`;
+      } else {
+        seenNums.set(num, idx);
       }
 
-      showToast(`تم حفظ ${batchRows.length} سيارات بنجاح.`);
-      closePanel();
-      await onRefresh();
-    } catch (err) {
-      console.error("Failed to save batch:", err);
-      showToast("حدث خطأ أثناء حفظ المجموعة.");
-    } finally {
-      setBatchSaving(false);
+      if (seenChassis.has(chassis)) {
+        chassisConflict = `الصف ${(seenChassis.get(chassis)! + 1)}`;
+      } else {
+        seenChassis.set(chassis, idx);
+      }
+
+      // Check against existing cars in DB
+      if (!numConflict) {
+        const existingByNum = cars.find(c => c.car_number.trim().toUpperCase() === num || (c.car_plate_num ?? "").trim().toUpperCase() === num);
+        if (existingByNum) {
+          numConflict = `سيارة موجودة (${existingByNum.car_name || existingByNum.car_model || num})`;
+        }
+      }
+      if (!chassisConflict) {
+        const existingByChassis = cars.find(c => (c.chassis_number ?? "").trim().toUpperCase() === chassis);
+        if (existingByChassis) {
+          chassisConflict = `سيارة موجودة (${existingByChassis.car_name || existingByChassis.car_model || chassis})`;
+        }
+      }
+
+      if (numConflict || chassisConflict) {
+        const conflictType: BatchDuplicateConflict["conflictType"] =
+          numConflict && chassisConflict ? "both" : numConflict ? "num" : "chassis";
+        const conflictWith = [numConflict && `رقم اللوحة: ${numConflict}`, chassisConflict && `رقم الشاصي: ${chassisConflict}`]
+          .filter(Boolean).join(" | ");
+        conflicts.push({ rowIdx: idx, rowNum: row.num.trim(), rowChassis: row.chassis.trim(), conflictType, conflictWith });
+      }
+    });
+
+    if (conflicts.length > 0) {
+      setBatchDuplicateConflicts(conflicts);
+      // Rows that are NOT conflicting
+      const conflictIdxs = new Set(conflicts.map(c => c.rowIdx));
+      const safeRows = batchRows.filter((_, idx) => !conflictIdxs.has(idx));
+      setPendingBatchRowsAfterDupeCheck(safeRows);
+      setShowBatchDuplicateModal(true);
+      return;
     }
+
+    // 4. No duplicates — save directly
+    await executeBatchSave(batchRows);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -908,7 +982,7 @@ export function CarsTab({
 
       // 1. Delete car expenses
       try {
-        const expenses = await callTauri<any[]>("get_car_expense_records", { carNumber });
+        const expenses = await callTauri<CarExpenseRecord[]>("get_car_expense_records", { carNumber });
         for (const exp of expenses || []) {
           await callTauri("delete_car_expense_record", { id: exp.id });
         }
@@ -1307,7 +1381,7 @@ export function CarsTab({
                           </td>
                           <td className="ct-chassis">{car.chassis_number || "—"}</td>
                           <td className="ct-price">
-                            <PriceDisplay amount={car.purchase_price + (car.expenses_sum || 0)} currency={car.currency} noColor />
+                            <PriceDisplay amount={moneyAdd(car.purchase_price, car.expenses_sum || 0)} currency={car.currency} noColor />
                           </td>
                           <td className="ct-price">
                             {isSold ? (
@@ -1404,7 +1478,7 @@ export function CarsTab({
                     return (
                       <tr key={idx} className="batch-tr">
                         <td className="cell-num text-center">{idx + 1}</td>
-                        
+
                         {/* نوع السيارة */}
                         <td>
                           {isRow1 ? (
@@ -1483,7 +1557,7 @@ export function CarsTab({
                               value={row.purchase}
                               onChange={(purchase) => handleRow1Change({ purchase })}
                               currency={row.currency}
-                              onCurrencyChange={(currency) => handleRow1Change({ currency: currency as any })}
+                              onCurrencyChange={(currency) => handleRow1Change({ currency })}
                               required
                             />
                           ) : (
@@ -1512,20 +1586,72 @@ export function CarsTab({
                               {(row.purchaseType === "تمويل" || row.purchaseType === "شركة") && (
                                 <div id="batch-financer-0" className="mt-1">
                                   {row.purchaseType === "تمويل" && (
-                                    <SearchableCombobox
-                                      value={row.financerName}
-                                      onChange={(name) => handleRow1Change({ financerName: name })}
-                                      placeholder="اختر الممول"
-                                      options={partners.filter(p => (p.kind || "").trim().replace(/ة/g, "ه") === "ممول").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
-                                    />
+                                    <div style={{ display: "flex", gap: "5px", alignItems: "center" }}>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <SearchableCombobox
+                                          value={row.financerName}
+                                          onChange={(name) => handleRow1Change({ financerName: name })}
+                                          placeholder="اختر الممول"
+                                          options={partners.filter(p => (p.kind || "").trim().replace(/ة/g, "ه") === "ممول").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
+                                        />
+                                      </div>
+                                      <button
+                                        type="button"
+                                        title="إضافة ممول جديد"
+                                        onClick={() => setQuickAddKindBatch("ممول")}
+                                        style={{
+                                          flexShrink: 0,
+                                          width: "30px",
+                                          height: "30px",
+                                          borderRadius: "8px",
+                                          border: "1px solid rgba(59,130,246,0.4)",
+                                          background: "rgba(59,130,246,0.12)",
+                                          color: "#93c5fd",
+                                          fontSize: "16px",
+                                          fontWeight: 700,
+                                          cursor: "pointer",
+                                          display: "flex",
+                                          alignItems: "center",
+                                          justifyContent: "center",
+                                        }}
+                                      >
+                                        +
+                                      </button>
+                                    </div>
                                   )}
                                   {row.purchaseType === "شركة" && (
-                                    <SearchableCombobox
-                                      value={row.financerName}
-                                      onChange={(name) => handleRow1Change({ financerName: name })}
-                                      placeholder="اختر الشركة"
-                                      options={partners.filter((p) => (p.kind || "").trim().replace(/ة/g, "ه") === "شركه").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
-                                    />
+                                    <div style={{ display: "flex", gap: "5px", alignItems: "center" }}>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <SearchableCombobox
+                                          value={row.financerName}
+                                          onChange={(name) => handleRow1Change({ financerName: name })}
+                                          placeholder="اختر الشركة"
+                                          options={partners.filter((p) => (p.kind || "").trim().replace(/ة/g, "ه") === "شركه").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
+                                        />
+                                      </div>
+                                      <button
+                                        type="button"
+                                        title="إضافة شركة جديدة"
+                                        onClick={() => setQuickAddKindBatch("شركة")}
+                                        style={{
+                                          flexShrink: 0,
+                                          width: "30px",
+                                          height: "30px",
+                                          borderRadius: "8px",
+                                          border: "1px solid rgba(251,146,60,0.4)",
+                                          background: "rgba(251,146,60,0.12)",
+                                          color: "#fdba74",
+                                          fontSize: "16px",
+                                          fontWeight: 700,
+                                          cursor: "pointer",
+                                          display: "flex",
+                                          alignItems: "center",
+                                          justifyContent: "center",
+                                        }}
+                                      >
+                                        +
+                                      </button>
+                                    </div>
                                   )}
                                 </div>
                               )}
@@ -1585,7 +1711,7 @@ export function CarsTab({
               </table>
             </div>
           </form>
-          
+
           {/* Progress Overlay */}
           {batchSaving && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
@@ -1596,7 +1722,7 @@ export function CarsTab({
                   تم حفظ {batchProgress.current} من {batchProgress.total} سيارات...
                 </p>
                 <div className="w-full bg-white/10 h-2 rounded-full overflow-hidden mt-4">
-                  <div 
+                  <div
                     className="bg-[var(--gold-primary)] h-full transition-all duration-300"
                     style={{ width: `${(batchProgress.current / batchProgress.total) * 100}%` }}
                   />
@@ -1654,15 +1780,15 @@ export function CarsTab({
                 id="batch-count-input"
                 type="number"
                 min={1}
-                max={50}
+                max={1000}
                 value={batchCountDraft}
-                onChange={(e) => setBatchCountDraft(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
+                onChange={(e) => setBatchCountDraft(Math.max(1, Math.min(1000, Number(e.target.value) || 1)))}
                 onFocus={(e) => setTimeout(() => e.target.select(), 0)}
                 autoFocus
               />
             </div>
             <div className="batch-count-dialog__quick">
-              {[5, 10, 20, 30, 50].map((count) => (
+              {[5, 10, 20, 50, 100, 200, 500, 1000].map((count) => (
                 <button
                   key={count}
                   type="button"
@@ -1687,6 +1813,92 @@ export function CarsTab({
                 onClick={() => setShowBatchCountModal(false)}
               >
                 إلغاء
+              </ActionButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── نافذة تحذير التكرار في المجموعة ── */}
+      {showBatchDuplicateModal && (
+        <div className="fx-confirm-overlay" role="presentation" onClick={() => setShowBatchDuplicateModal(false)}>
+          <div
+            className="fx-confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            style={{ maxWidth: "560px", width: "94vw" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
+              <span style={{ fontSize: "22px" }}>⚠️</span>
+              <h3 className="fx-confirm-title" style={{ margin: 0 }}>تكرار في أرقام السيارات</h3>
+            </div>
+            <p className="fx-confirm-message" style={{ marginBottom: "14px" }}>
+              تم اكتشاف <strong>{batchDuplicateConflicts.length}</strong> تعارض في المجموعة المدخلة.
+              السيارات المكررة لن يتم حفظها.
+              {pendingBatchRowsAfterDupeCheck.length > 0
+                ? ` سيتم حفظ ${pendingBatchRowsAfterDupeCheck.length} سيارة غير مكررة فقط.`
+                : " لا توجد سيارات غير مكررة للحفظ."}
+            </p>
+
+            {/* Conflict list */}
+            <div style={{
+              background: "rgba(239,68,68,0.08)",
+              border: "1px solid rgba(239,68,68,0.25)",
+              borderRadius: "10px",
+              padding: "10px 12px",
+              marginBottom: "16px",
+              maxHeight: "240px",
+              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+              gap: "7px"
+            }}>
+              {batchDuplicateConflicts.map((conflict) => (
+                <div key={conflict.rowIdx} style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: "8px",
+                  padding: "6px 8px",
+                  background: "rgba(239,68,68,0.10)",
+                  borderRadius: "8px",
+                  fontSize: "0.85rem",
+                  direction: "rtl"
+                }}>
+                  <span style={{ color: "#ef4444", fontWeight: 700, minWidth: "52px", flexShrink: 0 }}>الصف {conflict.rowIdx + 1}</span>
+                  <span style={{ color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>|</span>
+                  <span style={{ color: "rgba(255,255,255,0.8)" }} dir="ltr">
+                    {conflict.conflictType !== "chassis" && <span>لوحة: <strong style={{ color: "#fbbf24" }}>{conflict.rowNum}</strong> </span>}
+                    {conflict.conflictType !== "num" && <span>شاصي: <strong style={{ color: "#fbbf24" }}>{conflict.rowChassis}</strong> </span>}
+                    <span style={{ color: "rgba(255,255,255,0.45)", fontSize: "0.78rem", display: "block", marginTop: "2px" }}>← تعارض مع: {conflict.conflictWith}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div className="fx-confirm-actions">
+              {pendingBatchRowsAfterDupeCheck.length > 0 && (
+                <GoldFxButton
+                  type="button"
+                  variant="gold"
+                  onClick={() => {
+                    setShowBatchDuplicateModal(false);
+                    void executeBatchSave(pendingBatchRowsAfterDupeCheck);
+                  }}
+                >
+                  <span className="gold-fx-btn__label">حفظ ({pendingBatchRowsAfterDupeCheck.length})</span>
+                </GoldFxButton>
+              )}
+              <ActionButton
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setShowBatchDuplicateModal(false);
+                  setBatchDuplicateConflicts([]);
+                  setPendingBatchRowsAfterDupeCheck([]);
+                }}
+              >
+                العودة للتعديل
               </ActionButton>
             </div>
           </div>
@@ -1761,6 +1973,19 @@ export function CarsTab({
             </div>
           </div>
         </div>
+      )}
+
+      {/* نافذة الإضافة السريعة للممول / الشركة (المجموعة) */}
+      {quickAddKindBatch && (
+        <QuickAddPartnerModal
+          kind={quickAddKindBatch}
+          onClose={() => setQuickAddKindBatch(null)}
+          onSaved={(name) => {
+            setQuickAddKindBatch(null);
+            handleRow1Change({ financerName: name });
+            void onRefresh();
+          }}
+        />
       )}
 
       {/* نافذة تأكيد إنشاء حساب زبون */}

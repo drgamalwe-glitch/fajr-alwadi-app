@@ -22,11 +22,16 @@ tauri-plugin-opener = "2"
 open = "5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 trash = "5"
 sha2 = "0.10"
 hex = "0.4"
 rust_xlsxwriter = "0.95"
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+rust_decimal_macros = "1"
+argon2 = "0.5"
+rand_core = { version = "0.6", features = ["std"] }
+chrono = { version = "0.4", features = ["clock"] }
 
 [profile.release]
 panic = "abort"

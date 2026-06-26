@@ -25,20 +25,22 @@ type PartnerOpenTarget = {
 
 type DashboardSubTab = "dashboard" | "company-status";
 type PartnersFinancialSubTab = "customers" | "personal" | "receivables" | "liabilities";
+type CarsSubTab = "available" | "sold";
+type FinancialSubTab = "قاصه" | "الكاش";
+
+const CARS_SUB_TABS = new Set<CarsSubTab>(["available", "sold"]);
+const PARTNERS_FINANCIAL_SUB_TABS = new Set<PartnersFinancialSubTab>(["customers", "personal", "receivables", "liabilities"]);
+const FINANCIAL_SUB_TABS = new Set<FinancialSubTab>(["قاصه", "الكاش"]);
+
+/** Narrow an arbitrary string to a known sub-tab union, or return null. */
+function narrowSubTab<T extends string>(value: string | undefined | null, allowed: ReadonlySet<T>): T | null {
+  return value && allowed.has(value as T) ? (value as T) : null;
+}
 
 // Static array of background paths to optimize build size and prevent file duplication
 const INITIAL_BG_PATHS = ["/backgrounds/bg.jpg"];
 
-/*
-// Helper to extract a friendly readable name from the background file path
-const getFriendlyBgName = (path: string) => {
-  const base = path.split("/").pop() || "";
-  const nameWithoutExt = base.substring(0, base.lastIndexOf(".")) || base;
-  // Clean up typical generated filenames e.g. "Abstract_background_..._202606140949" -> "Abstract background ..."
-  const cleaned = nameWithoutExt.replace(/_\d{8,14}$/, ""); // remove dates
-  return cleaned.replace(/_/g, " ");
-};
-*/
+
 
 const DEFAULT_BG = "/backgrounds/bg.jpg";
 
@@ -91,24 +93,6 @@ export default function App() {
     }
     return initialPaths.includes(DEFAULT_BG) ? DEFAULT_BG : initialPaths[0] || DEFAULT_BG;
   });
-  /*
-  // تم جمع وإيقاف كود نسخ اسم الخلفية وحالتها
-  const [toastBgName, setToastBgName] = useState<string | null>(null);
-  const toastTimeoutRef = useRef<any>(null);
-  const [copiedBg, setCopiedBg] = useState(false);
-
-  const handleCopyBgName = useCallback(() => {
-    const filename = currentBg.split("/").pop() || "";
-    navigator.clipboard.writeText(filename)
-      .then(() => {
-        setCopiedBg(true);
-        setTimeout(() => setCopiedBg(false), 2000);
-      })
-      .catch((err) => {
-        console.error("Failed to copy background name:", err);
-      });
-  }, [currentBg]);
-  */
 
   // Sync available backgrounds list to localStorage
   useEffect(() => {
@@ -178,7 +162,7 @@ export default function App() {
       if (rs.section === "dashboard" && rs.subTab) {
         setDashboardSubTab(rs.subTab as DashboardSubTab);
       } else if (rs.section === "cars" && rs.subTab) {
-        setCarsSubTab(rs.subTab as any);
+        setCarsSubTab(narrowSubTab(rs.subTab, CARS_SUB_TABS));
       } else if (rs.section === "partners-financial" && rs.subTab) {
         setPartnersFinancialSubTab(rs.subTab as PartnersFinancialSubTab);
       }
@@ -308,91 +292,7 @@ export default function App() {
       });
   }, []);
 
-  /*
-  // =========================================================================
-  // تم جمع كود التنقل بين الخلفيات (الأسهم) وكود الحذف بحرف (d / ي) في كود واحد وإيقاف تشغيله
-  // =========================================================================
-  useEffect(() => {
-    const handleBgShortcuts = (e: KeyboardEvent) => {
-      if (bgPaths.length === 0) return;
 
-      const activeEl = document.activeElement as HTMLElement | null;
-      let isEditable = false;
-      if (activeEl) {
-        const tag = activeEl.tagName.toLowerCase();
-        isEditable =
-          tag === "input" ||
-          tag === "textarea" ||
-          tag === "select" ||
-          activeEl.isContentEditable;
-      }
-
-      if (isEditable) return;
-
-      // 1. كود حذف الخلفية بواسطة حرف d أو ي
-      if (e.key === "d" || e.key === "ي") {
-        e.preventDefault();
-        e.stopPropagation();
-
-        const bgToDelete = currentBg;
-        callTauri("delete_background", { filePath: bgToDelete })
-          .then(() => {
-            setBgPaths((prev) => {
-              const idx = prev.indexOf(bgToDelete);
-              const next = prev.filter((p) => p !== bgToDelete);
-              if (next.length === 0) {
-                setCurrentBg(DEFAULT_BG);
-              } else {
-                const newIdx = Math.min(idx, next.length - 1);
-                setCurrentBg(next[newIdx]);
-              }
-              return next;
-            });
-          })
-          .catch((err) => console.error("فشل حذف الخلفية:", err));
-        return;
-      }
-
-      // 2. كود التنقل بين الخلفيات بواسطة الأسهم يمين ويسار
-      const isArrow = e.code === "ArrowLeft" || e.code === "ArrowRight";
-      if (isArrow) {
-        e.preventDefault();
-        e.stopPropagation();
-
-        let currentIndex = bgPaths.indexOf(currentBg);
-        if (currentIndex === -1) {
-          currentIndex = 0;
-        }
-
-        let nextIndex = currentIndex;
-        if (e.code === "ArrowRight") {
-          nextIndex = (currentIndex + 1) % bgPaths.length;
-        } else if (e.code === "ArrowLeft") {
-          nextIndex = (currentIndex - 1 + bgPaths.length) % bgPaths.length;
-        }
-
-        const nextBg = bgPaths[nextIndex];
-        setCurrentBg(nextBg);
-
-        // إظهار إشعار تغيير الخلفية
-        const friendlyName = getFriendlyBgName(nextBg);
-        if (toastTimeoutRef.current) {
-          clearTimeout(toastTimeoutRef.current);
-        }
-        setToastBgName(friendlyName);
-        toastTimeoutRef.current = setTimeout(() => {
-          setToastBgName(null);
-        }, 3000);
-      }
-    };
-
-    window.addEventListener("keydown", handleBgShortcuts, true);
-    return () => {
-      window.removeEventListener("keydown", handleBgShortcuts, true);
-      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-    };
-  }, [currentBg, bgPaths]);
-  */
 
   // فتح مربع البحث بـ Space عندما لا يكون التركيز في حقل نص
   useEffect(() => {
@@ -520,11 +420,11 @@ export default function App() {
                     }}
                     onNavigateToTab={(tab, subTab) => {
                       if (tab === "partners-financial") {
-                        setPartnersFinancialSubTab(subTab as any);
+                        setPartnersFinancialSubTab(narrowSubTab(subTab, PARTNERS_FINANCIAL_SUB_TABS));
                       } else if (tab === "cars") {
-                        setCarsSubTab(subTab as any);
+                        setCarsSubTab(narrowSubTab(subTab, CARS_SUB_TABS));
                       } else if (tab === "financial-accounts") {
-                        setFinancialSubTab((subTab as any) || "قاصه");
+                        setFinancialSubTab(narrowSubTab(subTab, FINANCIAL_SUB_TABS) ?? "قاصه");
                       }
                       handleTabChange(tab);
                     }}
@@ -618,38 +518,11 @@ export default function App() {
             )}
           </div>
 
-          {/* 
-        تم إيقاف كود اسم الخلفية وزر النسخ في التذييل، وكذلك إشعار تغيير الخلفية
-        currentBg && (
-          <div 
-            className={`footer-bg-info ${copiedBg ? "copied" : ""}`}
-            onClick={handleCopyBgName}
-            title="انقر لنسخ اسم الصورة بالكامل"
-          >
-            <span>🖼️</span>
-            <span className="footer-bg-info__name">
-              {currentBg.split("/").pop()}
-            </span>
-            <span className="footer-bg-info__action">
-              {copiedBg ? "✓ تم النسخ" : "📋 نسخ"}
-            </span>
-          </div>
-        )
-        */}
-
           <div className="footer-brand" dir="ltr">
             <span className="footer-brand__text">VERSION: {APP_VERSION} | DEVELOPED BY DHRUGHAM ALALAWI: 07806539291</span>
           </div>
         </footer>
       </div>
-
-      {/*
-      {toastBgName && (
-        <div className="bg-change-toast" role="status" aria-live="polite">
-          خلفية: {toastBgName}
-        </div>
-      )}
-      */}
     </>
   );
 }

@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import type { CarFormState, Partner, CarExpenseRecord } from "../types";
 import { callTauri } from "../api/tauri";
 import { SearchableCombobox } from "./SearchableCombobox";
+import { QuickAddPartnerModal } from "./QuickAddPartnerModal";
 
 import { toChassisText } from "../utils/keyboardLayout";
 import { toEnglishDigits } from "../utils/numberInput";
+import { formatMoney, moneyAdd, moneySum } from "../utils/money";
 import { todayIsoDate } from "../utils/dateSegments";
 import { UnifiedDateField } from "./UnifiedDateField";
 import { YearScrollField } from "./YearScrollField";
@@ -44,11 +46,16 @@ export function CarFormPanel({
   // ── نظام الصفحتين: 0 = مواصفات السيارة، 1 = تفاصيل البيع ──
   const [formPage, setFormPage] = useState(0);
   const [deletedExpenseIds, setDeletedExpenseIds] = useState<number[]>([]);
+  // نافذة الإضافة السريعة للممول / الشركة
+  const [quickAddKind, setQuickAddKind] = useState<"ممول" | "شركة" | null>(null);
 
-  useEffect(() => {
+  const reloadPartners = () =>
     callTauri<Partner[]>("get_partners")
       .then((res) => setAllPartners(res || []))
       .catch(console.error);
+
+  useEffect(() => {
+    reloadPartners();
   }, []);
 
   const loadCarExpenses = () => {
@@ -550,8 +557,8 @@ export function CarFormPanel({
                     <div>
                       <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">اجمالي التكلفة</label>
                       {(() => {
-                        const expensesTotal = carExpenses.reduce((s, e) => s + e.amount, 0);
-                        const total = (Number(form.purchase) || 0) + expensesTotal;
+                        const expensesTotal = moneySum(carExpenses, (e) => e.amount);
+                        const total = moneyAdd(form.purchase, expensesTotal);
                         return (
                           <div
                             style={{
@@ -570,7 +577,7 @@ export function CarFormPanel({
                               justifyContent: "center",
                             }}
                           >
-                            {total.toLocaleString("en-US")} {form.currency === "USD" ? "USD" : "IQ"}
+                            {formatMoney(total, form.currency)} {form.currency === "USD" ? "USD" : "IQ"}
                           </div>
                         );
                       })()}
@@ -599,25 +606,94 @@ export function CarFormPanel({
                   {(form.purchaseType === "تمويل" || form.purchaseType === "شركة") && (
                     <div id="financer-select" className="bg-[var(--car-bg-card)] rounded-xl p-3">
                       {form.purchaseType === "تمويل" && (
-                        <SearchableCombobox
-                          value={form.financerName}
-                          onChange={(name) => onChange({ financerName: name })}
-                          onOpenChange={setIsSelectOpen}
-                          placeholder="اختر الممول"
-                          options={allPartners.filter(p => (p.kind || "").trim().replace(/ة/g, "ه") === "ممول").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
-                        />
+                        <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <SearchableCombobox
+                              value={form.financerName}
+                              onChange={(name) => onChange({ financerName: name })}
+                              onOpenChange={setIsSelectOpen}
+                              placeholder="اختر الممول"
+                              options={allPartners.filter(p => (p.kind || "").trim().replace(/ة/g, "ه") === "ممول").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            title="إضافة ممول جديد"
+                            onClick={() => setQuickAddKind("ممول")}
+                            style={{
+                              flexShrink: 0,
+                              width: "34px",
+                              height: "34px",
+                              borderRadius: "9px",
+                              border: "1px solid rgba(59,130,246,0.4)",
+                              background: "rgba(59,130,246,0.12)",
+                              color: "#93c5fd",
+                              fontSize: "18px",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              lineHeight: 1,
+                              transition: "background 0.18s",
+                            }}
+                          >
+                            +
+                          </button>
+                        </div>
                       )}
 
                       {form.purchaseType === "شركة" && (
-                        <SearchableCombobox
-                          value={form.financerName}
-                          onChange={(name) => onChange({ financerName: name })}
-                          onOpenChange={setIsSelectOpen}
-                          placeholder="اختر الشركة"
-                          options={allPartners.filter((p) => (p.kind || "").trim().replace(/ة/g, "ه") === "شركه").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
-                        />
+                        <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <SearchableCombobox
+                              value={form.financerName}
+                              onChange={(name) => onChange({ financerName: name })}
+                              onOpenChange={setIsSelectOpen}
+                              placeholder="اختر الشركة"
+                              options={allPartners.filter((p) => (p.kind || "").trim().replace(/ة/g, "ه") === "شركه").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            title="إضافة شركة جديدة"
+                            onClick={() => setQuickAddKind("شركة")}
+                            style={{
+                              flexShrink: 0,
+                              width: "34px",
+                              height: "34px",
+                              borderRadius: "9px",
+                              border: "1px solid rgba(251,146,60,0.4)",
+                              background: "rgba(251,146,60,0.12)",
+                              color: "#fdba74",
+                              fontSize: "18px",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              lineHeight: 1,
+                              transition: "background 0.18s",
+                            }}
+                          >
+                            +
+                          </button>
+                        </div>
                       )}
                     </div>
+                  )}
+
+                  {/* نافذة الإضافة السريعة */}
+                  {quickAddKind && (
+                    <QuickAddPartnerModal
+                      kind={quickAddKind}
+                      onClose={() => setQuickAddKind(null)}
+                      onSaved={(name) => {
+                        setQuickAddKind(null);
+                        reloadPartners();
+                        onChange({ financerName: name });
+                      }}
+                    />
                   )}
                 </div>
               </div>
@@ -646,7 +722,7 @@ export function CarFormPanel({
                       value={expenseAmt}
                       onChange={setExpenseAmt}
                       currency={expenseCurrency}
-                      onCurrencyChange={(cur) => setExpenseCurrency(cur as any)}
+                      onCurrencyChange={setExpenseCurrency}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           e.preventDefault();

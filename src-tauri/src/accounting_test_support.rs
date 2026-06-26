@@ -1,15 +1,17 @@
 //! In-process harness for REAL_TAURI_RUST accounting verification.
 //! Calls the same Tauri command handlers as production — no E2E bridge.
 
+use crate::Money;
 use crate::{
     add_agency, add_car, add_car_expense_record, add_expense, add_partner, add_partner_transaction,
     delete_agency, delete_car, delete_car_expense_record, delete_expense, delete_partner,
-    export_database_to_excel, get_agencies, get_cars, get_cash_register_entries, get_financial_summary,
-    get_partner_transactions, get_partners, get_profit_distribution_summary, init_db,
-    pay_financier_from_partners, set_customer_installment_status, update_expense,
+    export_database_to_excel, get_agencies, get_cars, get_cash_register_entries,
+    get_financial_summary, get_partner_transactions, get_partners, get_profit_distribution_summary,
+    init_db, pay_financier_from_partners, set_customer_installment_status, update_expense,
     update_sold_car_with_accounting, AppState, FinancialSummary, ProfitDistributionSummary,
 };
 use rusqlite::Connection;
+use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -29,24 +31,28 @@ pub fn full_71_results_store() -> &'static Mutex<Vec<RealVerificationResult>> {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SummarySnapshot {
-    pub qasa_iqd: f64,
-    pub qasa_usd: f64,
-    pub cash_iqd: f64,
-    pub cash_usd: f64,
-    pub inventory_value_iqd: f64,
-    pub inventory_value_usd: f64,
-    pub monthly_profits_iqd: f64,
-    pub monthly_profits_usd: f64,
-    pub total_investments_iqd: f64,
-    pub total_investments_usd: f64,
-    pub total_debtors_iqd: f64,
-    pub total_debtors_usd: f64,
-    pub total_partner_capital_iqd: f64,
-    pub total_partner_capital_usd: f64,
-    pub total_expenses_iqd: f64,
-    pub total_expenses_usd: f64,
-    pub net_capital_iqd: f64,
-    pub net_capital_usd: f64,
+    pub qasa_iqd: Money,
+    pub qasa_usd: Money,
+    pub cash_iqd: Money,
+    pub cash_usd: Money,
+    pub inventory_value_iqd: Money,
+    pub inventory_value_usd: Money,
+    pub monthly_profits_iqd: Money,
+    pub monthly_profits_usd: Money,
+    pub total_investments_iqd: Money,
+    pub total_investments_usd: Money,
+    pub total_debtors_iqd: Money,
+    pub total_debtors_usd: Money,
+    pub total_partner_capital_iqd: Money,
+    pub total_partner_capital_usd: Money,
+    pub total_expenses_iqd: Money,
+    pub total_expenses_usd: Money,
+    pub deferred_revenue_iqd: Money,
+    pub deferred_revenue_usd: Money,
+    pub deferred_expense_iqd: Money,
+    pub deferred_expense_usd: Money,
+    pub net_capital_iqd: Money,
+    pub net_capital_usd: Money,
 }
 
 impl From<&FinancialSummary> for SummarySnapshot {
@@ -68,6 +74,10 @@ impl From<&FinancialSummary> for SummarySnapshot {
             total_partner_capital_usd: s.total_partner_capital_usd,
             total_expenses_iqd: s.total_expenses_iqd,
             total_expenses_usd: s.total_expenses_usd,
+            deferred_revenue_iqd: s.deferred_revenue_iqd,
+            deferred_revenue_usd: s.deferred_revenue_usd,
+            deferred_expense_iqd: s.deferred_expense_iqd,
+            deferred_expense_usd: s.deferred_expense_usd,
             net_capital_iqd: s.net_capital_iqd,
             net_capital_usd: s.net_capital_usd,
         }
@@ -96,6 +106,11 @@ impl TestHarness {
     pub fn new() -> Self {
         let conn = Connection::open_in_memory().expect("open in-memory db");
         init_db(&conn).expect("init_db");
+        // Clear must_change_password for tests since we use the default admin
+        let _ = conn.execute(
+            "UPDATE users SET must_change_password = 0 WHERE username = 'admin'",
+            [],
+        );
         let app = tauri::test::mock_builder()
             .manage(AppState {
                 db: Mutex::new(conn),
@@ -165,19 +180,19 @@ impl TestHarness {
             .expect("get_profit_distribution_summary")
     }
 
-    pub fn partner_profit_iqd(&self, name: &str) -> f64 {
+    pub fn partner_profit_iqd(&self, name: &str) -> Money {
         self.profit_dist()
             .partners
             .iter()
             .find(|p| p.partner_name == name)
             .map(|p| p.profit_iqd)
-            .unwrap_or(0.0)
+            .unwrap_or(Money::zero())
     }
 
     pub fn add_car_cash_purchase(
         &self,
         num: &str,
-        purchase: f64,
+        purchase: Money,
         currency: &str,
     ) -> Result<(), String> {
         add_car(
@@ -192,7 +207,7 @@ impl TestHarness {
             purchase,
             Some(currency.to_string()),
             None,
-            0.0,
+            Money::zero(),
             "متوفرة".to_string(),
             None,
             None,
@@ -220,10 +235,10 @@ impl TestHarness {
     pub fn add_car_installment_sale(
         &self,
         num: &str,
-        purchase: f64,
-        selling: f64,
-        down: f64,
-        remaining: f64,
+        purchase: Money,
+        selling: Money,
+        down: Money,
+        remaining: Money,
         buyer: &str,
     ) -> Result<(), String> {
         self.add_car_cash_purchase(num, purchase, "IQD")?;
@@ -249,7 +264,7 @@ impl TestHarness {
         &self,
         buyer: &str,
         car_num: &str,
-        amount: f64,
+        amount: Money,
         date: &str,
     ) -> Result<(), String> {
         add_partner_transaction(
@@ -270,7 +285,7 @@ impl TestHarness {
         installment_id: i64,
         partner_name: &str,
         paid: bool,
-        amount: f64,
+        amount: Money,
         date: &str,
     ) -> Result<(), String> {
         set_customer_installment_status(
@@ -290,7 +305,7 @@ impl TestHarness {
     pub fn sell_car_cash(
         &self,
         car_num: &str,
-        selling_price: f64,
+        selling_price: Money,
         buyer: &str,
     ) -> Result<(), String> {
         self.sell_car_with_currency(car_num, selling_price, buyer, "IQD")
@@ -299,7 +314,7 @@ impl TestHarness {
     pub fn sell_car_usd(
         &self,
         car_num: &str,
-        selling_price: f64,
+        selling_price: Money,
         buyer: &str,
     ) -> Result<(), String> {
         self.sell_car_with_currency(car_num, selling_price, buyer, "USD")
@@ -308,7 +323,7 @@ impl TestHarness {
     pub fn sell_car_with_currency(
         &self,
         car_num: &str,
-        selling_price: f64,
+        selling_price: Money,
         buyer: &str,
         currency: &str,
     ) -> Result<(), String> {
@@ -322,7 +337,7 @@ impl TestHarness {
             self.today(),
             "كاش".to_string(),
             selling_price,
-            0.0,
+            Money::zero(),
             None,
             None,
             None,
@@ -333,19 +348,14 @@ impl TestHarness {
     pub fn try_sell_mixed_currency(
         &self,
         car_num: &str,
-        selling_price: f64,
+        selling_price: Money,
         currency: &str,
         buyer: &str,
     ) -> Result<(), String> {
         self.sell_car_with_currency(car_num, selling_price, buyer, currency)
     }
 
-    pub fn add_car_expense(
-        &self,
-        car_num: &str,
-        amount: f64,
-        date: &str,
-    ) -> Result<(), String> {
+    pub fn add_car_expense(&self, car_num: &str, amount: Money, date: &str) -> Result<(), String> {
         add_car_expense_record(
             self.st(),
             car_num.to_string(),
@@ -357,7 +367,7 @@ impl TestHarness {
         .map(|_| ())
     }
 
-    pub fn add_general_expense(&self, amount: f64) -> Result<i64, String> {
+    pub fn add_general_expense(&self, amount: Money) -> Result<i64, String> {
         add_expense(
             self.st(),
             "ايجار".to_string(),
@@ -376,7 +386,7 @@ impl TestHarness {
         .map_err(|e| e.to_string())
     }
 
-    pub fn update_general_expense(&self, id: i64, amount: f64) -> Result<(), String> {
+    pub fn update_general_expense(&self, id: i64, amount: Money) -> Result<(), String> {
         update_expense(
             self.st(),
             id,
@@ -401,7 +411,7 @@ impl TestHarness {
         &self,
         name: &str,
         type_: &str,
-        amount: f64,
+        amount: Money,
         date: &str,
     ) -> Result<(), String> {
         add_partner_transaction(
@@ -417,7 +427,7 @@ impl TestHarness {
         )
     }
 
-    pub fn add_funded_car(&self, num: &str, funder: &str, purchase: f64) -> Result<(), String> {
+    pub fn add_funded_car(&self, num: &str, funder: &str, purchase: Money) -> Result<(), String> {
         add_car(
             self.st(),
             num.to_string(),
@@ -430,7 +440,7 @@ impl TestHarness {
             purchase,
             Some("IQD".to_string()),
             None,
-            0.0,
+            Money::zero(),
             "متوفرة".to_string(),
             None,
             None,
@@ -455,7 +465,7 @@ impl TestHarness {
         )
     }
 
-    pub fn add_company_car(&self, num: &str, company: &str, purchase: f64) -> Result<(), String> {
+    pub fn add_company_car(&self, num: &str, company: &str, purchase: Money) -> Result<(), String> {
         add_car(
             self.st(),
             num.to_string(),
@@ -468,7 +478,7 @@ impl TestHarness {
             purchase,
             Some("IQD".to_string()),
             None,
-            0.0,
+            Money::zero(),
             "متوفرة".to_string(),
             None,
             None,
@@ -497,7 +507,7 @@ impl TestHarness {
         &self,
         name: &str,
         kind: &str,
-        amount: f64,
+        amount: Money,
         date: &str,
     ) -> Result<(), String> {
         pay_financier_from_partners(
@@ -514,7 +524,7 @@ impl TestHarness {
         )
     }
 
-    pub fn edit_car_purchase(&self, num: &str, new_purchase: f64) -> Result<(), String> {
+    pub fn edit_car_purchase(&self, num: &str, new_purchase: Money) -> Result<(), String> {
         add_car(
             self.st(),
             num.to_string(),
@@ -527,7 +537,7 @@ impl TestHarness {
             new_purchase,
             Some("IQD".to_string()),
             None,
-            0.0,
+            Money::zero(),
             "متوفرة".to_string(),
             None,
             None,
@@ -556,7 +566,15 @@ impl TestHarness {
         delete_car(self.st(), num.to_string(), None)
     }
 
-    pub fn add_agency_iqd(&self, old: &str, new: &str, amount: f64) -> Result<i64, String> {
+    pub fn car_count(&self, num: &str) -> i64 {
+        get_cars(self.st())
+            .unwrap_or_default()
+            .iter()
+            .filter(|car| car.car_number == num)
+            .count() as i64
+    }
+
+    pub fn add_agency_iqd(&self, old: &str, new: &str, amount: Money) -> Result<i64, String> {
         add_agency(
             self.st(),
             old.to_string(),
@@ -566,7 +584,7 @@ impl TestHarness {
             String::new(),
             new.to_string(),
             String::new(),
-            0.0,
+            Money::zero(),
             amount,
             String::new(),
         )
@@ -592,14 +610,15 @@ impl TestHarness {
             .count() as i64
     }
 
-    pub fn stale_expense_partner_rows(&self, expense_id: i64, stale_amount: f64) -> i64 {
+    pub fn stale_expense_partner_rows(&self, expense_id: i64, stale_amount: Money) -> i64 {
         let txs = get_partner_transactions(self.st(), "أمير".to_string(), "شريك".to_string())
             .unwrap_or_default();
         txs.iter()
             .filter(|tx| {
                 tx.source_type.as_deref() == Some("expense")
                     && tx.source_id.as_deref() == Some(&expense_id.to_string())
-                    && (tx.amount - stale_amount / 2.0).abs() < 0.01
+                    && (tx.amount - stale_amount / Money(dec!(2))).abs()
+                        < Money(dec!(0.01))
             })
             .count() as i64
     }
@@ -609,7 +628,7 @@ impl TestHarness {
         name: &str,
         kind: &str,
         type_: &str,
-        amount: f64,
+        amount: Money,
         date: &str,
     ) -> Result<(), String> {
         add_partner_transaction(
@@ -628,10 +647,10 @@ impl TestHarness {
     pub fn add_term_sale(
         &self,
         num: &str,
-        purchase: f64,
-        selling: f64,
-        down: f64,
-        remaining: f64,
+        purchase: Money,
+        selling: Money,
+        down: Money,
+        remaining: Money,
         buyer: &str,
         months: i32,
     ) -> Result<(), String> {
@@ -657,7 +676,7 @@ impl TestHarness {
     pub fn sell_funded_car_cash(
         &self,
         num: &str,
-        selling: f64,
+        selling: Money,
         buyer: &str,
     ) -> Result<(), String> {
         self.sell_car_cash(num, selling, buyer)
@@ -684,7 +703,7 @@ impl TestHarness {
     pub fn update_sold_car(
         &self,
         car_num: &str,
-        selling_price: f64,
+        selling_price: Money,
         buyer: &str,
     ) -> Result<(), String> {
         update_sold_car_with_accounting(
@@ -697,7 +716,7 @@ impl TestHarness {
             self.today(),
             "كاش".to_string(),
             selling_price,
-            0.0,
+            Money::zero(),
             None,
             None,
             None,
@@ -723,7 +742,13 @@ impl TestHarness {
         )
     }
 
-    pub fn add_funder_tx(&self, name: &str, type_: &str, amount: f64, date: &str) -> Result<(), String> {
+    pub fn add_funder_tx(
+        &self,
+        name: &str,
+        type_: &str,
+        amount: Money,
+        date: &str,
+    ) -> Result<(), String> {
         add_partner_transaction(
             self.st(),
             name.to_string(),
@@ -737,7 +762,13 @@ impl TestHarness {
         )
     }
 
-    pub fn add_company_tx(&self, name: &str, type_: &str, amount: f64, date: &str) -> Result<(), String> {
+    pub fn add_company_tx(
+        &self,
+        name: &str,
+        type_: &str,
+        amount: Money,
+        date: &str,
+    ) -> Result<(), String> {
         add_partner_transaction(
             self.st(),
             name.to_string(),
@@ -751,7 +782,7 @@ impl TestHarness {
         )
     }
 
-    pub fn add_agency_usd(&self, old: &str, new: &str, amount: f64) -> Result<i64, String> {
+    pub fn add_agency_usd(&self, old: &str, new: &str, amount: Money) -> Result<i64, String> {
         add_agency(
             self.st(),
             old.to_string(),
@@ -762,7 +793,7 @@ impl TestHarness {
             new.to_string(),
             String::new(),
             amount,
-            0.0,
+            Money::zero(),
             String::new(),
         )
     }
@@ -781,21 +812,18 @@ impl TestHarness {
     }
 
     pub fn shuraka_count(&self) -> i64 {
-        self.partners()
-            .iter()
-            .filter(|p| p.kind == "شريك")
-            .count() as i64
+        self.partners().iter().filter(|p| p.kind == "شريك").count() as i64
     }
 
-    pub fn customer_balance_iqd(&self, name: &str) -> f64 {
+    pub fn customer_balance_iqd(&self, name: &str) -> Money {
         self.partners()
             .iter()
             .find(|p| p.partner_name == name)
             .map(|p| p.iqd_balance)
-            .unwrap_or(0.0)
+            .unwrap_or(Money::zero())
     }
 
-    pub fn cash_register_total(&self, payment_type: &str) -> f64 {
+    pub fn cash_register_total(&self, payment_type: &str) -> Money {
         get_cash_register_entries(self.st(), Some(payment_type.to_string()))
             .unwrap_or_default()
             .iter()
@@ -803,7 +831,7 @@ impl TestHarness {
             .sum()
     }
 
-    pub fn add_usd_expense(&self, amount: f64) -> Result<(), String> {
+    pub fn add_usd_expense(&self, amount: Money) -> Result<(), String> {
         add_expense(
             self.st(),
             "مصروف USD".to_string(),
@@ -829,7 +857,7 @@ impl TestHarness {
         Ok(())
     }
 
-    pub fn total_partner_profit_iqd(&self) -> f64 {
+    pub fn total_partner_profit_iqd(&self) -> Money {
         self.profit_dist()
             .partners
             .iter()
@@ -848,12 +876,15 @@ impl TestHarness {
             .count() as i64
     }
 
-    pub fn get_partner_transactions(&self, name: &str, kind: &str) -> Vec<crate::PartnerTransaction> {
-        get_partner_transactions(self.st(), name.to_string(), kind.to_string())
-            .unwrap_or_default()
+    pub fn get_partner_transactions(
+        &self,
+        name: &str,
+        kind: &str,
+    ) -> Vec<crate::PartnerTransaction> {
+        get_partner_transactions(self.st(), name.to_string(), kind.to_string()).unwrap_or_default()
     }
 
-    pub fn add_company_car_plain(&self, num: &str, purchase: f64) -> Result<(), String> {
+    pub fn add_company_car_plain(&self, num: &str, purchase: Money) -> Result<(), String> {
         add_car(
             self.st(),
             num.to_string(),
@@ -866,7 +897,7 @@ impl TestHarness {
             purchase,
             Some("IQD".to_string()),
             None,
-            0.0,
+            Money::zero(),
             "متوفرة".to_string(),
             None,
             None,
@@ -892,12 +923,12 @@ impl TestHarness {
     }
 }
 
-pub fn near(a: f64, b: f64) -> bool {
-    (a - b).abs() < 0.01
+pub fn near(a: Money, b: Money) -> bool {
+    (a - b).abs() < Money(dec!(0.01))
 }
 
-pub fn exact(a: f64, b: f64) -> bool {
-    (a - b).abs() < 0.001
+pub fn exact(a: Money, b: Money) -> bool {
+    (a - b).abs() < Money(dec!(0.001))
 }
 
 pub fn flush_results_to_disk() {
@@ -951,7 +982,7 @@ pub fn record_full_71_result(result: RealVerificationResult) {
     flush_full_71_results_to_disk();
 }
 
-pub fn json_num(fields: &[(&str, f64)]) -> serde_json::Value {
+pub fn json_num(fields: &[(&str, Money)]) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     for (k, v) in fields {
         map.insert((*k).to_string(), serde_json::json!(v));
@@ -1041,13 +1072,9 @@ where
 
 fn verify_json_match(expected: &serde_json::Value, actual: &serde_json::Value) -> bool {
     match (expected, actual) {
-        (serde_json::Value::Object(exp), serde_json::Value::Object(act)) => {
-            exp.iter().all(|(k, v)| {
-                act.get(k)
-                    .map(|a| values_near(v, a))
-                    .unwrap_or(false)
-            })
-        }
+        (serde_json::Value::Object(exp), serde_json::Value::Object(act)) => exp
+            .iter()
+            .all(|(k, v)| act.get(k).map(|a| values_near(v, a)).unwrap_or(false)),
         _ => values_near(expected, actual),
     }
 }
@@ -1055,7 +1082,9 @@ fn verify_json_match(expected: &serde_json::Value, actual: &serde_json::Value) -
 fn values_near(expected: &serde_json::Value, actual: &serde_json::Value) -> bool {
     match (expected, actual) {
         (serde_json::Value::Number(e), serde_json::Value::Number(a)) => {
-            near(e.as_f64().unwrap_or(0.0), a.as_f64().unwrap_or(0.0))
+            let expected_money = e.to_string().parse::<Money>().unwrap_or_else(|_| Money::zero());
+            let actual_money = a.to_string().parse::<Money>().unwrap_or_else(|_| Money::zero());
+            near(expected_money, actual_money)
         }
         (serde_json::Value::String(e), serde_json::Value::String(a)) => e == a,
         (serde_json::Value::Bool(e), serde_json::Value::Bool(a)) => e == a,
@@ -1081,6 +1110,10 @@ pub fn snapshot_json(s: &SummarySnapshot) -> serde_json::Value {
         "total_partner_capital_usd": s.total_partner_capital_usd,
         "total_expenses_iqd": s.total_expenses_iqd,
         "total_expenses_usd": s.total_expenses_usd,
+        "deferred_revenue_iqd": s.deferred_revenue_iqd,
+        "deferred_revenue_usd": s.deferred_revenue_usd,
+        "deferred_expense_iqd": s.deferred_expense_iqd,
+        "deferred_expense_usd": s.deferred_expense_usd,
         "net_capital_iqd": s.net_capital_iqd,
         "net_capital_usd": s.net_capital_usd,
     })

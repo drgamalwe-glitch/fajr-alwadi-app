@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Car, Partner, UnifiedAccount, FinancialSummary } from "../types";
+import type { Car, Partner, PartnerTransaction, UnifiedAccount, FinancialSummary, TabId } from "../types";
 import { callTauri } from "../api/tauri";
 import {
   TextInput,
@@ -41,7 +41,7 @@ interface DashboardProps {
   onReturn?: () => void;
   onOpenCarForm: (mode: "new" | "edit", car?: Car) => void;
   onNavigateToPartner?: (target: string | { name: string; kind?: string | null; action?: "deposit" | "withdraw" | "settle_installment"; transactionId?: number | null }) => void;
-  onNavigateToTab?: (tab: any, subTab?: string) => void;
+  onNavigateToTab?: (tab: TabId, subTab?: string) => void;
 }
 
 interface InstallmentAlert {
@@ -350,7 +350,7 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
 
     await Promise.allSettled(
       debtors.map(async (debtor) => {
-        const txs = await callTauri<any[]>("get_partner_transactions", {
+        const txs = await callTauri<PartnerTransaction[]>("get_partner_transactions", {
           partnerName: debtor.partner_name,
           kind: debtor.kind,
         });
@@ -359,20 +359,20 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
         // للزبون: حساب الأقساط المدفوعة لاستبعادها
         const paidIds = new Set<number>();
         if (debtor.kind === "زبون") {
-          const paymentTxs = txs.filter((tx: any) =>
+          const paymentTxs = txs.filter((tx) =>
             tx.type_.startsWith("تسديد") ||
             tx.type_.startsWith("استلام قسط") ||
             ((tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع")) && (tx.notes || "").includes("قسط"))
           );
-          const totalPaid = paymentTxs.reduce((sum: number, t: any) => sum + t.amount, 0);
+          const totalPaid = paymentTxs.reduce((sum, t) => sum + t.amount, 0);
 
           const installmentTxs = txs
-            .filter((tx: any) =>
+            .filter((tx) =>
               (tx.type_ === "سحب" || tx.type_.startsWith("باقي")) &&
               ((tx.notes || "").includes("قسط") || tx.type_.startsWith("باقي")) &&
               tx.amount > 0
             )
-            .sort((a: any, b: any) => {
+            .sort((a, b) => {
               const dateDiff = new Date(a.date).getTime() - new Date(b.date).getTime();
               return dateDiff !== 0 ? dateDiff : a.id - b.id;
             });
@@ -431,10 +431,13 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
 
   useEffect(() => {
     if (!hasLoadedRef.current) setLoadingPanels(true);
+    let cancelled = false;
     void Promise.all([loadBalances(), loadInstallments()]).finally(() => {
+      if (cancelled) return;
       setLoadingPanels(false);
       hasLoadedRef.current = true;
     });
+    return () => { cancelled = true; };
   }, [partners, cars]);
 
   const accountKindsForDashboard = new Set(["مستثمر", "ممول", "شركة"]);
@@ -882,7 +885,7 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
                   </div>
                   <div className="form-group">
                     <label className="label">المبلغ والعملة *</label>
-                    <PriceInput value={expenseAmt} onChange={setExpenseAmt} currency={expenseCurrency} onCurrencyChange={(cur) => setExpenseCurrency(cur as any)} />
+                    <PriceInput value={expenseAmt} onChange={setExpenseAmt} currency={expenseCurrency} onCurrencyChange={setExpenseCurrency} />
                   </div>
                   <div className="form-group">
                     <label className="label">ربط بسيارة (اختياري)</label>
@@ -1058,7 +1061,7 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
                     </div>
                     <div className="form-group">
                       <label className="label">المبلغ المسدد *</label>
-                      <PriceInput value={creditorAmount} onChange={setCreditorAmount} currency={creditorCurrency} onCurrencyChange={(cur) => setCreditorCurrency(cur as any)} />
+                      <PriceInput value={creditorAmount} onChange={setCreditorAmount} currency={creditorCurrency} onCurrencyChange={setCreditorCurrency} />
                     </div>
                     <div className="form-group">
                       <label className="label">بيد شخص (الناقل) — اختياري</label>
@@ -1066,7 +1069,7 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
                     </div>
                     <div className="form-group">
                       <label className="label">عمولة التحويل — اختياري</label>
-                      <PriceInput value={creditorCommission} onChange={setCreditorCommission} currency={commissionCurrency} onCurrencyChange={(cur) => setCommissionCurrency(cur as any)} />
+                      <PriceInput value={creditorCommission} onChange={setCreditorCommission} currency={commissionCurrency} onCurrencyChange={setCommissionCurrency} />
                     </div>
                     <div className="modal-dialog__actions">
                       <ActionButton type="button" variant="ghost" onClick={() => setShowPayCreditorModal(false)}>إلغاء</ActionButton>

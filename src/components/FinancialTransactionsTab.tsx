@@ -6,9 +6,10 @@ import { PriceDisplay } from "@/components/ui";
 import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
 import { formatLedgerDetails } from "../utils/notesDisplay";
+import { compareMoney, moneyAdd } from "../utils/money";
 
 const isOutgoingEntry = (entry: CashRegisterEntry) =>
-  entry.amount < 0 || entry.type_.includes("سحب") || entry.type_.includes("شراء") || entry.type_.includes("مصروف");
+  compareMoney(entry.amount, 0) < 0 || entry.type_.includes("سحب") || entry.type_.includes("شراء") || entry.type_.includes("مصروف");
 
 /**
  * سجل المعاملات – يعرض جميع سجل المعاملات من كافة الحسابات (قاصه + مصرف)
@@ -54,7 +55,7 @@ export function FinancialTransactionsTab() {
             if (car && car.purchase_payment_type) {
               const pType = car.purchase_payment_type.trim();
               if (pType === "مصرف" || pType === "قاصه") {
-                source = pType as any;
+                source = pType;
               }
             }
           }
@@ -73,15 +74,15 @@ export function FinancialTransactionsTab() {
         return (a.time ?? "").localeCompare(b.time ?? "");
       });
 
-      let iqdRunning = 0;
-      let usdRunning = 0;
+      let iqdRunning = moneyAdd(0);
+      let usdRunning = moneyAdd(0);
       const allWithBalance = all.map(entry => {
         const curr = entry.currency === "USD" ? "USD" : "IQD";
         if (curr === "USD") {
-          usdRunning += entry.amount;
+          usdRunning = moneyAdd(usdRunning, entry.amount);
           return { ...entry, balance: usdRunning };
         } else {
-          iqdRunning += entry.amount;
+          iqdRunning = moneyAdd(iqdRunning, entry.amount);
           return { ...entry, balance: iqdRunning };
         }
       });
@@ -113,11 +114,11 @@ export function FinancialTransactionsTab() {
     const { key, direction } = sortConfig;
     const sign = direction === "asc" ? 1 : -1;
     return [...entries].sort((a, b) => {
-      let valA: any = a[key as keyof typeof a] ?? "";
-      let valB: any = b[key as keyof typeof b] ?? "";
+      let valA: unknown = a[key as keyof typeof a] ?? "";
+      let valB: unknown = b[key as keyof typeof b] ?? "";
 
       if (key === "amount" || key === "balance" || key === "id") {
-        return (Number(valA) - Number(valB)) * sign;
+        return (key === "id" ? Number(valA) - Number(valB) : compareMoney(valA as never, valB as never)) * sign;
       }
       if (key === "date") {
         const dtA = `${a.date}T${a.time || "00:00"}`;

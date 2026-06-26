@@ -1,4 +1,14 @@
-import type { FinancialSummary, UnifiedAccount, Partner } from "../types";
+import type { FinancialSummary, TabId, UnifiedAccount, Partner } from "../types";
+import {
+  compareMoney,
+  formatMoney,
+  moneyAbs,
+  moneyAdd,
+  moneyDiv,
+  moneySub,
+  toMoney,
+  type MoneyValue,
+} from "../utils/money";
 
 const normalizePartnerName = (name: string) =>
   name
@@ -31,7 +41,7 @@ export function CompanyStatusTab({
   summary: FinancialSummary | null;
   unifiedAccounts: UnifiedAccount[];
   partners: Partner[];
-  onNavigateToTab?: (tab: any, subTab?: string) => void;
+  onNavigateToTab?: (tab: TabId, subTab?: string) => void;
   onNavigateToPartner?: (target: string | { name: string; kind?: string | null }) => void;
 }) {
   const sharikPartners = partners.filter((p) => p.kind === "شريك");
@@ -50,22 +60,22 @@ export function CompanyStatusTab({
     );
   }
 
-  let liabilitiesIqd = 0;
-  let liabilitiesUsd = 0;
-  let receivablesIqd = 0;
-  let receivablesUsd = 0;
+  let liabilitiesIqd = toMoney(0);
+  let liabilitiesUsd = toMoney(0);
+  let receivablesIqd = toMoney(0);
+  let receivablesUsd = toMoney(0);
 
   unifiedAccounts.forEach((acc) => {
     if (!ACCOUNT_LIST_KINDS.has(acc.kind)) return;
-    if (acc.iqd_balance > 0) {
-      receivablesIqd += acc.iqd_balance;
-    } else if (acc.iqd_balance < 0) {
-      liabilitiesIqd += Math.abs(acc.iqd_balance);
+    if (compareMoney(acc.iqd_balance, 0) > 0) {
+      receivablesIqd = moneyAdd(receivablesIqd, acc.iqd_balance);
+    } else if (compareMoney(acc.iqd_balance, 0) < 0) {
+      liabilitiesIqd = moneyAdd(liabilitiesIqd, moneyAbs(acc.iqd_balance));
     }
-    if (acc.usd_balance > 0) {
-      receivablesUsd += acc.usd_balance;
-    } else if (acc.usd_balance < 0) {
-      liabilitiesUsd += Math.abs(acc.usd_balance);
+    if (compareMoney(acc.usd_balance, 0) > 0) {
+      receivablesUsd = moneyAdd(receivablesUsd, acc.usd_balance);
+    } else if (compareMoney(acc.usd_balance, 0) < 0) {
+      liabilitiesUsd = moneyAdd(liabilitiesUsd, moneyAbs(acc.usd_balance));
     }
   });
 
@@ -73,35 +83,37 @@ export function CompanyStatusTab({
   const netCashIqd = summary.cash_iqd;
   const netCashUsd = summary.cash_usd;
 
-  const companyValueIqd = (netCashIqd + summary.inventory_value_iqd + receivablesIqd) - liabilitiesIqd;
-  const companyValueUsd = (netCashUsd + summary.inventory_value_usd + receivablesUsd) - liabilitiesUsd;
+  // Fixed: Company Value follows Instructions.md with Decimal math: Cash + Available Inventory + Receivables - Liabilities.
+  const companyValueIqd = moneySub(moneyAdd(netCashIqd, summary.inventory_value_iqd, receivablesIqd), liabilitiesIqd);
+  const companyValueUsd = moneySub(moneyAdd(netCashUsd, summary.inventory_value_usd, receivablesUsd), liabilitiesUsd);
 
-  const formatCompact = (value: number): string => {
-    const absVal = Math.abs(value);
-    if (absVal >= 1_000_000_000) {
-      const formatted = (value / 1_000_000_000).toFixed(1);
+  const formatCompact = (value: MoneyValue): string => {
+    const money = toMoney(value);
+    const absVal = money.abs();
+    if (absVal.greaterThanOrEqualTo(1_000_000_000)) {
+      const formatted = money.div(1_000_000_000).toDecimalPlaces(1).toFixed(1);
       return (formatted.endsWith(".0") ? formatted.slice(0, -2) : formatted) + "B";
     }
-    if (absVal >= 1_000_000) {
-      const formatted = (value / 1_000_000).toFixed(1);
+    if (absVal.greaterThanOrEqualTo(1_000_000)) {
+      const formatted = money.div(1_000_000).toDecimalPlaces(1).toFixed(1);
       return (formatted.endsWith(".0") ? formatted.slice(0, -2) : formatted) + "M";
     }
-    if (absVal >= 1_000) {
-      const formatted = (value / 1_000).toFixed(1);
+    if (absVal.greaterThanOrEqualTo(1_000)) {
+      const formatted = money.div(1_000).toDecimalPlaces(1).toFixed(1);
       return (formatted.endsWith(".0") ? formatted.slice(0, -2) : formatted) + "K";
     }
-    return value.toLocaleString("en-US");
+    return formatMoney(money);
   };
 
-  const sharedIqd = (summary.inventory_value_iqd + receivablesIqd - liabilitiesIqd) / 2;
-  const sharedUsd = (summary.inventory_value_usd + receivablesUsd - liabilitiesUsd) / 2;
+  const sharedIqd = moneyDiv(moneySub(moneyAdd(summary.inventory_value_iqd, receivablesIqd), liabilitiesIqd), 2);
+  const sharedUsd = moneyDiv(moneySub(moneyAdd(summary.inventory_value_usd, receivablesUsd), liabilitiesUsd), 2);
 
-  const p1CapitalIqd = partner1 ? (partner1.iqd_balance ?? 0) + sharedIqd : 0;
-  const p1CapitalUsd = partner1 ? (partner1.usd_balance ?? 0) + sharedUsd : 0;
-  const p2CapitalIqd = partner2 ? (partner2.iqd_balance ?? 0) + sharedIqd : 0;
-  const p2CapitalUsd = partner2 ? (partner2.usd_balance ?? 0) + sharedUsd : 0;
+  const p1CapitalIqd = partner1 ? moneyAdd(partner1.iqd_balance ?? 0, sharedIqd) : toMoney(0);
+  const p1CapitalUsd = partner1 ? moneyAdd(partner1.usd_balance ?? 0, sharedUsd) : toMoney(0);
+  const p2CapitalIqd = partner2 ? moneyAdd(partner2.iqd_balance ?? 0, sharedIqd) : toMoney(0);
+  const p2CapitalUsd = partner2 ? moneyAdd(partner2.usd_balance ?? 0, sharedUsd) : toMoney(0);
 
-  const renderPartnerCard = (partner: Partner | null, capitalIqd: number, capitalUsd: number, colorClass: string) => {
+  const renderPartnerCard = (partner: Partner | null, capitalIqd: MoneyValue, capitalUsd: MoneyValue, colorClass: string) => {
     if (!partner) return null;
     const imgSrc = getPartnerImage(partner.partner_name);
     return (
@@ -146,12 +158,12 @@ export function CompanyStatusTab({
           <div className="company-value-center">
             <div className="company-value" data-testid="company-value">
               <h2>قيمة الشركة</h2>
-              <div className="value" data-testid="company-value-iqd">{companyValueIqd.toLocaleString("en-US")}</div>
+              <div className="value" data-testid="company-value-iqd">{formatMoney(companyValueIqd)}</div>
               <div className="currency">دينار عراقي</div>
-              {companyValueUsd !== 0 && (
+              {compareMoney(companyValueUsd, 0) !== 0 && (
                 <>
                   <div className="value-usd">
-                    {companyValueUsd.toLocaleString("en-US")}
+                    {formatMoney(companyValueUsd, "USD")}
                   </div>
                   <div className="currency-usd">دولار أمريكي</div>
                 </>
@@ -221,7 +233,7 @@ export function CompanyStatusTab({
             </div>
             <div className="card-values">
               <div className="number">{formatCompact(netCashIqd)} <span className="card-currency-iq">IQ</span></div>
-              {netCashUsd !== 0 && (
+              {compareMoney(netCashUsd, 0) !== 0 && (
                 <div className="card-sub-val">{formatCompact(netCashUsd)} <span className="card-currency-usd">USD</span></div>
               )}
             </div>
@@ -245,7 +257,7 @@ export function CompanyStatusTab({
             </div>
             <div className="card-values">
               <div className="number">{formatCompact(summary.inventory_value_iqd)} <span className="card-currency-iq">IQ</span></div>
-              {summary.inventory_value_usd !== 0 && (
+              {compareMoney(summary.inventory_value_usd, 0) !== 0 && (
                 <div className="card-sub-val">{formatCompact(summary.inventory_value_usd)} <span className="card-currency-usd">USD</span></div>
               )}
             </div>
@@ -268,7 +280,7 @@ export function CompanyStatusTab({
             </div>
             <div className="card-values">
               <div className="number">{formatCompact(receivablesIqd)} <span className="card-currency-iq">IQ</span></div>
-              {receivablesUsd !== 0 && (
+              {compareMoney(receivablesUsd, 0) !== 0 && (
                 <div className="card-sub-val">{formatCompact(receivablesUsd)} <span className="card-currency-usd">USD</span></div>
               )}
             </div>
@@ -291,7 +303,7 @@ export function CompanyStatusTab({
             </div>
             <div className="card-values">
               <div className="number">{formatCompact(liabilitiesIqd)} <span className="card-currency-iq">IQ</span></div>
-              {liabilitiesUsd !== 0 && (
+              {compareMoney(liabilitiesUsd, 0) !== 0 && (
                 <div className="card-sub-val">{formatCompact(liabilitiesUsd)} <span className="card-currency-usd">USD</span></div>
               )}
             </div>
@@ -317,7 +329,7 @@ export function CompanyStatusTab({
             </div>
             <div className="card-values">
               <div className="number">{formatCompact(summary.qasa_iqd)} <span className="card-currency-iq">IQ</span></div>
-              {summary.qasa_usd !== 0 && (
+              {compareMoney(summary.qasa_usd, 0) !== 0 && (
                 <div className="card-sub-val">{formatCompact(summary.qasa_usd)} <span className="card-currency-usd">USD</span></div>
               )}
             </div>
@@ -341,7 +353,7 @@ export function CompanyStatusTab({
             </div>
             <div className="card-values">
               <div className="number">{formatCompact(summary.cash_iqd)} <span className="card-currency-iq">IQ</span></div>
-              {summary.cash_usd !== 0 && (
+              {compareMoney(summary.cash_usd, 0) !== 0 && (
                 <div className="card-sub-val">{formatCompact(summary.cash_usd)} <span className="card-currency-usd">USD</span></div>
               )}
             </div>
@@ -365,7 +377,7 @@ export function CompanyStatusTab({
             </div>
             <div className="card-values">
               <div className="number">{formatCompact(summary.total_expenses_iqd)} <span className="card-currency-iq">IQ</span></div>
-              {summary.total_expenses_usd !== 0 && (
+              {compareMoney(summary.total_expenses_usd, 0) !== 0 && (
                 <div className="card-sub-val">{formatCompact(summary.total_expenses_usd)} <span className="card-currency-usd">USD</span></div>
               )}
             </div>
@@ -389,7 +401,7 @@ export function CompanyStatusTab({
             </div>
             <div className="card-values">
               <div className="number">{formatCompact(summary.monthly_profits_iqd)} <span className="card-currency-iq">IQ</span></div>
-              {summary.monthly_profits_usd !== 0 && (
+              {compareMoney(summary.monthly_profits_usd, 0) !== 0 && (
                 <div className="card-sub-val">{formatCompact(summary.monthly_profits_usd)} <span className="card-currency-usd">USD</span></div>
               )}
             </div>

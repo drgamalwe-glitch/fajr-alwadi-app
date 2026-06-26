@@ -1425,15 +1425,22 @@ def audit_source(lib_path):
     print("\n[S31] delete_car no 0/0 ledger entry...")
     in_delete_car = False
     has_zero_entry = False
+    brace_depth = 0
+    saw_first_brace = False
     for i, line in enumerate(lines, 1):
         if 'fn delete_car' in line and 'tauri::command' in '\n'.join(lines[max(0,i-5):i]):
             in_delete_car = True
+            brace_depth = 0
+            saw_first_brace = False
         if in_delete_car:
+            brace_depth += line.count('{') - line.count('}')
+            if '{' in line:
+                saw_first_brace = True
             stripped = line.split('//')[0] if '//' in line else line
             if 'record_ledger_entry' in stripped:
                 has_zero_entry = True
                 break
-            if 'fn add_partner' in line:
+            if saw_first_brace and brace_depth <= 0:
                 in_delete_car = False
     if not has_zero_entry:
         print("  PASS")

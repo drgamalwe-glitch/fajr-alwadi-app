@@ -10,6 +10,7 @@ import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/paginat
 import { formatNotesText } from "../utils/notesDisplay";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { GoldFxButton } from "./ui/GoldFxButton";
+import { moneySum } from "../utils/money";
 
 interface ExpensesTabProps {
   onAddExpenseChange?: (onAddExpense: { action: () => void } | null) => void;
@@ -294,8 +295,9 @@ export function ExpensesTab({ onAddExpenseChange, onDirtyChange, requestCloseRef
     [sortedEntries, currentPage]
   );
 
-  const expenseIqd = entries.filter((e) => e.currency !== "USD").reduce((sum, e) => sum + e.amount, 0);
-  const expenseUsd = entries.filter((e) => e.currency === "USD").reduce((sum, e) => sum + e.amount, 0);
+  // Fixed: expense cards aggregate Decimal-compatible values from Rust instead of JS float addition.
+  const expenseIqd = moneySum(entries.filter((e) => e.currency !== "USD"), (e) => e.amount);
+  const expenseUsd = moneySum(entries.filter((e) => e.currency === "USD"), (e) => e.amount);
 
   return (
     <div className="dashboard">

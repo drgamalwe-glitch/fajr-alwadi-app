@@ -71,14 +71,15 @@ const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(
       const el = inputRef.current;
       if (!el) return;
 
-      const handler = (e: InputEvent) => {
-        if (!e.data) return;
-        if (/[\u0660-\u0669\u06f0-\u06f9٫٬،,]/.test(e.data)) {
-          e.preventDefault();
+      const handler = (e: Event) => {
+        const inputEvent = e as InputEvent;
+        if (!inputEvent.data) return;
+        if (/[\u0660-\u0669\u06f0-\u06f9٫٬،,]/.test(inputEvent.data)) {
+          inputEvent.preventDefault();
 
           const start = el.selectionStart ?? 0;
           const end = el.selectionEnd ?? 0;
-          const normalized = normalizeNumberText(e.data);
+          const normalized = normalizeNumberText(inputEvent.data);
 
           const newValue = el.value.slice(0, start) + normalized + el.value.slice(end);
 
@@ -91,8 +92,8 @@ const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(
         }
       };
 
-      el.addEventListener("beforeinput", handler as any);
-      return () => el.removeEventListener("beforeinput", handler as any);
+      el.addEventListener("beforeinput", handler);
+      return () => el.removeEventListener("beforeinput", handler);
     }, []);
 
     const clamp = useCallback(

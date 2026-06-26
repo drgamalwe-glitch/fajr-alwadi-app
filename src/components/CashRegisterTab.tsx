@@ -6,8 +6,9 @@ import { PriceDisplay } from "@/components/ui";
 import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
 import { formatLedgerDetails } from "../utils/notesDisplay";
+import { compareMoney, formatMoney, moneyAbs, moneyDiv, moneyMul, type MoneyValue } from "../utils/money";
 
-const parseCommissionText = (notes: string | null | undefined, currency?: string | null, amount?: number): string => {
+const parseCommissionText = (notes: string | null | undefined, currency?: string | null, amount?: MoneyValue): string => {
   const curr = currency || "IQD";
   if (!notes) return "—";
   const parts = notes.split("عمولة:");
@@ -17,10 +18,10 @@ const parseCommissionText = (notes: string | null | undefined, currency?: string
       const pct = parseFloat(cleanPart);
       if (!isNaN(pct)) {
         if (amount !== undefined) {
-          const commissionVal = (Math.abs(amount) * pct) / 100;
+          const commissionVal = moneyDiv(moneyMul(moneyAbs(amount), pct), 100);
           return curr === "USD"
-            ? `${commissionVal.toLocaleString("en-US")} USD`
-            : `${commissionVal.toLocaleString("en-US")} IQ`;
+            ? `${formatMoney(commissionVal, "USD")} USD`
+            : `${formatMoney(commissionVal)} IQ`;
         }
         return pct + "%";
       }
@@ -35,7 +36,7 @@ const parseCommissionText = (notes: string | null | undefined, currency?: string
   return "—";
 };
 
-const parseCommissionNumeric = (notes: string | null | undefined, amount?: number): number => {
+const parseCommissionNumeric = (notes: string | null | undefined, amount?: MoneyValue): MoneyValue => {
   if (!notes) return 0;
   const parts = notes.split("عمولة:");
   if (parts.length > 1) {
@@ -44,7 +45,7 @@ const parseCommissionNumeric = (notes: string | null | undefined, amount?: numbe
       const pct = parseFloat(cleanPart);
       if (!isNaN(pct)) {
         if (amount !== undefined) {
-          return (Math.abs(amount) * pct) / 100;
+          return moneyDiv(moneyMul(moneyAbs(amount), pct), 100);
         }
         return pct;
       }
@@ -58,7 +59,7 @@ const parseCommissionNumeric = (notes: string | null | undefined, amount?: numbe
 };
 
 const isOutgoingEntry = (entry: CashRegisterEntry) =>
-  entry.amount < 0 || entry.type_.includes("سحب") || entry.type_.includes("شراء") || entry.type_.includes("مصروف");
+  compareMoney(entry.amount, 0) < 0 || entry.type_.includes("سحب") || entry.type_.includes("شراء") || entry.type_.includes("مصروف");
 
 interface CashRegisterTabProps {
   paymentType?: string;
@@ -103,8 +104,8 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
     const { key, direction } = sortConfig;
     const sign = direction === "asc" ? 1 : -1;
     return [...entries].sort((a, b) => {
-      let valA: any = a[key as keyof CashRegisterEntry] ?? "";
-      let valB: any = b[key as keyof CashRegisterEntry] ?? "";
+      let valA: unknown = a[key as keyof CashRegisterEntry] ?? "";
+      let valB: unknown = b[key as keyof CashRegisterEntry] ?? "";
 
       if (key === "commission") {
         valA = parseCommissionNumeric(a.notes, a.amount);
@@ -112,7 +113,7 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
       }
 
       if (key === "amount" || key === "balance" || key === "id" || key === "commission") {
-        return (Number(valA) - Number(valB)) * sign;
+        return (key === "id" ? Number(valA) - Number(valB) : compareMoney(valA as MoneyValue, valB as MoneyValue)) * sign;
       }
       if (key === "date") {
         const dtA = `${a.date}T${a.time || "00:00"}`;
@@ -131,7 +132,7 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
     [sortedEntries, currentPage],
   );
 
-  const formatEntry = (entry: CashRegisterEntry, value: number) => {
+  const formatEntry = (entry: CashRegisterEntry, value: MoneyValue) => {
     return <PriceDisplay amount={value} currency={entry.currency} noColor />;
   };
 

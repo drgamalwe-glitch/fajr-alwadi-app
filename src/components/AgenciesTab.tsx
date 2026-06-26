@@ -7,6 +7,7 @@ import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { UnifiedDateField } from "./UnifiedDateField";
+import { compareMoney, moneySum } from "../utils/money";
 
 import { toEnglishDigits } from "../utils/numberInput";
 import { todayIsoDate } from "../utils/dateSegments";
@@ -440,10 +441,10 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
           {agenciesTab === "list" && (
             <>
               <div className="currency-card currency-card--usd">
-                <PriceDisplay amount={agencies.reduce((s, a) => s + a.amount_usd, 0)} currency="USD" />
+                <PriceDisplay amount={moneySum(agencies, (a) => a.amount_usd)} currency="USD" />
               </div>
               <div className="currency-card currency-card--iqd">
-                <PriceDisplay amount={agencies.reduce((s, a) => s + a.amount_iqd, 0)} />
+                <PriceDisplay amount={moneySum(agencies, (a) => a.amount_iqd)} />
               </div>
             </>
           )}
@@ -515,17 +516,17 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                           <td className="col-phone">{agency.phone || "—"}</td>
                           <td className="col-money cell-bold">
                             <div style={{ display: "flex", gap: "10px" }}>
-                              {agency.amount_usd > 0 && (
+                              {compareMoney(agency.amount_usd, 0) > 0 && (
                                 <span style={{ color: "var(--green)", fontSize: "var(--fs-xs)", direction: "ltr", display: "inline-block" }}>
                                   <PriceDisplay amount={agency.amount_usd} currency="USD" noColor />
                                 </span>
                               )}
-                              {agency.amount_iqd > 0 && (
+                              {compareMoney(agency.amount_iqd, 0) > 0 && (
                                 <span style={{ color: "var(--gold)", fontSize: "var(--fs-xs)", direction: "ltr", display: "inline-block" }}>
                                   <PriceDisplay amount={agency.amount_iqd} noColor />
                                 </span>
                               )}
-                              {agency.amount_usd <= 0 && agency.amount_iqd <= 0 && <span style={{ color: "rgba(255,255,255,0.3)" }}>—</span>}
+                              {compareMoney(agency.amount_usd, 0) <= 0 && compareMoney(agency.amount_iqd, 0) <= 0 && <span style={{ color: "rgba(255,255,255,0.3)" }}>—</span>}
                             </div>
                           </td>
                           <td className="col-delete">
