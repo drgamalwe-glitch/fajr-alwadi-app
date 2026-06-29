@@ -8,7 +8,22 @@
     "core:window:allow-create",
     "core:window:allow-center",
     "core:webview:allow-create-webview-window",
-    "core:webview:allow-print",
-    "opener:default"
+    "opener:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "$TEMP/**" }]
+    },
+    "fs:default",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$TEMP/**" },
+        { "path": "$RESOURCE/logo.png" },
+        { "path": "$RESOURCE/assets/logo.png" },
+        { "path": "$RESOURCE/fonts/**" }
+      ]
+    }
   ]
 }

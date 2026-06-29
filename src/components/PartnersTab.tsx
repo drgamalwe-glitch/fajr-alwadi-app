@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { callTauri } from "../api/tauri";
 import { todayIsoDate } from "../utils/dateSegments";
-import type { Partner, PartnerTransaction, UnifiedAccount } from "../types";
+import type { Car, InstallmentPaymentPreview, Partner, PartnerTransaction, UnifiedAccount } from "../types";
 
 import { toEnglishDigits } from "../utils/numberInput";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -15,8 +15,9 @@ import { cn } from "../lib/utils";
 import { GoldFxButton } from "./ui/GoldFxButton";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
 import { formatNotesText } from "../utils/notesDisplay";
-import { PartnerStatementPrint } from "./PartnerStatementPrint";
-import { toMoney } from "../utils/money";
+import { printStatement } from "../pdf/printStatement";
+import Decimal from "decimal.js";
+import { toMoney, moneyAdd, moneySub, moneyDiv, moneySum, compareMoney, moneyAbs, type MoneyValue } from "../utils/money";
 
 interface PartnersTabProps {
   partners: Partner[];
@@ -37,9 +38,22 @@ interface PartnersTabProps {
   requestCloseRef?: React.MutableRefObject<{ request: (afterClose?: () => void) => void } | null>;
   initialSubTab?: AccountsTabId | null;
   onInitialSubTabSet?: () => void;
+  onSubTabChange?: (tab: AccountsTabId) => void;
   returnState?: { section: string; subTab?: string } | null;
   onReturn?: () => void;
+  cars?: Car[];
+  onNavigateToCar?: (carNumber: string, status: "available" | "sold", initialPage?: 0 | 1) => void;
 }
+
+const normalizeArabic = (str: string): string => {
+  return str
+    .trim()
+    .toLowerCase()
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/[\u064B-\u0652]/g, "");
+};
 
 const createEmptyForm = (kind: string) => ({
   name: "",
@@ -50,9 +64,24 @@ const createEmptyForm = (kind: string) => ({
 type TransactionType = "ايداع" | "سحب";
 type TransactionSortKey = "sequence" | "date" | "type" | "amount";
 type SortDirection = "asc" | "desc";
+type InstallmentModalMode = "pay" | "reverse";
+
+type InstallmentModalState = {
+  mode: InstallmentModalMode;
+  tx: PartnerTransaction;
+  installmentId: number;
+  actualPaidAmount: number;
+  preview: InstallmentPaymentPreview | null;
+  loadingPreview: boolean;
+  error: string | null;
+};
 
 const isInstallmentWithdrawal = (tx: PartnerTransaction) =>
   (tx.type_ === "سحب" || tx.type_.startsWith("باقي")) && (!!tx.notes?.includes("قسط") || tx.type_.startsWith("باقي اقساط"));
+
+const isInstallmentScheduleTx = (tx: PartnerTransaction) =>
+  tx.source_type === "customer_installment_schedule" &&
+  tx.source_role === "installment_schedule";
 
 const isCustomerInstallmentRecord = (tx: PartnerTransaction) =>
   isInstallmentWithdrawal(tx) ||
@@ -69,14 +98,24 @@ const getLinkedInstallmentId = (tx: PartnerTransaction) => {
 };
 
 const isLinkedInstallmentPayment = (tx: PartnerTransaction) =>
-  isBorrowerInstallmentPayment(tx) && getLinkedInstallmentId(tx) != null;
+  isBorrowerInstallmentPayment(tx) && (
+    getLinkedInstallmentId(tx) != null ||
+    (tx.source_type === "customer_payment" && tx.source_role === "customer_payment" && tx.type_.includes("قسط"))
+  );
 
 const isUnpaidInstallment = (tx: PartnerTransaction) =>
-  (tx.type_ === "سحب" || tx.type_.startsWith("باقي")) && (!!tx.notes?.includes("موعد تسليم") || !!tx.notes?.includes("قسط") || tx.type_.startsWith("باقي")) && tx.amount > 0;
+  isInstallmentScheduleTx(tx) &&
+  (tx.type_ === "سحب" || tx.type_.startsWith("باقي")) &&
+  (!!tx.notes?.includes("موعد تسليم") || !!tx.notes?.includes("قسط") || tx.type_.startsWith("باقي")) &&
+  compareMoney(tx.amount, 0) > 0;
 
 // معاملات بيع السيارة بموعد تسليم أو تقسيط (تُعرض كـ باقي/واصل بدلاً من سحب/ايداع)
 const isSaleInstallmentTx = (tx: PartnerTransaction) =>
   tx.type_.startsWith("مقدمة") || tx.type_.startsWith("باقي") || tx.type_.startsWith("استلام") || !!tx.notes?.includes("موعد تسليم") || !!tx.notes?.includes("قسط");
+
+const isSaleDownPaymentRecord = (tx: PartnerTransaction) =>
+  tx.source_type === "customer_sale_payment" &&
+  tx.source_role === "sale_down_payment";
 
 const isFinancialClientKind = (kind: string) =>
   kind === "مستثمر" || kind === "ممول" || kind === "شركة";
@@ -89,9 +128,12 @@ const isCustomerRemainingBalanceTx = (tx: PartnerTransaction) =>
   (tx.type_.startsWith("باقي") || tx.type_.startsWith("سحب"));
 
 const moneyValueToNumber = (value: unknown): number => {
-  const amount = toMoney(value);
+  const amount = toMoney(value as any);
   return amount.isFinite() ? amount.toNumber() : 0;
 };
+
+const formatEnglishNumber = (value: unknown): string =>
+  moneyValueToNumber(value).toLocaleString("en-US");
 
 const firstAccountName = (name: string | null | undefined): string =>
   (name ?? "").trim().split(/\s+/).filter(Boolean)[0] ?? "";
@@ -208,8 +250,11 @@ export function PartnersTab({
   requestCloseRef,
   initialSubTab,
   onInitialSubTabSet,
+  onSubTabChange,
   returnState,
   onReturn,
+  cars = [],
+  onNavigateToCar,
 }: PartnersTabProps) {
   const [unifiedAccounts, setUnifiedAccounts] = useState<UnifiedAccount[]>([]);
   const [page, setPage] = useState(0);
@@ -224,9 +269,28 @@ export function PartnersTab({
   const partnersSearchInputRef = useRef<HTMLInputElement>(null);
   const [partnerToView, setPartnerToView] = useState<Partner | null>(null);
 
+  const purchasedCars = useMemo(() => {
+    if (!partnerToView || partnerToView.kind !== "زبون" || !cars) return [];
+    const normalizedPartnerName = normalizeArabic(partnerToView.partner_name);
+    return cars.filter(c => c.buyer_name && normalizeArabic(c.buyer_name) === normalizedPartnerName);
+  }, [partnerToView, cars]);
+
+  const customerDeferredSaleCar = useMemo(() => {
+    return [...purchasedCars]
+      .filter((car) => car.payment_type === "اقساط" || car.payment_type === "موعد" || (car.delivery_date && car.delivery_date.trim() !== ""))
+      .sort((a, b) =>
+        (b.sale_date ?? "").localeCompare(a.sale_date ?? "") ||
+        b.car_number.localeCompare(a.car_number)
+      )[0] ?? null;
+  }, [purchasedCars]);
+
+  useEffect(() => {
+    onSubTabChange?.(accountsTab);
+  }, [accountsTab, onSubTabChange]);
+
   const muntasirPartner = partners.find(p => p.partner_name.includes("منتصر") && p.kind === "شريك");
   const amirPartner = partners.find(p => (p.partner_name.includes("امير") || p.partner_name.includes("أمير")) && p.kind === "شريك");
-  
+
   const muntasirPhone = muntasirPartner?.phone || "07812541714";
   const amirPhone = amirPartner?.phone || "07808425228";
 
@@ -326,7 +390,7 @@ export function PartnersTab({
       if (key === "amount") {
         const valA = a.total_amount || a.total_withdrawals || 0;
         const valB = b.total_amount || b.total_withdrawals || 0;
-        return (valA - valB) * sign;
+        return compareMoney(valA, valB) * sign;
       }
       return a.partner_name.localeCompare(b.partner_name, "ar") * sign;
     });
@@ -343,13 +407,13 @@ export function PartnersTab({
       if (key === "amount") {
         const valA = a.total_amount || 0;
         const valB = b.total_amount || 0;
-        return (valA - valB) * sign;
+        return compareMoney(valA, valB) * sign;
       }
       return a.partner_name.localeCompare(b.partner_name, "ar") * sign;
     });
   }, [partners, kind, partnersSort]);
 
-  const sharikTotalSame = useMemo(() => sharikPartners.reduce((sum, p) => sum + p.total_amount, 0), [sharikPartners]);
+  const sharikTotalSame = useMemo(() => moneySum(sharikPartners, (p) => p.total_amount), [sharikPartners]);
 
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [modalPage, setModalPage] = useState(0);
@@ -367,6 +431,18 @@ export function PartnersTab({
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [transactions, setTransactions] = useState<PartnerTransaction[]>([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
+
+  const isFormNameDuplicate = form.name.trim() !== "" && (() => {
+    const normalizedFormName = normalizeArabic(form.name);
+    if (editingKey) {
+      if (normalizedFormName === normalizeArabic(editingKey)) {
+        return false;
+      }
+    }
+    return (partners || []).some(
+      (p) => normalizeArabic(p.partner_name) === normalizedFormName
+    );
+  })();
   const [currencyTotals, setCurrencyTotals] = useState<[number, number]>([0, 0]);
   const transactionsDirtyRef = useRef(false);
   const pendingPartnerCloseRef = useRef<(() => void) | null>(null);
@@ -519,6 +595,8 @@ export function PartnersTab({
   }, [unifiedAccounts, kind]);
 
   const [showTxModal, setShowTxModal] = useState(false);
+  const [installmentModal, setInstallmentModal] = useState<InstallmentModalState | null>(null);
+  const [installmentProcessing, setInstallmentProcessing] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [partnerToDelete, setPartnerToDelete] = useState<{ name: string; kind: string } | null>(null);
   const [settleFunderName, setSettleFunderName] = useState("");
@@ -531,7 +609,6 @@ export function PartnersTab({
   } | null>(null);
   const [companyPaymentMode, setCompanyPaymentMode] = useState<"" | "cash" | "funder">("");
   const [printMenuOpen, setPrintMenuOpen] = useState(false);
-  const [printMode, setPrintMode] = useState<"all" | "range">("all");
   const [printFromDate, setPrintFromDate] = useState("");
   const [printToDate, setPrintToDate] = useState("");
 
@@ -771,7 +848,12 @@ export function PartnersTab({
         return nameClean;
       } catch (err) {
         console.error("Failed to auto-add partner:", err);
-        alert("تعذر حفظ الحساب.");
+        const errMsg = String(err);
+        if (errMsg.includes("UNIQUE") || errMsg.includes("unique") || errMsg.includes("constraint") || errMsg.includes("Constraint")) {
+          alert("اسم الحساب موجود مسبقا الرجاء اختيار اسم آخر");
+        } else {
+          alert("تعذر حفظ الحساب.");
+        }
         return null;
       } finally {
         setSaving(false);
@@ -827,14 +909,104 @@ export function PartnersTab({
   };
 
   const beginSettleInstallment = (tx: PartnerTransaction) => {
-    beginEditTransaction(tx);
-    let newNote = tx.notes || "";
-    if (newNote.startsWith("باقي ")) {
-      newNote = newNote.replace("باقي ", "تسديد ");
-    } else {
-      newNote = "تسديد " + newNote;
+    openInstallmentModal(tx, "pay");
+  };
+
+  const openInstallmentModal = (tx: PartnerTransaction, mode?: InstallmentModalMode) => {
+    const resolvedMode: InstallmentModalMode = mode ?? (tx.type_.startsWith("واصل") ? "reverse" : "pay");
+    const installmentId = isInstallmentScheduleTx(tx) ? tx.id : getLinkedInstallmentId(tx);
+    if (!installmentId) {
+      setInstallmentModal({
+        mode: resolvedMode,
+        tx,
+        installmentId: tx.id,
+        actualPaidAmount: moneyValueToNumber(tx.current_amount ?? tx.amount),
+        preview: null,
+        loadingPreview: false,
+        error: "تعذر تحديد القسط المرتبط بهذه الحركة",
+      });
+      return;
     }
-    setTxForm(prev => ({ ...prev, type: "ايداع", notes: newNote }));
+    const currentAmount = moneyValueToNumber(tx.current_amount ?? tx.amount);
+    setInstallmentModal({
+      mode: resolvedMode,
+      tx,
+      installmentId,
+      actualPaidAmount: currentAmount,
+      preview: null,
+      loadingPreview: resolvedMode === "pay",
+      error: null,
+    });
+  };
+
+  useEffect(() => {
+    if (!installmentModal || installmentModal.mode !== "pay") return;
+    let cancelled = false;
+    const loadPreview = async () => {
+      if (!installmentModal.actualPaidAmount || installmentModal.actualPaidAmount <= 0) {
+        setInstallmentModal((current) => current ? { ...current, preview: null, loadingPreview: false, error: "المبلغ المدفوع فعلياً يجب أن يكون أكبر من صفر" } : current);
+        return;
+      }
+      setInstallmentModal((current) => current ? { ...current, loadingPreview: true, error: null } : current);
+      try {
+        const preview = await callTauri<InstallmentPaymentPreview>("preview_installment_payment_redistribution", {
+          installmentId: installmentModal.installmentId,
+          actualPaidAmount: installmentModal.actualPaidAmount,
+          currency: installmentModal.tx.currency || "IQD",
+        });
+        if (!cancelled) {
+          setInstallmentModal((current) => current ? { ...current, preview, loadingPreview: false, error: null } : current);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setInstallmentModal((current) => current ? { ...current, preview: null, loadingPreview: false, error: getErrorMessage(err, "تعذرت معاينة توزيع الدفعة") } : current);
+        }
+      }
+    };
+    loadPreview();
+    return () => { cancelled = true; };
+  }, [installmentModal?.mode, installmentModal?.installmentId, installmentModal?.actualPaidAmount, installmentModal?.tx.currency]);
+
+  const refreshCurrentPartnerAfterInstallment = async () => {
+    if (!editingKey) return;
+    transactionsDirtyRef.current = true;
+    await loadPartner({ partner_name: editingKey, phone: form.phone, total_amount: 0, iqd_balance: 0, usd_balance: 0, total_withdrawals: 0, kind: form.kind }, true);
+    await onRefresh();
+    if (usesUnifiedAccounts) {
+      const accounts = await fetchUnifiedAccounts();
+      routeSettledAccountToCustomers(accounts, editingKey, form.kind);
+    }
+  };
+
+  const confirmInstallmentModal = async () => {
+    if (!installmentModal || installmentProcessing || !editingKey) return;
+    setInstallmentProcessing(true);
+    try {
+      if (installmentModal.mode === "pay") {
+        if (!installmentModal.preview) {
+          throw new Error(installmentModal.error || "يجب انتظار معاينة توزيع الدفعة");
+        }
+        await callTauri("pay_customer_installment", {
+          installmentId: installmentModal.installmentId,
+          customerName: editingKey,
+          actualPaidAmount: installmentModal.actualPaidAmount,
+          date: todayIsoDate(),
+          notes: `تسديد ${installmentModal.tx.notes || "قسط"}`,
+          currency: installmentModal.tx.currency || "IQD",
+          paymentType: installmentModal.tx.payment_type || installmentModal.tx.paymentType || "قاصه",
+        });
+      } else {
+        await callTauri("reverse_customer_installment_payment", {
+          installmentId: installmentModal.installmentId,
+        });
+      }
+      setInstallmentModal(null);
+      await refreshCurrentPartnerAfterInstallment();
+    } catch (err) {
+      setInstallmentModal((current) => current ? { ...current, error: getErrorMessage(err, "تعذرت معالجة القسط") } : current);
+    } finally {
+      setInstallmentProcessing(false);
+    }
   };
 
   const handleSortTransactions = (key: TransactionSortKey) => {
@@ -848,13 +1020,18 @@ export function PartnersTab({
     const direction = transactionSort.direction === "asc" ? 1 : -1;
     return [...transactions].sort((a, b) => {
       if (transactionSort.key === "date") {
-        return (new Date(a.date).getTime() - new Date(b.date).getTime()) * direction;
+        const diff = (new Date(a.date).getTime() - new Date(b.date).getTime()) * direction;
+        if (diff !== 0) return diff;
+        if (a.time && b.time && a.time !== b.time) {
+          return a.time.localeCompare(b.time) * direction;
+        }
+        return (a.id - b.id) * direction;
       }
       if (transactionSort.key === "type") {
         return a.type_.localeCompare(b.type_, "ar") * direction;
       }
       if (transactionSort.key === "amount") {
-        return (a.amount - b.amount) * direction;
+        return compareMoney(a.amount, b.amount) * direction;
       }
       return (a.id - b.id) * direction;
     });
@@ -864,7 +1041,7 @@ export function PartnersTab({
     form.kind === "زبون" &&
     (tx.type_.startsWith("باقي") || tx.type_.startsWith("واصل")) &&
     (tx.type_.includes("قسط") || !!tx.notes?.includes("قسط")),
-  [form.kind]);
+    [form.kind]);
 
   const isProfitRecognition = useCallback((tx: PartnerTransaction) =>
     tx.affects_partner_cash === 0 && (tx.affects_profit === 1 || tx.source_role === 'profit_recognition'), []);
@@ -875,7 +1052,7 @@ export function PartnersTab({
         (tx) =>
           isOriginalCustomerInstallmentRow(tx) ||
           (
-            !(isInstallmentWithdrawal(tx) && tx.amount <= 0) &&
+            !(isInstallmentWithdrawal(tx) && compareMoney(tx.amount, 0) <= 0) &&
             !(form.kind === "زبون" && isLinkedInstallmentPayment(tx)) &&
             !tx.type_.startsWith("تحويل") &&
             !isProfitRecognition(tx)
@@ -883,6 +1060,11 @@ export function PartnersTab({
       ),
     [sortedTransactions, isOriginalCustomerInstallmentRow, isProfitRecognition],
   );
+
+  useEffect(() => {
+    const lastPage = Math.max(0, Math.ceil(visibleSortedTransactions.length / PAGE_SIZE) - 1);
+    setModalPage(lastPage);
+  }, [visibleSortedTransactions.length]);
 
   const totalModalPages = Math.max(1, Math.ceil(visibleSortedTransactions.length / PAGE_SIZE));
   const currentModalPage = Math.min(modalPage, totalModalPages - 1);
@@ -923,21 +1105,21 @@ export function PartnersTab({
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime() || a.id - b.id);
 
     const paidIds = new Set<number>();
-    let remaining = 0;
+    let remaining = toMoney(0);
     for (const payment of payments) {
       const linkedId = getLinkedInstallmentId(payment);
       if (linkedId) {
         paidIds.add(linkedId);
       } else {
-        remaining += payment.amount;
+        remaining = moneyAdd(remaining, payment.amount);
       }
     }
 
     for (const inst of installments) {
       if (paidIds.has(inst.id)) continue;
-      if (remaining >= inst.amount) {
+      if (compareMoney(remaining, inst.amount) >= 0) {
         paidIds.add(inst.id);
-        remaining -= inst.amount;
+        remaining = moneySub(remaining, inst.amount);
       } else {
         break;
       }
@@ -951,6 +1133,14 @@ export function PartnersTab({
 
     return paidIds;
   }, [transactions, form.kind]);
+
+  const editingTransaction = useMemo(() => {
+    return editingTransactionId
+      ? transactions.find((tx) => tx.id === editingTransactionId) ?? null
+      : null;
+  }, [editingTransactionId, transactions]);
+
+  const isEditingSaleDownPayment = !!editingTransaction && isSaleDownPaymentRecord(editingTransaction);
 
   useEffect(() => {
     if (!shouldScrollTransactionsRef.current || transactionsLoading || transactions.length === 0) {
@@ -1051,12 +1241,7 @@ export function PartnersTab({
         withdrawLabel: `استلام من ${firstName}`,
       });
     } else if (partner.kind === "زبون") {
-      onPartnerActionsChange?.({
-        onDeposit: openWithdrawForm,
-        onWithdraw: openDepositForm,
-        depositLabel: `باقي على ${firstName}`,
-        withdrawLabel: `واصل من ${firstName}`,
-      });
+      onPartnerActionsChange?.(null);
     } else {
       onPartnerActionsChange?.({
         onDeposit: openDepositForm,
@@ -1181,7 +1366,19 @@ export function PartnersTab({
         markAccountFieldError("phone");
         return;
       }
+      const dbPartners = await callTauri<Partner[]>("get_partners").catch(() => []) || [];
+      const normalizedNext = normalizeArabic(nextName);
+
       if (editingKey) {
+        if (normalizeArabic(nextName) !== normalizeArabic(editingKey)) {
+          const alreadyExists = dbPartners.some(
+            (p) => normalizeArabic(p.partner_name) === normalizedNext
+          );
+          if (alreadyExists) {
+            alert("اسم الحساب موجود مسبقا الرجاء اختيار اسم آخر");
+            return;
+          }
+        }
         await callTauri("update_partner", {
           oldName: editingKey,
           oldKind: originalPartnerData?.kind || form.kind,
@@ -1197,6 +1394,13 @@ export function PartnersTab({
           void fetchUnifiedAccounts();
         }
       } else {
+        const alreadyExists = dbPartners.some(
+          (p) => normalizeArabic(p.partner_name) === normalizedNext
+        );
+        if (alreadyExists) {
+          alert("اسم الحساب موجود مسبقا الرجاء اختيار اسم آخر");
+          return;
+        }
         await callTauri("add_partner", {
           name: nextName,
           phone: phoneClean,
@@ -1219,7 +1423,12 @@ export function PartnersTab({
       }
     } catch (err) {
       console.error(err);
-      alert(`تعذر حفظ بيانات ${form.kind}.`);
+      const errMsg = String(err);
+      if (errMsg.includes("UNIQUE") || errMsg.includes("unique") || errMsg.includes("constraint") || errMsg.includes("Constraint")) {
+        alert("اسم الحساب موجود مسبقا الرجاء اختيار اسم آخر");
+      } else {
+        alert(`تعذر حفظ بيانات ${form.kind}.`);
+      }
     } finally {
       setSaving(false);
     }
@@ -1248,20 +1457,15 @@ export function PartnersTab({
       savingRef.current = false;
       return;
     }
+    const dbPartners = await callTauri<Partner[]>("get_partners").catch(() => []) || [];
+    const normalizedNext = normalizeArabic(nextName);
+
     if (!editingKey) {
-      const alreadyExists = partners.some(
-        (p) => p.partner_name.trim() === nextName && p.kind === currentForm.kind
+      const alreadyExistsName = dbPartners.some(
+        (p) => normalizeArabic(p.partner_name) === normalizedNext
       );
-      if (alreadyExists) {
-        setEditingKey(nextName);
-        setOriginalPartnerData({ name: nextName, phone: phoneClean, kind: currentForm.kind });
-        if (kind === "partners-financial") {
-          setPartnerToView({ partner_name: nextName, phone: phoneClean, kind: currentForm.kind, total_amount: 0, iqd_balance: 0, usd_balance: 0, total_withdrawals: 0 });
-        }
-        await onRefresh();
-        if (usesUnifiedAccounts) {
-          void fetchUnifiedAccounts();
-        }
+      if (alreadyExistsName) {
+        alert("اسم الحساب موجود مسبقا الرجاء اختيار اسم آخر");
         savingRef.current = false;
         return;
       }
@@ -1285,6 +1489,10 @@ export function PartnersTab({
         }
       } catch (err) {
         console.error("Auto save failed:", err);
+        const errMsg = String(err);
+        if (errMsg.includes("UNIQUE") || errMsg.includes("unique") || errMsg.includes("constraint") || errMsg.includes("Constraint")) {
+          alert("اسم الحساب موجود مسبقا الرجاء اختيار اسم آخر");
+        }
       } finally {
         setSaving(false);
         savingRef.current = false;
@@ -1292,6 +1500,16 @@ export function PartnersTab({
       return;
     }
     if (originalPartnerData && (nextName !== originalPartnerData.name || phoneClean !== originalPartnerData.phone || currentForm.kind !== originalPartnerData.kind)) {
+      if (normalizeArabic(nextName) !== normalizeArabic(originalPartnerData.name)) {
+        const alreadyExists = dbPartners.some(
+          (p) => normalizeArabic(p.partner_name) === normalizedNext
+        );
+        if (alreadyExists) {
+          alert("اسم الحساب موجود مسبقا الرجاء اختيار اسم آخر");
+          savingRef.current = false;
+          return;
+        }
+      }
       setSaving(true);
       try {
         await callTauri("update_partner", {
@@ -1310,7 +1528,12 @@ export function PartnersTab({
         }
       } catch (err) {
         console.error(err);
-        alert(`تعذر تحديث البيانات تلقائياً.`);
+        const errMsg = String(err);
+        if (errMsg.includes("UNIQUE") || errMsg.includes("unique") || errMsg.includes("constraint") || errMsg.includes("Constraint")) {
+          alert("اسم الحساب موجود مسبقا الرجاء اختيار اسم آخر");
+        } else {
+          alert(`تعذر تحديث البيانات تلقائياً.`);
+        }
       } finally {
         setSaving(false);
         savingRef.current = false;
@@ -1389,6 +1612,11 @@ export function PartnersTab({
       !!editingTransactionId &&
       !!originalEditingTransaction &&
       isCustomerInstallmentRecord(originalEditingTransaction);
+    const isSaleDownPaymentEdit =
+      form.kind === "زبون" &&
+      !!editingTransactionId &&
+      !!originalEditingTransaction &&
+      isSaleDownPaymentRecord(originalEditingTransaction);
     const originalInstallmentAmount = originalEditingTransaction
       ? moneyValueToNumber(originalEditingTransaction.amount)
       : 0;
@@ -1415,26 +1643,6 @@ export function PartnersTab({
       // للشركة: إذا كان التسديد عبر ممول
       if (form.kind === "شركة" && txForm.type === "سحب" && companyPaymentMode === "funder") {
         if (!settleFunderName) { alert("الرجاء اختيار الممول"); setSaving(false); return; }
-        
-        const funderAccount = unifiedAccounts.find(
-          (acc) => acc.partner_name === settleFunderName
-        );
-        const funderBalance = funderAccount
-          ? (txCurrency === "USD" ? funderAccount.usd_balance : funderAccount.iqd_balance)
-          : 0;
-        const availableFunds = funderBalance < 0 ? Math.abs(funderBalance) : 0;
-        
-        if (txForm.amount > availableFunds) {
-          setInsufficientFunderDetails({
-            name: settleFunderName,
-            required: txForm.amount,
-            available: availableFunds,
-            currency: txCurrency,
-          });
-          setShowFunderInsuffientModal(true);
-          setSaving(false);
-          return;
-        }
 
         await callTauri("settle_company_through_funder", {
           companyName: editingKey,
@@ -1464,7 +1672,17 @@ export function PartnersTab({
       const installmentAmount = Math.floor(periodAmount / installments);
       const remainder = periodAmount - installmentAmount * installments;
 
-      if (isBorrowerInstallmentEdit && originalEditingTransaction) {
+      if (isSaleDownPaymentEdit && originalEditingTransaction) {
+        await callTauri("update_customer_sale_down_payment", {
+          transactionId: originalEditingTransaction.id,
+          customerName: editingKey,
+          amount: periodAmount,
+          date: dateStr,
+          notes: txForm.notes || originalEditingTransaction.notes,
+          currency: txCurrency,
+          paymentType: originalEditingTransaction.payment_type || originalEditingTransaction.paymentType || "قاصه",
+        });
+      } else if (isBorrowerInstallmentEdit && originalEditingTransaction) {
         const isWantsPaid = txForm.type === "ايداع";
 
         // Use the new atomic command for all installment toggle operations
@@ -1491,9 +1709,10 @@ export function PartnersTab({
           const monthNote = (() => {
             if (form.kind === "ممول" && txForm.type === "سحب") {
               const commissionVal = txForm.commission || 0;
+              const totalWithCommission = moneyValueToNumber(amount) + moneyValueToNumber(commissionVal);
               const formattedTotal = txCurrency === "USD"
-                ? `$${(amount + commissionVal).toLocaleString("en-US")}`
-                : `${(amount + commissionVal).toLocaleString("en-US")} د.ع`;
+                ? `$${formatEnglishNumber(totalWithCommission)}`
+                : `${formatEnglishNumber(totalWithCommission)} د.ع`;
               return `تم تسليم الممول ${form.name} بـ ${formattedTotal} ارسل اليه بواسطة ${txForm.transferBy || "—"}${txForm.notes ? ` - ${txForm.notes}` : ""} - عمولة: ${commissionVal}`;
             }
             return installments > 1
@@ -1548,12 +1767,14 @@ export function PartnersTab({
     }
   };
 
-  const totalDeposits = cashTransactions
-    .filter((t) => !t.type_.startsWith("تحويل") && (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية") || t.type_.startsWith("دفعة")))
-    .reduce((sum, t) => sum + t.amount, 0);
-  const totalWithdrawals = cashTransactions
-    .filter((t) => !t.type_.startsWith("تحويل") && (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")))
-    .reduce((sum, t) => sum + t.amount, 0);
+  const totalDeposits = moneySum(
+    cashTransactions.filter((t) => !t.type_.startsWith("تحويل") && (t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة") || t.type_.startsWith("استلام") || t.type_.startsWith("إستلام") || t.type_.startsWith("تسديد") || t.type_.startsWith("إعادة استثمار") || t.type_.startsWith("تسوية") || t.type_.startsWith("دفعة"))),
+    (t) => t.amount
+  );
+  const totalWithdrawals = moneySum(
+    cashTransactions.filter((t) => !t.type_.startsWith("تحويل") && (t.type_.startsWith("سحب") || t.type_.startsWith("باقي"))),
+    (t) => t.amount
+  );
 
   const depositPrefixes = (t: { type_: string }) =>
     t.type_.startsWith("ايداع") || t.type_.startsWith("إيداع") || t.type_.startsWith("مقدمة")
@@ -1562,22 +1783,30 @@ export function PartnersTab({
 
   const partnerIqdBalance = accountsTab === "personal" && partnerToView
     ? isFinancialClientKind(form.kind)
-      ? transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
-      - transactions.filter((t) => depositPrefixes(t) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      ? moneySub(
+        moneySum(transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")), (t) => t.amount),
+        moneySum(transactions.filter((t) => depositPrefixes(t) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")), (t) => t.amount)
+      )
       : form.kind === "زبون"
-        ? transactions.filter((t) => isCustomerRemainingBalanceTx(t) && (t.currency || "IQD") === "IQD").reduce((s, t) => s + t.amount, 0)
-        : cashTransactions.filter((t) => depositPrefixes(t) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
-      - cashTransactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+        ? moneySum(transactions.filter((t) => isCustomerRemainingBalanceTx(t) && (t.currency || "IQD") === "IQD"), (t) => t.amount)
+        : moneySub(
+          moneySum(cashTransactions.filter((t) => depositPrefixes(t) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")), (t) => t.amount),
+          moneySum(cashTransactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")), (t) => t.amount)
+        )
     : currencyTotals[0];
 
   const partnerUsdBalance = accountsTab === "personal" && partnerToView
     ? isFinancialClientKind(form.kind)
-      ? transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
-      - transactions.filter((t) => depositPrefixes(t) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+      ? moneySub(
+        moneySum(transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")), (t) => t.amount),
+        moneySum(transactions.filter((t) => depositPrefixes(t) && t.currency === "USD" && !t.type_.startsWith("تحويل")), (t) => t.amount)
+      )
       : form.kind === "زبون"
-        ? transactions.filter((t) => isCustomerRemainingBalanceTx(t) && t.currency === "USD").reduce((s, t) => s + t.amount, 0)
-        : cashTransactions.filter((t) => depositPrefixes(t) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
-      - cashTransactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")).reduce((s, t) => s + t.amount, 0)
+        ? moneySum(transactions.filter((t) => isCustomerRemainingBalanceTx(t) && t.currency === "USD"), (t) => t.amount)
+        : moneySub(
+          moneySum(cashTransactions.filter((t) => depositPrefixes(t) && t.currency === "USD" && !t.type_.startsWith("تحويل")), (t) => t.amount),
+          moneySum(cashTransactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")), (t) => t.amount)
+        )
     : currencyTotals[1];
 
 
@@ -1590,26 +1819,27 @@ export function PartnersTab({
     if (hasPositive && hasNegative) return { label: "مختلط", className: "text-yellow" };
     return { label: "متوازن", className: "text-muted" };
   };
-  const getDetailBalanceCardClass = (amount: number) => {
-    if (amount > 0) return "currency-card--balance-positive";
-    if (amount < 0) return "currency-card--balance-negative";
+  const getDetailBalanceCardClass = (amount: MoneyValue) => {
+    if (compareMoney(amount, 0) > 0) return "currency-card--balance-positive";
+    if (compareMoney(amount, 0) < 0) return "currency-card--balance-negative";
     return "currency-card--balance-zero";
   };
   const getPartnerCurrencyBalance = (currency: "IQD" | "USD") => {
     if (!partnerToView) return currency === "IQD" ? currencyTotals[0] : currencyTotals[1];
     if (form.kind === "زبون") {
-      return transactions
-        .filter((t) => (t.currency || "IQD") === currency)
-        .reduce((sum, t) => (isCustomerRemainingBalanceTx(t) ? sum + t.amount : sum), 0);
+      return moneySum(
+        transactions.filter((t) => (t.currency || "IQD") === currency && isCustomerRemainingBalanceTx(t)),
+        (t) => t.amount
+      );
     }
     if (isFinancialClientKind(form.kind)) {
       return transactions
         .filter((t) => (t.currency || "IQD") === currency && !t.type_.startsWith("تحويل"))
-        .reduce((sum, t) => {
-          if (depositPrefixes(t)) return sum - t.amount;
-          if (t.type_.startsWith("سحب") || t.type_.startsWith("باقي") || t.type_.startsWith("تسليم")) return sum + t.amount;
+        .reduce<Decimal>((sum, t) => {
+          if (depositPrefixes(t)) return moneySub(sum, t.amount);
+          if (t.type_.startsWith("سحب") || t.type_.startsWith("باقي") || t.type_.startsWith("تسليم")) return moneyAdd(sum, t.amount);
           return sum;
-        }, 0);
+        }, toMoney(0));
     }
     return currency === "IQD" ? partnerIqdBalance : partnerUsdBalance;
   };
@@ -1644,10 +1874,27 @@ export function PartnersTab({
       ? "currency-card--balance-negative"
       : "";
 
-  const runPrint = (mode: "all" | "range") => {
-    setPrintMode(mode);
+  const runPrint = async (mode: "all" | "range") => {
+    if (!partnerToView) return;
     setPrintMenuOpen(false);
-    window.setTimeout(() => window.print(), 50);
+    try {
+      await printStatement({
+        partner: partnerToView,
+        transactions,
+        printMode: mode,
+        printFromDate,
+        printToDate,
+        muntasirPhone,
+        amirPhone,
+        paidTransactionIds,
+      });
+    } catch (err) {
+      console.error("Failed to generate partner statement PDF:", err);
+      setErrorDialog({
+        title: "تعذر إنشاء كشف الحساب",
+        message: getErrorMessage(err, "تعذر إنشاء ملف PDF. حاول مرة أخرى."),
+      });
+    }
   };
 
   return (
@@ -1712,6 +1959,23 @@ export function PartnersTab({
                     <span className="gold-fx-btn__label">طباعة</span>
                   </GoldFxButton>
 
+                  {partnerToView?.kind === "زبون" && customerDeferredSaleCar && onNavigateToCar && (
+                    <GoldFxButton
+                      type="button"
+                      variant="gray"
+                      title="تفاصيل بيع السيارة"
+                      aria-label="تفاصيل بيع السيارة"
+                      style={{ margin: 0, width: "42px", minWidth: "42px", height: "42px", padding: 0 }}
+                      onClick={() => onNavigateToCar(
+                        customerDeferredSaleCar.car_number,
+                        customerDeferredSaleCar.status === "متوفرة" ? "available" : "sold",
+                        1,
+                      )}
+                    >
+                      <span className="gold-fx-btn__label" aria-hidden>🚗</span>
+                    </GoldFxButton>
+                  )}
+
                   <div className="toolbar-field-group">
                     <input
                       value={form.name}
@@ -1735,9 +1999,9 @@ export function PartnersTab({
                       disabled={partnerToView?.kind === "شريك"}
                     />
                   </div>
-                  <div className="toolbar-field-group min-w-[220px]">
+                  <div className="toolbar-field-group min-w-[160px]">
                     {partnerToView?.kind === "شريك" ? (
-                      <span className="badge badge--kind-شريك" style={{ height: "42px", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 16px", borderRadius: "10px", fontWeight: "bold" }}>
+                      <span className="badge badge--kind-شريك" style={{ height: "42px", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "0 16px", borderRadius: "var(--all-radius)", fontWeight: "bold" }}>
                         شريك
                       </span>
                     ) : (
@@ -1770,46 +2034,46 @@ export function PartnersTab({
                       <span className="gold-fx-btn__icon">↩</span>
                     </GoldFxButton>
                   )}
-                {ACCOUNTS_TABS.map((tab) => {
-                  const isActive = accountsTab === tab.id;
-                  const isPersonalActive = tab.id === "personal" && accountsTab === "personal";
-                  const primaryTab = tab.id === "customers";
+                  {ACCOUNTS_TABS.map((tab) => {
+                    const isActive = accountsTab === tab.id;
+                    const isPersonalActive = tab.id === "personal" && accountsTab === "personal";
+                    const primaryTab = tab.id === "customers";
 
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      className={`${primaryTab ? "top-btn-one" : "top-btn-two"} ${isActive || isPersonalActive ? (primaryTab ? "top-btn-one--active" : "top-btn-two--active") : ""}`.trim()}
-                      onClick={() => {
-                        if (tab.id !== "personal") {
-                          if (partnerToView && !sharikListView) {
-                            if (partnerToView.kind === "شريك") {
-                              setSharikListView(true);
-                              setPartnerToView(null);
-                              setEditingKey(null);
-                              setModalMode(null);
-                              setTransactions([]);
-                              onPartnerActionsChange?.(null);
-                            } else {
-                              void handleClose();
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        className={`${primaryTab ? "top-btn-one" : "top-btn-two"} ${isActive || isPersonalActive ? (primaryTab ? "top-btn-one--active" : "top-btn-two--active") : ""}`.trim()}
+                        onClick={() => {
+                          if (tab.id !== "personal") {
+                            if (partnerToView && !sharikListView) {
+                              if (partnerToView.kind === "شريك") {
+                                setSharikListView(true);
+                                setPartnerToView(null);
+                                setEditingKey(null);
+                                setModalMode(null);
+                                setTransactions([]);
+                                onPartnerActionsChange?.(null);
+                              } else {
+                                void handleClose();
+                              }
+                              return;
                             }
-                            return;
+                            resetForm(tab.id);
+                          } else {
+                            setAccountsTab("personal");
+                            setSharikListView(true);
+                            setPartnerToView(null);
+                            setEditingKey(null);
+                            setTransactions([]);
+                            onPartnerActionsChange?.(null);
                           }
-                          resetForm(tab.id);
-                        } else {
-                          setAccountsTab("personal");
-                          setSharikListView(true);
-                          setPartnerToView(null);
-                          setEditingKey(null);
-                          setTransactions([]);
-                          onPartnerActionsChange?.(null);
-                        }
-                      }}
-                    >
-                      {tab.label}
-                    </button>
-                  );
-                })}
+                        }}
+                      >
+                        {tab.label}
+                      </button>
+                    );
+                  })}
                 </>
               )}
             </div>
@@ -1817,10 +2081,10 @@ export function PartnersTab({
             </div>
             <div className="unified-toolbar__left">
               <div className={`currency-card currency-card--usd ${accountsTab !== "personal" ? accountsListCardClass : getDetailBalanceCardClass(displayPartnerUsdBalance)}`}>
-                <PriceDisplay amount={Math.abs(displayPartnerUsdBalance)} currency="USD" noColor />
+                <PriceDisplay amount={moneyAbs(displayPartnerUsdBalance)} currency="USD" noColor />
               </div>
               <div className={`currency-card currency-card--iqd ${accountsTab !== "personal" ? accountsListCardClass : getDetailBalanceCardClass(displayPartnerIqdBalance)}`}>
-                <PriceDisplay amount={Math.abs(displayPartnerIqdBalance)} noColor />
+                <PriceDisplay amount={moneyAbs(displayPartnerIqdBalance)} noColor />
               </div>
             </div>
           </>
@@ -2002,7 +2266,7 @@ export function PartnersTab({
                 </thead>
                 <tbody>
                   {sharikPartners.slice(sharikPage * PAGE_SIZE, (sharikPage + 1) * PAGE_SIZE).map((partner, idx) => {
-                    const ratio = sharikTotalSame > 0 ? (partner.total_amount / sharikTotalSame) * 100 : 0;
+                    const ratio = compareMoney(sharikTotalSame, 0) > 0 ? moneyDiv(partner.total_amount, sharikTotalSame).times(100).toNumber() : 0;
                     return (
                       <tr
                         key={`${partner.partner_name}_شريك`}
@@ -2014,8 +2278,8 @@ export function PartnersTab({
                         <td className="col-name cell-bold">{partner.partner_name}</td>
                         <td className="col-phone">{partner.phone || "—"}</td>
                         <td className="col-money cell-bold">
-                          <span className={partner.total_amount > 0 ? "text-green" : partner.total_amount < 0 ? "text-red" : "text-muted"}>
-                            <PriceDisplay amount={Math.abs(partner.total_amount)} noColor />
+                          <span className={compareMoney(partner.total_amount, 0) > 0 ? "text-green" : compareMoney(partner.total_amount, 0) < 0 ? "text-red" : "text-muted"}>
+                            <PriceDisplay amount={moneyAbs(partner.total_amount)} noColor />
                           </span>
                         </td>
                         <td className="col-ratio">{ratio.toFixed(1)}%</td>
@@ -2101,8 +2365,8 @@ export function PartnersTab({
                             ? direction.rowClass
                             : (isDeposit ? "partner-tx-row--deposit" : "partner-tx-row--withdraw")
                             }`}
-                          title={isProfitRow ? "أرباح (تسجيل أرباح ولا تؤثر على الرصيد النقدي)" : "اضغط لتعديل المعاملة"}
-                          onClick={() => !isProfitRow && beginEditTransaction(tx)}
+                          title={isProfitRow ? "أرباح (تسجيل أرباح ولا تؤثر على الرصيد النقدي)" : form.kind === "زبون" && isCustomerInstallmentRecord(tx) ? "اضغط لمعالجة القسط" : "اضغط لتعديل المعاملة"}
+                          onClick={() => !isProfitRow && (form.kind === "زبون" && isCustomerInstallmentRecord(tx) ? openInstallmentModal(tx) : beginEditTransaction(tx))}
                         >
                           <td className="cell-num col-seq">{sequenceByTransactionId.get(tx.id) ?? tx.id}</td>
                           <td className="col-date">{tx.date}</td>
@@ -2188,8 +2452,8 @@ export function PartnersTab({
                   {pagePartners.map((partner, idx) => {
                     const pKind = partner.kind || kind;
                     const sameKind = myPartners.filter((p) => (p.kind || kind) === pKind);
-                    const totalSameKind = sameKind.reduce((sum, p) => sum + p.total_amount, 0);
-                    const ratio = totalSameKind > 0 ? (partner.total_amount / totalSameKind) * 100 : 0;
+                    const totalSameKind = moneySum(sameKind, (p) => p.total_amount);
+                    const ratio = compareMoney(totalSameKind, 0) > 0 ? moneyDiv(partner.total_amount, totalSameKind).times(100).toNumber() : 0;
                     return (
                       <tr
                         key={`${partner.partner_name}_${partner.kind}`}
@@ -2204,8 +2468,8 @@ export function PartnersTab({
                         <td className="col-name cell-bold">{partner.partner_name}</td>
                         <td className="col-phone">{partner.phone || "—"}</td>
                         <td className="col-money cell-bold">
-                          <span className={partner.total_amount > 0 ? "text-red" : partner.total_amount < 0 ? "text-green" : "text-muted"}>
-                            <PriceDisplay amount={Math.abs(partner.total_amount)} noColor />
+                          <span className={compareMoney(partner.total_amount, 0) > 0 ? "text-red" : compareMoney(partner.total_amount, 0) < 0 ? "text-green" : "text-muted"}>
+                            <PriceDisplay amount={moneyAbs(partner.total_amount)} noColor />
                           </span>
                         </td>
                         <td className="col-ratio">{ratio.toFixed(1)}%</td>
@@ -2257,8 +2521,14 @@ export function PartnersTab({
           <form className="form customer-form" onSubmit={handleSubmit}>
             <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "flex-end" }}>
               <div style={{ flex: "1 1 250px", minWidth: 0 }}>
-                <label className="label" htmlFor="partner-name-new">
-                  اسم {kind}
+                <label className="label" htmlFor="partner-name-new" style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+                  {isFormNameDuplicate ? (
+                    <span style={{ color: "#ef4444", fontSize: "var(--font-size)", fontWeight: "bold" }}>
+                      اسم الحساب موجود!
+                    </span>
+                  ) : (
+                    <span>اسم {kind}</span>
+                  )}
                 </label>
                 <TextInput id="partner-name-new" value={form.name}
                   autoComplete="new-password"
@@ -2278,7 +2548,7 @@ export function PartnersTab({
                   onBlur={(e: React.FocusEvent<HTMLInputElement>) => patchPhone(e.target.value)} />
               </div>
               <div style={{ display: "flex", gap: "12px", alignItems: "flex-end", paddingBottom: "2px" }}>
-                <GoldFxButton type="submit" variant="green" style={{ flex: 1, margin: 0 }} disabled={saving}>
+                <GoldFxButton type="submit" variant="green" style={{ flex: 1, margin: 0 }} disabled={saving || isFormNameDuplicate}>
                   <span className="gold-fx-btn__label">{saving ? "جاري الحفظ..." : `حفظ ${kind}`}</span>
                 </GoldFxButton>
                 <GoldFxButton type="button" variant="gray" style={{ flex: 1, margin: 0 }} onClick={() => resetForm()}>
@@ -2315,7 +2585,7 @@ export function PartnersTab({
       {!showNewAccount && modalMode !== null && (kind !== "partners-financial" || !editingKey) && createPortal(
         <div className="modal-overlay" role="presentation" onClick={handleClose}>
           <div
-            className={`modal-dialog ${modalMode === "view" ? "modal-dialog--partner modal-dialog--wide" : "modal-dialog--slim modal-dialog--overflow-visible"
+            className={`modal-dialog modal-dialog--overflow-visible ${modalMode === "view" ? "modal-dialog--partner modal-dialog--wide" : "modal-dialog--slim"
               } modal-dialog--kind-${form.kind}`}
             role="dialog"
             aria-modal="true"
@@ -2325,7 +2595,15 @@ export function PartnersTab({
               {modalMode === "view" && (
                 <div className="partner-summary-sidebar">
                   <div className="partner-summary-field">
-                    <span className="partner-summary-field__label">👤 الاسم</span>
+                    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", width: "100%" }}>
+                      {isFormNameDuplicate ? (
+                        <span style={{ color: "#ef4444", fontSize: "var(--font-size)", fontWeight: "bold" }}>
+                          اسم الحساب موجود!
+                        </span>
+                      ) : (
+                        <span className="partner-summary-field__label">👤 الاسم</span>
+                      )}
+                    </div>
                     <input
                       type="text"
                       className="partner-sidebar-input"
@@ -2336,7 +2614,7 @@ export function PartnersTab({
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
-                          void handleAutoSave();
+                          if (!isFormNameDuplicate) void handleAutoSave();
                         }
                       }}
                     />
@@ -2355,7 +2633,7 @@ export function PartnersTab({
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
-                          void handleAutoSave();
+                          if (!isFormNameDuplicate) void handleAutoSave();
                         }
                       }}
                     />
@@ -2384,7 +2662,7 @@ export function PartnersTab({
                     type="button"
                     variant="green"
                     style={{ width: "100%", margin: "8px 0 0" }}
-                    disabled={saving}
+                    disabled={saving || isFormNameDuplicate}
                     onClick={() => void handleAutoSave()}
                   >
                     <span className="gold-fx-btn__label">حفظ التعديلات</span>
@@ -2415,20 +2693,20 @@ export function PartnersTab({
                       <span className="partner-summary-field__label">💼 صافي المبلغ</span>
                       <span className="partner-summary-field__value">
                         {form.kind === "ممول" ? (
-                          (totalDeposits - totalWithdrawals) > 0 ? (
+                          compareMoney(totalDeposits, totalWithdrawals) > 0 ? (
                             <span className="text-red">
-                              <PriceDisplay amount={Math.abs(totalDeposits - totalWithdrawals)} noColor />
+                              <PriceDisplay amount={moneyAbs(moneySub(totalDeposits, totalWithdrawals))} noColor />
                             </span>
-                          ) : (totalDeposits - totalWithdrawals) < 0 ? (
+                          ) : compareMoney(totalDeposits, totalWithdrawals) < 0 ? (
                             <span className="text-green">
-                              <PriceDisplay amount={Math.abs(totalDeposits - totalWithdrawals)} noColor />
+                              <PriceDisplay amount={moneyAbs(moneySub(totalDeposits, totalWithdrawals))} noColor />
                             </span>
                           ) : (
                             <span style={{ color: "rgba(255,255,255,0.4)" }}>0IQ</span>
                           )
                         ) : (
-                          <span className={isFinancialClientKind(form.kind) ? (totalWithdrawals - totalDeposits >= 0 ? "text-green" : "text-red") : (totalDeposits - totalWithdrawals) >= 0 ? "text-green" : "text-red"}>
-                            <PriceDisplay amount={Math.abs(isFinancialClientKind(form.kind) ? totalWithdrawals - totalDeposits : totalDeposits - totalWithdrawals)} noColor />
+                          <span className={isFinancialClientKind(form.kind) ? (compareMoney(totalWithdrawals, totalDeposits) >= 0 ? "text-green" : "text-red") : compareMoney(totalDeposits, totalWithdrawals) >= 0 ? "text-green" : "text-red"}>
+                            <PriceDisplay amount={moneyAbs(isFinancialClientKind(form.kind) ? moneySub(totalWithdrawals, totalDeposits) : moneySub(totalDeposits, totalWithdrawals))} noColor />
                           </span>
                         )}
                       </span>
@@ -2449,8 +2727,14 @@ export function PartnersTab({
                 {modalMode !== "view" && (
                   <form className="form customer-form partner-identity-form" onSubmit={handleSubmit}>
                     <div className="form-group">
-                      <label className="label" htmlFor="partner-name">
-                        اسم {kind === "partners-financial" ? "الحساب" : kind}
+                      <label className="label" htmlFor="partner-name" style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+                        {isFormNameDuplicate ? (
+                          <span style={{ color: "#ef4444", fontSize: "var(--font-size)", fontWeight: "bold" }}>
+                            اسم الحساب موجود!
+                          </span>
+                        ) : (
+                          <span>اسم {kind === "partners-financial" ? "الحساب" : kind}</span>
+                        )}
                       </label>
                       <TextInput id="partner-name" value={form.name}
                         autoComplete="new-password"
@@ -2478,7 +2762,7 @@ export function PartnersTab({
                           placeholder="نوع الحساب"
                           options={[
                             ...(form.kind === "شريك" ? [{ label: "شريك", value: "شريك", kind: "شريك" }] : []),
-  
+
                             { label: "مستثمر", value: "مستثمر", kind: "مستثمر" },
                             { label: "ممول", value: "ممول", kind: "ممول" },
                             { label: "زبون", value: "زبون", kind: "زبون" },
@@ -2488,7 +2772,7 @@ export function PartnersTab({
                       </div>
                     )}
                     <div className="car-form-panel__actions">
-                      <ActionButton type="submit" variant="success" disabled={saving}>
+                      <ActionButton type="submit" variant="success" disabled={saving || isFormNameDuplicate}>
                         {saving ? "جاري الحفظ..." : kind === "partners-financial" ? "حفظ الحساب" : `حفظ ${kind}`}
                       </ActionButton>
                       <ActionButton type="button" variant="ghost" onClick={() => resetForm()}>
@@ -2500,6 +2784,67 @@ export function PartnersTab({
 
                 {modalMode === "view" && (
                   <>
+                    {purchasedCars.length > 0 && (
+                      <div style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+                        gap: "12px",
+                        marginBottom: "16px",
+                        padding: "4px"
+                      }}>
+                        {purchasedCars.map(car => (
+                          <div
+                            key={car.car_number}
+                            style={{
+                              background: "rgba(255, 255, 255, 0.05)",
+                              border: "1px solid rgba(255, 255, 255, 0.1)",
+                              borderRadius: "12px",
+                              padding: "12px",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              backdropFilter: "blur(8px)",
+                              boxShadow: "0 4px 12px rgba(0, 0, 0, 0.1)",
+                            }}
+                          >
+                            <div style={{ textAlign: "right" }}>
+                              <div style={{ fontWeight: "bold", fontSize: "15px", color: "var(--gold)" }}>
+                                {car.car_name} {car.car_model} ({car.car_year})
+                              </div>
+                              <div style={{ fontSize: "12px", color: "rgba(255, 255, 255, 0.5)", marginTop: "4px" }}>
+                                لوحة: {car.car_plate_num || car.car_number} | شاصي: {car.chassis_number || "—"}
+                              </div>
+                              <div style={{ fontSize: "13px", color: "#6ef7b7", marginTop: "4px", fontWeight: "bold" }}>
+                                {car.payment_type === "اقساط" ? "شراء بالتقسيط" : car.payment_type === "موعد" ? "شراء بموعد" : "شراء كاش"}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => onNavigateToCar?.(car.car_number, car.status === "متوفرة" ? "available" : "sold", 1)}
+                              style={{
+                                background: "rgba(216, 168, 90, 0.12)",
+                                border: "1px solid rgba(216, 168, 90, 0.4)",
+                                color: "var(--gold)",
+                                borderRadius: "8px",
+                                padding: "6px 12px",
+                                cursor: "pointer",
+                                fontSize: "13px",
+                                fontWeight: "bold",
+                                transition: "all 0.18s",
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = "rgba(216, 168, 90, 0.25)";
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = "rgba(216, 168, 90, 0.12)";
+                              }}
+                            >
+                              عرض السيارة 🚗
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {totalModalPages >= 1 && (
                       <div className="table-page-dots" aria-label="تنقل بين الصفحات">
                         {Array.from({ length: totalModalPages }, (_, idx) => (
@@ -2553,17 +2898,19 @@ export function PartnersTab({
                                     const isWithdraw = !isProfitRow && (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) && !isPaidBorrowerInst;
                                     const isDeposit = !isProfitRow && (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة") || isPaidBorrowerInst);
                                     const direction = transactionDirection(form.kind, isWithdraw);
+                                    const canOpenInstallmentAction = form.kind === "زبون" && (isInstallmentScheduleTx(tx) || getLinkedInstallmentId(tx) != null);
+                                    const canReverseInstallment = canOpenInstallmentAction && tx.type_.startsWith("واصل") && isCustomerInstallmentRecord(tx);
                                     return (
                                       <tr
                                         key={tx.id}
                                         className={`partner-tx-row ${isProfitRow ? "partner-tx-row--profit" : isFinancialClientKind(form.kind) || form.kind === "زبون"
                                           ? direction.rowClass
                                           : form.kind === "ممول"
-                                          ? (isWithdraw ? "partner-tx-row--deposit" : "partner-tx-row--withdraw")
-                                          : (isDeposit ? "partner-tx-row--deposit" : "partner-tx-row--withdraw")
+                                            ? (isWithdraw ? "partner-tx-row--deposit" : "partner-tx-row--withdraw")
+                                            : (isDeposit ? "partner-tx-row--deposit" : "partner-tx-row--withdraw")
                                           }`}
-                                        title={isProfitRow ? "أرباح (تسجيل أرباح ولا تؤثر على الرصيد النقدي)" : "اضغط لتعديل المعاملة"}
-                                        onClick={() => !isProfitRow && beginEditTransaction(tx)}
+                                        title={isProfitRow ? "أرباح (تسجيل أرباح ولا تؤثر على الرصيد النقدي)" : canOpenInstallmentAction && isCustomerInstallmentRecord(tx) ? "اضغط لمعالجة القسط" : "اضغط لتعديل المعاملة"}
+                                        onClick={() => !isProfitRow && (canOpenInstallmentAction && isCustomerInstallmentRecord(tx) ? openInstallmentModal(tx) : beginEditTransaction(tx))}
                                       >
                                         <td className="cell-num col-seq">{sequenceByTransactionId.get(tx.id) ?? tx.id}</td>
                                         <td className="col-date">{tx.date}</td>
@@ -2581,7 +2928,7 @@ export function PartnersTab({
                                         <td className={cn(
                                           "col-amount font-bold",
                                           isProfitRow ? "tx-amount-profit" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.colorClass :
-                                          form.kind === "ممول" ? (isWithdraw ? "text-red" : "text-green") :
+                                            form.kind === "ممول" ? (isWithdraw ? "text-red" : "text-green") :
                                               (form.kind === "زبون" && isSaleInstallmentTx(tx)) ? "text-green" :
                                                 (isWithdraw ? "text-red" : "text-green")
                                         )}>
@@ -2606,6 +2953,18 @@ export function PartnersTab({
                                                 }}
                                               >
                                                 واصل
+                                              </button>
+                                            )}
+                                            {canReverseInstallment && (
+                                              <button
+                                                type="button"
+                                                className="btn-settle-installment"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  openInstallmentModal(tx, "reverse");
+                                                }}
+                                              >
+                                                إلغاء
                                               </button>
                                             )}
                                           </div>
@@ -2636,32 +2995,34 @@ export function PartnersTab({
                       )}
                     </div>
 
-                    <div className="car-form-panel__actions partner-modal-actions" style={{ marginTop: "1rem", display: "flex", gap: "0.5rem" }}>
-                      <ActionButton
-                        type="button"
-                        variant={form.kind === "زبون" ? "success" : "success"}
-                        style={{ flex: 1, minWidth: 0, padding: "8px 16px", background: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)", border: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "1px solid rgba(34,197,94,0.3)" : "1px solid rgba(239,68,68,0.3)", color: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "var(--green)" : "var(--red-600)", backdropFilter: "blur(8px)", borderRadius: "10px", fontWeight: 700, fontSize: "var(--fs-sm)" }}
-                        onClick={openWithdrawForm}
-                      >
-                        {form.kind === "زبون"
-                          ? `باقي على ${firstAccountName(form.name)}`
-                          : isFinancialClientKind(form.kind)
-                            ? `تسليم الى ${firstAccountName(form.name)}`
-                            : "سحب"}
-                      </ActionButton>
-                      <ActionButton
-                        type="button"
-                        variant={form.kind === "زبون" ? "secondary" : "secondary"}
-                        style={{ flex: 1, minWidth: 0, padding: "8px 16px", background: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "rgba(239,68,68,0.12)" : "rgba(34,197,94,0.12)", border: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(34,197,94,0.3)", color: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "var(--red-600)" : "var(--green)", backdropFilter: "blur(8px)", borderRadius: "10px", fontWeight: 700, fontSize: "var(--fs-sm)" }}
-                        onClick={openDepositForm}
-                      >
-                        {form.kind === "زبون"
-                          ? `واصل من ${firstAccountName(form.name)}`
-                          : form.kind === "شركة" || form.kind === "ممول" || form.kind === "مستثمر"
-                            ? `استلام من ${firstAccountName(form.name)}`
-                            : "إيداع"}
-                      </ActionButton>
-                    </div>
+                    {form.kind !== "زبون" && (
+                      <div className="car-form-panel__actions partner-modal-actions" style={{ marginTop: "1rem", display: "flex", gap: "0.5rem" }}>
+                        <ActionButton
+                          type="button"
+                          variant={form.kind === "زبون" ? "success" : "success"}
+                          style={{ flex: 1, minWidth: 0, padding: "8px 16px", background: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)", border: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "1px solid rgba(34,197,94,0.3)" : "1px solid rgba(239,68,68,0.3)", color: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "var(--green)" : "var(--red-600)", backdropFilter: "blur(8px)", borderRadius: "var(--all-radius)", fontWeight: 700, fontSize: "var(--fs-sm)" }}
+                          onClick={openWithdrawForm}
+                        >
+                          {form.kind === "زبون"
+                            ? `باقي على ${firstAccountName(form.name)}`
+                            : isFinancialClientKind(form.kind)
+                              ? `تسليم الى ${firstAccountName(form.name)}`
+                              : "سحب"}
+                        </ActionButton>
+                        <ActionButton
+                          type="button"
+                          variant={form.kind === "زبون" ? "secondary" : "secondary"}
+                          style={{ flex: 1, minWidth: 0, padding: "8px 16px", background: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "rgba(239,68,68,0.12)" : "rgba(34,197,94,0.12)", border: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(34,197,94,0.3)", color: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "var(--red-600)" : "var(--green)", backdropFilter: "blur(8px)", borderRadius: "var(--all-radius)", fontWeight: 700, fontSize: "var(--fs-sm)" }}
+                          onClick={openDepositForm}
+                        >
+                          {form.kind === "زبون"
+                            ? `واصل من ${firstAccountName(form.name)}`
+                            : form.kind === "شركة" || form.kind === "ممول" || form.kind === "مستثمر"
+                              ? `استلام من ${firstAccountName(form.name)}`
+                              : "إيداع"}
+                        </ActionButton>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -2883,6 +3244,265 @@ export function PartnersTab({
         }}
       />
 
+      {installmentModal && (
+        <div className="mb-overlay" role="presentation" onClick={() => !installmentProcessing && setInstallmentModal(null)}>
+          <div
+            className="mb-dialog tx-dialog installment-pay-dialog"
+            role="dialog"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 620, fontSize: "var(--font-size)" }}
+          >
+            <h3 className="mb-title" style={{ fontSize: "var(--font-size)" }}>
+              {installmentModal.mode === "pay" ? "تسديد قسط" : "إلغاء دفعة قسط"}
+            </h3>
+            {installmentModal.mode === "pay" ? (
+              <div className="form tx-dialog-form" style={{ display: "grid", gap: "1rem" }}>
+                <div className="installment-dialog-grid-2">
+                  <div style={{
+                    background: "rgba(255, 255, 255, 0.02)",
+                    border: "1px solid rgba(255, 255, 255, 0.06)",
+                    borderRadius: "12px",
+                    padding: "1rem",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minHeight: "72px"
+                  }}>
+                    <span style={{ fontSize: "calc(var(--font-size) * 0.65)", color: "var(--font-lable-color)", marginBottom: "0.25rem" }}>القسط المستحق</span>
+                    <div style={{ fontSize: "calc(var(--font-size) * 1.15)", fontWeight: "bold" }}>
+                      <PriceDisplay amount={installmentModal.preview?.current_amount ?? installmentModal.tx.current_amount ?? installmentModal.tx.amount} currency={installmentModal.tx.currency} />
+                    </div>
+                  </div>
+                  <div style={{
+                    background: "rgba(255, 255, 255, 0.02)",
+                    border: "1px solid rgba(255, 255, 255, 0.06)",
+                    borderRadius: "12px",
+                    padding: "1rem",
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "center",
+                    minHeight: "72px"
+                  }}>
+                    <span style={{ fontSize: "calc(var(--font-size) * 0.65)", color: "var(--font-lable-color)", marginBottom: "0.5rem", textAlign: "center" }}>المدفوع فعلاً</span>
+                    <PriceInput
+                      value={String(installmentModal.actualPaidAmount)}
+                      onChange={(amount) => setInstallmentModal((current) => current ? { ...current, actualPaidAmount: Number(amount) || 0 } : current)}
+                      currency={(installmentModal.tx.currency === "USD" ? "USD" : "IQD") as Currency}
+                      onCurrencyChange={() => undefined}
+                    />
+                  </div>
+                </div>
+
+                <div style={{
+                  background: "rgba(255, 255, 255, 0.01)",
+                  border: "1px solid rgba(255, 255, 255, 0.04)",
+                  borderRadius: "12px",
+                  padding: "1rem",
+                  marginTop: "0.25rem"
+                }}>
+                  <h4 style={{
+                    fontSize: "calc(var(--font-size) * 0.73)",
+                    fontWeight: "bold",
+                    color: "var(--font-lable-color)",
+                    marginBottom: "0.75rem",
+                    borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
+                    paddingBottom: "0.5rem"
+                  }}>
+                    تأثير الفارق المالي
+                  </h4>
+                  <div className="installment-dialog-grid-3">
+                    <div style={{
+                      background: "rgba(255, 255, 255, 0.02)",
+                      border: "1px solid rgba(255, 255, 255, 0.06)",
+                      borderRadius: "10px",
+                      padding: "0.75rem 0.5rem",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center"
+                    }}>
+                      <span style={{ fontSize: "calc(var(--font-size) * 0.62)", color: "var(--font-lable-color)", marginBottom: "0.25rem" }}>الفرق</span>
+                      <span style={{ fontWeight: "bold", fontSize: "calc(var(--font-size) * 0.77)" }}>
+                        <PriceDisplay amount={installmentModal.preview?.difference_amount ?? 0} currency={installmentModal.tx.currency} />
+                      </span>
+                    </div>
+
+                    <div style={{
+                      background: "rgba(255, 255, 255, 0.02)",
+                      border: "1px solid rgba(255, 255, 255, 0.06)",
+                      borderRadius: "10px",
+                      padding: "0.75rem 0.5rem",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center"
+                    }}>
+                      <span style={{ fontSize: "calc(var(--font-size) * 0.62)", color: "var(--font-lable-color)", marginBottom: "0.25rem" }}>الأقساط المتأثرة</span>
+                      <span style={{ fontWeight: "bold", color: "var(--labletext)", fontSize: "calc(var(--font-size) * 0.77)" }}>
+                        {installmentModal.loadingPreview ? (
+                          <span style={{ opacity: 0.5 }}>...</span>
+                        ) : (
+                          (installmentModal.preview?.affected_count ?? 0) === 0 ? (
+                            <span style={{ color: "rgba(255,255,255,0.4)" }}>لا يوجد</span>
+                          ) : (
+                            `${installmentModal.preview?.affected_count} قسط`
+                          )
+                        )}
+                      </span>
+                    </div>
+
+                    <div style={{
+                      background: "rgba(255, 255, 255, 0.02)",
+                      border: "1px solid rgba(255, 255, 255, 0.06)",
+                      borderRadius: "10px",
+                      padding: "0.75rem 0.5rem",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center"
+                    }}>
+                      <span style={{ fontSize: "calc(var(--font-size) * 0.62)", color: "var(--font-lable-color)", marginBottom: "0.25rem" }}>تعديل الأقساط</span>
+                      <span style={{ fontWeight: "bold", display: "flex", alignItems: "center", fontSize: "calc(var(--font-size) * 0.77)" }}>
+                        {(() => {
+                          const dir = installmentModal.preview?.redistribution_direction ?? "لا يوجد فرق";
+                          if (dir.includes("تخفيض")) {
+                            return (
+                              <span style={{
+                                color: "#10b981",
+                                background: "rgba(16, 185, 129, 0.1)",
+                                padding: "2px 8px",
+                                borderRadius: "6px",
+                                fontSize: "calc(var(--font-size) * 0.62)"
+                              }}>
+                                تخفيض ↓
+                              </span>
+                            );
+                          }
+                          if (dir.includes("زيادة")) {
+                            return (
+                              <span style={{
+                                color: "#f43f5e",
+                                background: "rgba(244, 63, 94, 0.1)",
+                                padding: "2px 8px",
+                                borderRadius: "6px",
+                                fontSize: "calc(var(--font-size) * 0.62)"
+                              }}>
+                                زيادة ↑
+                              </span>
+                            );
+                          }
+                          return (
+                            <span style={{
+                              color: "rgba(255,255,255,0.5)",
+                              background: "rgba(255, 255, 255, 0.05)",
+                              padding: "2px 8px",
+                              borderRadius: "6px",
+                              fontSize: "calc(var(--font-size) * 0.62)"
+                            }}>
+                              لا يوجد
+                            </span>
+                          );
+                        })()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div style={{
+                background: "rgba(244, 63, 94, 0.04)",
+                border: "1px solid rgba(244, 63, 94, 0.15)",
+                borderRadius: "12px",
+                padding: "1.25rem",
+                color: "var(--textinputtext)",
+                maxHeight: "260px",
+                overflowY: "auto"
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "1rem" }}>
+                  <span style={{
+                    background: "rgba(244, 63, 94, 0.15)",
+                    color: "#f43f5e",
+                    width: "28px",
+                    height: "28px",
+                    borderRadius: "50%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "calc(var(--font-size) * 0.85)",
+                    fontWeight: "bold"
+                  }}>
+                    ⚠️
+                  </span>
+                  <h4 style={{ fontSize: "calc(var(--font-size) * 0.77)", fontWeight: "bold", color: "#f43f5e", margin: 0 }}>
+                    تنبيه إلغاء دفعة القسط
+                  </h4>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", fontSize: "calc(var(--font-size) * 0.73)" }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                    <span style={{ color: "#f43f5e", marginTop: "2px" }}>•</span>
+                    <p style={{ margin: 0 }}>سيتم <strong>إلغاء تسجيل الدفعة</strong> بالكامل وتغيير حالة القسط إلى غير مسدد.</p>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                    <span style={{ color: "#f43f5e", marginTop: "2px" }}>•</span>
+                    <p style={{ margin: 0 }}>سيتم <strong>عكس قيود القاصة</strong> تلقائياً واسترجاع المبلغ.</p>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                    <span style={{ color: "#f43f5e", marginTop: "2px" }}>•</span>
+                    <p style={{ margin: 0 }}>سيتم <strong>عكس قيود الشركاء</strong> وإلغاء توزيع الأرباح المرتبطة بالدفعة بالتساوي (50% / 50%).</p>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                    <span style={{ color: "#f43f5e", marginTop: "2px" }}>•</span>
+                    <p style={{ margin: 0 }}>سيتم <strong>عكس كافة القيود المحاسبية</strong> المرتبطة بهذه المعاملة في النظام.</p>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                    <span style={{ color: "#f43f5e", marginTop: "2px" }}>•</span>
+                    <p style={{ margin: 0 }}>سيتم <strong>إعادة احتساب جدول الأقساط</strong> وتوزيع القيمة الملغاة على الأقساط القادمة.</p>
+                  </div>
+                </div>
+              </div>
+            )}
+            {installmentModal.error && (
+              <div style={{
+                background: "rgba(244, 63, 94, 0.08)",
+                border: "1px solid rgba(244, 63, 94, 0.2)",
+                borderRadius: "8px",
+                padding: "0.75rem",
+                color: "#f43f5e",
+                textAlign: "center",
+                marginTop: "1rem",
+                fontWeight: 700,
+                fontSize: "calc(var(--font-size) * 0.73)"
+              }}>
+                ⚠️ {installmentModal.error}
+              </div>
+            )}
+            <div className="modal-dialog__actions" style={{ marginTop: "1.5rem", display: "flex", gap: "12px" }}>
+              <GoldFxButton
+                type="button"
+                variant={installmentModal.mode === "pay" ? "gold" : "red"}
+                style={{ flex: 1, margin: 0 }}
+                disabled={installmentProcessing || (installmentModal.mode === "pay" && (installmentModal.loadingPreview || !installmentModal.preview || !!installmentModal.error))}
+                onClick={confirmInstallmentModal}
+              >
+                <span className="gold-fx-btn__label">
+                  {installmentProcessing ? "جاري التنفيذ..." : installmentModal.mode === "pay" ? "تأكيد التسديد" : "تأكيد إلغاء الدفعة"}
+                </span>
+              </GoldFxButton>
+              <GoldFxButton
+                type="button"
+                variant="gray"
+                style={{ flex: 1, margin: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.7)" }}
+                disabled={installmentProcessing}
+                onClick={() => setInstallmentModal(null)}
+              >
+                <span className="gold-fx-btn__label">إغلاق</span>
+              </GoldFxButton>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── نافذة إضافة / تحديث المعاملة ── */}
       {showTxModal && editingKey && (
         <div className="mb-overlay" role="presentation" onClick={() => setShowTxModal(false)}>
@@ -2904,7 +3524,7 @@ export function PartnersTab({
               <div style={{
                 margin: "0 0 1rem",
                 padding: "0.6rem",
-                borderRadius: "8px",
+                borderRadius: "var(--all-radius)",
                 textAlign: "center",
                 fontWeight: "var(--fw-bold)",
                 fontSize: "var(--fs-sm)",
@@ -2924,7 +3544,7 @@ export function PartnersTab({
               </div>
             )}
 
-            {form.kind === "زبون" && editingTransactionId && (
+            {form.kind === "زبون" && editingTransactionId && !isEditingSaleDownPayment && (
               <div style={{
                 display: "flex",
                 gap: "0.5rem",
@@ -3050,7 +3670,7 @@ export function PartnersTab({
                           padding: "10px 12px",
                           background: "rgba(255,255,255,0.03)",
                           border: "1px solid rgba(255,255,255,0.08)",
-                          borderRadius: "8px",
+                          borderRadius: "var(--all-radius)",
                           color: "var(--green)",
                           fontWeight: 700,
                           fontSize: "var(--fs-md)",
@@ -3177,7 +3797,7 @@ export function PartnersTab({
                           padding: "10px 12px",
                           background: "rgba(255,255,255,0.03)",
                           border: "1px solid rgba(255,255,255,0.08)",
-                          borderRadius: "8px",
+                          borderRadius: "var(--all-radius)",
                           color: "var(--green)",
                           fontWeight: 700,
                           fontSize: "var(--fs-md)",
@@ -3303,7 +3923,7 @@ export function PartnersTab({
                 type="button"
                 variant="green"
                 onClick={() => {
-                  runPrint(printFromDate || printToDate ? "range" : "all");
+                  void runPrint(printFromDate || printToDate ? "range" : "all");
                 }}
               >
                 <span className="gold-fx-btn__label">طباعة</span>
@@ -3318,19 +3938,6 @@ export function PartnersTab({
             </div>
           </div>
         </div>
-      )}
-
-      {partnerToView && (
-        <PartnerStatementPrint
-          partner={partnerToView}
-          transactions={transactions}
-          printMode={printMode}
-          printFromDate={printFromDate}
-          printToDate={printToDate}
-          muntasirPhone={muntasirPhone}
-          amirPhone={amirPhone}
-          paidTransactionIds={paidTransactionIds}
-        />
       )}
     </div>
   );

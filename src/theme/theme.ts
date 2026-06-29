@@ -56,6 +56,11 @@ export function syncThemeToCSS() {
   root.style.setProperty("--lable-opacity-inactive", String(MASTER_COLORS.lable_opacity_inactive));
   root.style.setProperty("--lable-opacity-hover", String(MASTER_COLORS.lable_opacity_hover));
   root.style.setProperty("--monsadilahbg", MASTER_COLORS.monsadilahbg);
+  root.style.setProperty("--background-secondary-blur", MASTER_COLORS.bg2blur);
+  root.style.setProperty("--background-secondary-saturate", MASTER_COLORS.bg2saturation);
+  root.style.setProperty("--glass-bg", THEME.colors.glass.bg);
+  root.style.setProperty("--glass-border", THEME.colors.glass.border);
+  root.style.setProperty("--glass-blur", THEME.colors.glass.blur);
 
   // Sync Status Colors
   root.style.setProperty("--red-600", THEME.colors.status.danger);
@@ -86,8 +91,17 @@ export function syncThemeToCSS() {
   root.style.setProperty("--fin-investor", THEME.colors.financial.investor);
   root.style.setProperty("--fin-partner", THEME.colors.financial.partner);
 
+  // Sync Company Status card colors
+  root.style.setProperty("--company-card-cash", THEME.colors.companyStatusCards.cash);
+  root.style.setProperty("--company-card-inventory", THEME.colors.companyStatusCards.inventory);
+  root.style.setProperty("--company-card-receivables", THEME.colors.companyStatusCards.receivables);
+  root.style.setProperty("--company-card-liabilities", THEME.colors.companyStatusCards.liabilities);
+  root.style.setProperty("--company-card-qasa", THEME.colors.companyStatusCards.qasa);
+  root.style.setProperty("--company-card-expenses", THEME.colors.companyStatusCards.expenses);
+  root.style.setProperty("--company-card-profit", THEME.colors.companyStatusCards.profit);
+  root.style.setProperty("--company-card-value", THEME.colors.companyStatusCards.companyValue);
+
   // Sync Border Radius Values
-  root.style.setProperty("--all-radius", THEME.radius.md);
   root.style.setProperty("--base-radius", THEME.radius.md);
   root.style.setProperty("--input-border-radius", THEME.radius.md);
   root.style.setProperty("--btn-radius", THEME.radius.md);

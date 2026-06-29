@@ -57,3 +57,12 @@ export const selectYearLastTwoDigits = (input: HTMLInputElement) => {
   const len = input.value.length;
   input.setSelectionRange(Math.max(0, len - 2), len);
 };
+
+export const formatDisplayDate = (isoDate: string): string => {
+  if (!isoDate) return "—";
+  const parts = isoDate.split("-");
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return isoDate;
+};

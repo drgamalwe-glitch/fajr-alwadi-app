@@ -42,15 +42,15 @@ export function formatNumber(amount: MoneyValue): string {
 
 export function computeDashboardStats(cars: Car[], partners: Partner[] = []) {
   const availableCars = cars.filter((c) => c.status === "متوفرة");
-  // Fixed: dashboard inventory/capital totals use Decimal and include available cars only.
-  const totalInventoryValue = moneySum(availableCars, (c) => c.purchase_price);
+  // Match Cars > المعروض totals: available cars only, purchase price plus car-specific expenses.
+  const totalInventoryValue = moneySum(availableCars, (c) => moneyAdd(c.purchase_price, c.expenses_sum || 0));
   const iqdInventory = moneySum(
     availableCars.filter((c) => c.currency !== "USD"),
-    (c) => c.purchase_price,
+    (c) => moneyAdd(c.purchase_price, c.expenses_sum || 0),
   );
   const usdInventory = moneySum(
     availableCars.filter((c) => c.currency === "USD"),
-    (c) => c.purchase_price,
+    (c) => moneyAdd(c.purchase_price, c.expenses_sum || 0),
   );
 
   const partnersTotal = moneySum(

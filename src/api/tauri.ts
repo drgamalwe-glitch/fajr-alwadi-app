@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Agency, AgencyTransaction, Car, CarFormState, CashRegisterEntry, ExpenseEntry, CarExpenseRecord, Partner, PartnerTransaction, CarPartner } from "../types";
-import { compareMoney, moneyAdd, moneyDiv, moneyMul, moneyNeg, moneySub, moneySum, toMoney, type MoneyInput, type MoneyValue } from "../utils/money";
+import { compareMoney, moneyAdd, moneyDiv, moneyMul, moneyNeg, moneySub, moneySum, moneyToStorage, toMoney, type MoneyInput, type MoneyValue } from "../utils/money";
+import { normalizePhoneNumber } from "../utils/numberInput";
 
 const isTauri = () =>
   typeof window !== "undefined" &&
@@ -14,6 +15,59 @@ function parseJsonArray<T>(raw: string | null): T[] {
   } catch {
     return [];
   }
+}
+
+const MONEY_ARG_KEYS = new Set([
+  "amount",
+  "actualPaidAmount",
+  "actual_paid_amount",
+  "amountIqd",
+  "amount_iqd",
+  "amountPaid",
+  "amount_paid",
+  "amountRemaining",
+  "amount_remaining",
+  "amountUsd",
+  "amount_usd",
+  "cashPrice",
+  "cash_price",
+  "commissionAmount",
+  "commission_amount",
+  "commissionValue",
+  "commission_value",
+  "credit",
+  "debit",
+  "monthlyPayment",
+  "monthly_payment",
+  "purchase",
+  "purchasePrice",
+  "purchase_price",
+  "selling",
+  "sellingPrice",
+  "selling_price",
+]);
+
+const PHONE_ARG_KEYS = new Set(["phone", "buyerPhone", "buyer_phone"]);
+
+function serializeTauriMoneyArgs(value: unknown, key?: string): unknown {
+  if (key && PHONE_ARG_KEYS.has(key) && typeof value === "string") {
+    return normalizePhoneNumber(value);
+  }
+  if (key && MONEY_ARG_KEYS.has(key)) {
+    return value === null || value === undefined ? value : moneyToStorage(value as MoneyInput);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => serializeTauriMoneyArgs(item));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([childKey, childValue]) => [
+        childKey,
+        serializeTauriMoneyArgs(childValue, childKey),
+      ]),
+    );
+  }
+  return value;
 }
 
 // Obfuscate / encrypt localStorage mock data in web simulation environment
@@ -116,7 +170,7 @@ function calculateCustomerRemaining(txns: PartnerTransaction[], currency?: "IQD"
   return moneySum(scoped.filter((tx) => isCustomerDebit(tx)), (tx) => tx.amount);
 }
 
-function mapMockCar(args: Record<string, unknown>): Car {
+function mapMockCar(args: any): Car {
   const status = (args.status as Car["status"]) ?? "متوفرة";
   const paymentType = (args.payment_type ?? args.paymentType) as Car["payment_type"] | undefined;
   const plateNum = String(args.num ?? "").trim();
@@ -168,8 +222,8 @@ function recalculateMockPartnerTotal(partnerName: string, kind: string) {
   if (pIdx < 0) return;
 
   partners[pIdx].total_amount = kind === "زبون" ? moneySum(txns.filter(tx => isCustomerDebit(tx)), (tx) => tx.amount) : txns.reduce((total, tx) => {
-      if (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة")) return moneyAdd(total, tx.amount);
-      if (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) return moneySub(total, tx.amount);
+    if (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة")) return moneyAdd(total, tx.amount);
+    if (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) return moneySub(total, tx.amount);
     return total;
   }, toMoney(0));
   localStorage.setItem("mock_partners", JSON.stringify(partners));
@@ -177,7 +231,7 @@ function recalculateMockPartnerTotal(partnerName: string, kind: string) {
 
 async function mockInvoke<T>(
   command: string,
-  args: Record<string, unknown> = {},
+  args: any = {},
 ): Promise<T> {
   const key = mockStorageKey(command);
 
@@ -302,8 +356,8 @@ async function mockInvoke<T>(
     for (const p of partners) {
       const txns = allTx.filter((t) => t.partner_name === p.partner_name && t.kind === p.kind);
       p.total_amount = p.kind === "زبون" ? calculateCustomerRemaining(txns) : txns.reduce((total, tx) => {
-          if (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة")) return moneyAdd(total, tx.amount);
-          if (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) return moneySub(total, tx.amount);
+        if (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة")) return moneyAdd(total, tx.amount);
+        if (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) return moneySub(total, tx.amount);
         return total;
       }, toMoney(0));
     }
@@ -470,7 +524,7 @@ async function mockInvoke<T>(
     const newTx = allTx[allTx.length - 1];
     const txId = newTx ? newTx.id : 0;
 
-    if (commissionAmount > 0) {
+    if (compareMoney(commissionAmount, 0) > 0) {
       const commissionCurrency = (args.commission_currency ?? args.commissionCurrency ?? "IQD") as string;
       await mockInvoke("add_expense", {
         description: "عمولة تسديد تمويل",
@@ -706,7 +760,7 @@ async function mockInvoke<T>(
         if (isMumuol) {
           if (tx.kind !== "ممول") continue;
         } else {
-          if (tx.type_.startsWith("سحب شراء سيارة") || tx.type_.startsWith("ايداع بيع سيارة") || tx.type_.startsWith("سحب مصروف") || tx.type_.startsWith("ايداع ارباح وكالة")) {
+          if (tx.type_.startsWith("سحب شراء") || tx.type_.startsWith("ايداع بيع سيارة") || tx.type_.startsWith("سحب مصروف") || tx.type_.startsWith("ايداع ارباح وكالة")) {
             continue;
           }
           if (filterType) {
@@ -900,7 +954,7 @@ async function mockInvoke<T>(
         return {
           ...e,
           description: String(args.description ?? ""),
-      amount: toMoney(args.amount),
+          amount: toMoney(args.amount),
           date: String(args.date ?? ""),
           notes: args.notes ? String(args.notes) : null,
           currency: (args.currency as string) || null,
@@ -944,6 +998,131 @@ async function mockInvoke<T>(
     return undefined as T;
   }
 
+  if (command === "get_profit_distribution_summary") {
+    const startDate = args.startDate ? String(args.startDate) : "1970-01-01";
+    const endDate = args.endDate ? String(args.endDate) : "9999-12-31";
+
+    const partners: Partner[] = JSON.parse(localStorage.getItem("mock_partners") ?? "[]");
+    const allTx: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
+    const expenses: ExpenseEntry[] = JSON.parse(localStorage.getItem("mock_expenses") ?? "[]");
+    const cars: Car[] = JSON.parse(localStorage.getItem("mock_cars") ?? "[]");
+    const carExpensesList: CarExpenseRecord[] = JSON.parse(localStorage.getItem("mock_car_expenses") ?? "[]");
+
+    let profitIqd = toMoney(0);
+    let profitUsd = toMoney(0);
+
+    for (const c of cars) {
+      if (c.status === "مبيوعة" && (c.payment_type || "كاش") === "كاش" && c.sale_date) {
+        if (c.sale_date >= startDate && c.sale_date <= endDate) {
+          const carExpenses = carExpensesList.filter((e) => e.car_number === c.car_number);
+          const expensesSum = moneySum(carExpenses, (e) => e.amount);
+          const totalCost = moneyAdd(c.purchase_price, expensesSum);
+          const carProfit = moneySub(c.selling_price, totalCost);
+          if (compareMoney(carProfit, 0) > 0) {
+            if (c.sale_currency === "USD") {
+              profitUsd = moneyAdd(profitUsd, carProfit);
+            } else {
+              profitIqd = moneyAdd(profitIqd, carProfit);
+            }
+          }
+        }
+      }
+    }
+
+    for (const tx of allTx) {
+      if (tx.kind === "زبون" && (tx.source_role === "cash_movement" || (tx.type_ || "").includes("تسديد") || (tx.type_ || "").includes("واصل"))) {
+        if (tx.date >= startDate && tx.date <= endDate) {
+          const carNumber = tx.related_source_id || (tx.notes ? tx.notes.match(/#بيع_سيارة_([^\s]+)/)?.[1] : null);
+          if (carNumber) {
+            const c = cars.find((car) => car.car_number === carNumber);
+            if (c && c.payment_type === "اقساط") {
+              const carExpenses = carExpensesList.filter((e) => e.car_number === c.car_number);
+              const expensesSum = moneySum(carExpenses, (e) => e.amount);
+              const totalCost = moneyAdd(c.purchase_price, expensesSum);
+              const fullProfit = moneySub(c.selling_price, totalCost);
+              if (compareMoney(fullProfit, 0) > 0 && compareMoney(c.selling_price, 0) > 0) {
+                const profitRatio = moneyDiv(fullProfit, c.selling_price);
+                const paymentProfit = moneyMul(tx.amount, profitRatio);
+                if (c.sale_currency === "USD") {
+                  profitUsd = moneyAdd(profitUsd, paymentProfit);
+                } else {
+                  profitIqd = moneyAdd(profitIqd, paymentProfit);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const agencies = parseJsonArray<Agency>(localStorage.getItem("mock_default"));
+    for (const a of agencies) {
+      if (a.date >= startDate && a.date <= endDate) {
+        if (compareMoney(a.amount_iqd, 0) > 0) {
+          profitIqd = moneyAdd(profitIqd, a.amount_iqd);
+        }
+        if (compareMoney(a.amount_usd, 0) > 0) {
+          profitUsd = moneyAdd(profitUsd, a.amount_usd);
+        }
+      }
+    }
+
+    let expensesIqd = toMoney(0);
+    let expensesUsd = toMoney(0);
+    for (const e of expenses) {
+      if (!e.car_number && e.date >= startDate && e.date <= endDate) {
+        if (e.currency === "USD") {
+          expensesUsd = moneyAdd(expensesUsd, e.amount);
+        } else {
+          expensesIqd = moneyAdd(expensesIqd, e.amount);
+        }
+      }
+    }
+
+    const sharikPartners = partners.filter((p) => p.kind === "شريك");
+    const partnersList = sharikPartners.map((p) => {
+      let drawingsIqd = toMoney(0);
+      let drawingsUsd = toMoney(0);
+      const partnerTx = allTx.filter(
+        (tx) =>
+          tx.partner_name === p.partner_name &&
+          tx.kind === "شريك" &&
+          tx.type_ === "سحب شريك" &&
+          tx.date >= startDate &&
+          tx.date <= endDate
+      );
+      for (const tx of partnerTx) {
+        if (tx.currency === "USD") {
+          drawingsUsd = moneyAdd(drawingsUsd, tx.amount);
+        } else {
+          drawingsIqd = moneyAdd(drawingsIqd, tx.amount);
+        }
+      }
+
+      return {
+        partner_name: p.partner_name,
+        profit_iqd: moneyDiv(profitIqd, 2),
+        profit_usd: moneyDiv(profitUsd, 2),
+        drawings_iqd: drawingsIqd,
+        drawings_usd: drawingsUsd,
+      };
+    });
+
+    const totalDrawingsIqd = moneySum(partnersList, (p) => p.drawings_iqd);
+    const totalDrawingsUsd = moneySum(partnersList, (p) => p.drawings_usd);
+
+    const undistributedIqd = moneySub(moneySub(profitIqd, totalDrawingsIqd), expensesIqd);
+    const undistributedUsd = moneySub(moneySub(profitUsd, totalDrawingsUsd), expensesUsd);
+
+    return {
+      undistributed_iqd: undistributedIqd,
+      undistributed_usd: undistributedUsd,
+      partners: partnersList,
+      expenses_iqd: expensesIqd,
+      expenses_usd: expensesUsd,
+    } as T;
+  }
+
   if (command === "get_financial_summary") {
     const paymentType = args.payment_type ? String(args.payment_type).trim() : null;
     const partners: Partner[] = JSON.parse(localStorage.getItem("mock_partners") ?? "[]");
@@ -975,13 +1154,13 @@ async function mockInvoke<T>(
       // Start with partner/investor/borrower transactions that go to this cash register
       for (const tx of allTx) {
         const txPaymentType = tx.paymentType || tx.payment_type || "قاصه";
-        const matchesType = !paymentType || 
-          ((paymentType === "قاصه" || paymentType === "قاصة") 
-            ? (txPaymentType === "قاصه" || txPaymentType === "قاصة") 
+        const matchesType = !paymentType ||
+          ((paymentType === "قاصه" || paymentType === "قاصة")
+            ? (txPaymentType === "قاصه" || txPaymentType === "قاصة")
             : txPaymentType === paymentType);
 
         if (!matchesType) continue;
-        if (tx.type_.startsWith("سحب شراء سيارة") || tx.type_.startsWith("ايداع بيع سيارة") || tx.type_.startsWith("سحب مصروف") || tx.type_.startsWith("ايداع ارباح وكالة")) {
+        if (tx.type_.startsWith("سحب شراء") || tx.type_.startsWith("ايداع بيع سيارة") || tx.type_.startsWith("سحب مصروف") || tx.type_.startsWith("ايداع ارباح وكالة")) {
           continue;
         }
 
@@ -1019,9 +1198,9 @@ async function mockInvoke<T>(
       // Add cash car sales and deduct cash car purchases
       for (const c of cars) {
         const carPaymentType = String(c.purchase_payment_type || "قاصه");
-        const matchesPurchaseType = !paymentType || 
-          ((paymentType === "قاصه" || paymentType === "قاصة") 
-            ? (carPaymentType === "قاصه" || carPaymentType === "قاصة") 
+        const matchesPurchaseType = !paymentType ||
+          ((paymentType === "قاصه" || paymentType === "قاصة")
+            ? (carPaymentType === "قاصه" || carPaymentType === "قاصة")
             : carPaymentType === paymentType);
 
         if (matchesPurchaseType && c.purchase_date && compareMoney(c.purchase_price, 0) > 0 && c.purchase_type !== "دين" && c.purchase_type !== "تمويل" && c.purchase_type !== "شركة") {
@@ -1031,9 +1210,9 @@ async function mockInvoke<T>(
         }
 
         const salePaymentType = String(c.sale_payment_type || c.payment_type || "قاصه");
-        const matchesSaleType = !paymentType || 
-          ((paymentType === "قاصه" || paymentType === "قاصة") 
-            ? (salePaymentType === "قاصه" || salePaymentType === "قاصة") 
+        const matchesSaleType = !paymentType ||
+          ((paymentType === "قاصه" || paymentType === "قاصة")
+            ? (salePaymentType === "قاصه" || salePaymentType === "قاصة")
             : salePaymentType === paymentType);
 
         if (matchesSaleType && c.status === "مبيوعة" && c.payment_type === "كاش" && c.sale_date) {
@@ -1163,8 +1342,8 @@ async function mockInvoke<T>(
       if (tx.kind === "شريك") {
         // For partners: deposits add, withdrawals subtract
         if (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة")
-            || tx.type_.startsWith("استلام") || tx.type_.startsWith("إستلام") || tx.type_.startsWith("تسديد")
-            || tx.type_.startsWith("إعادة استثمار") || tx.type_.startsWith("تسوية") || tx.type_.startsWith("دفعة")) {
+          || tx.type_.startsWith("استلام") || tx.type_.startsWith("إستلام") || tx.type_.startsWith("تسديد")
+          || tx.type_.startsWith("إعادة استثمار") || tx.type_.startsWith("تسوية") || tx.type_.startsWith("دفعة")) {
           amount = tx.amount;
         } else if (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) {
           amount = moneyNeg(tx.amount);
@@ -1333,7 +1512,22 @@ async function mockInvoke<T>(
   }
 
   if (command === "get_backgrounds") {
-    return ["/backgrounds/bg.jpg"] as unknown as T;
+    return [
+      "/backgrounds/bg.jpg",
+      "/backgrounds/bg1.jpg",
+      "/backgrounds/bg2.jpg",
+      "/backgrounds/b22g.jpg"
+    ] as unknown as T;
+  }
+
+  if (command === "get_selected_background") {
+    return (localStorage.getItem("app_selected_background") || "/backgrounds/bg.jpg") as unknown as T;
+  }
+
+  if (command === "set_selected_background") {
+    const background = String(args.background ?? "/backgrounds/bg.jpg");
+    localStorage.setItem("app_selected_background", background);
+    return background as unknown as T;
   }
 
   if (command === "rename_background") {
@@ -1367,6 +1561,78 @@ async function mockInvoke<T>(
   }
 
   if (command === "settle_company_through_funder") {
+    return undefined as T;
+  }
+
+  if (command === "update_customer_sale_down_payment") {
+    const allTx: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
+    const id = Number(args.transactionId ?? args.transaction_id);
+    const amount = toMoney(args.amount);
+    const date = String(args.date ?? "");
+    const notes = args.notes ? String(args.notes) : null;
+    const currency = (args.currency as string) || "IQD";
+    const paymentType = ((args.payment_type ?? args.paymentType ?? "قاصه") as string);
+
+    const tx = allTx.find((item) => item.id === id);
+    if (!tx) throw new Error("هذه الحركة ليست مقدمة بيع سيارة قابلة للتعديل");
+    const carNumber = (tx.related_source_id || tx.source_id?.split(":")[0] || "").trim();
+
+    const nextTx = allTx.map((item) =>
+      item.id === id
+        ? {
+          ...item,
+          amount,
+          date,
+          notes,
+          currency,
+          paymentType,
+          payment_type: paymentType,
+          type_: "مقدمة بيع سيارة",
+        }
+        : item,
+    );
+
+    if (carNumber) {
+      const cars: Car[] = JSON.parse(localStorage.getItem("mock_cars") ?? "[]");
+      const car = cars.find((item) => item.car_number === carNumber);
+      if (car) {
+        const schedule = nextTx.filter(
+          (item) =>
+            item.source_type === "customer_installment_schedule" &&
+            item.source_role === "installment_schedule" &&
+            item.related_source_id === carNumber,
+        );
+        const paid = schedule.filter((item) => item.type_.startsWith("واصل"));
+        const unpaid = schedule.filter((item) => !item.type_.startsWith("واصل"));
+        const paidTotal = moneySum(paid, (item) => item.actual_paid_amount ?? item.amount);
+        const remainingForUnpaid = Math.max(0, Number(car.selling_price || 0) - Number(amount) - Number(paidTotal));
+        const base = unpaid.length > 0 ? Math.floor(remainingForUnpaid / unpaid.length) : 0;
+        const last = unpaid.length > 0 ? remainingForUnpaid - base * (unpaid.length - 1) : 0;
+
+        let unpaidIndex = 0;
+        for (const item of nextTx) {
+          if (
+            item.source_type === "customer_installment_schedule" &&
+            item.source_role === "installment_schedule" &&
+            item.related_source_id === carNumber &&
+            !item.type_.startsWith("واصل")
+          ) {
+            const nextAmount = unpaidIndex === unpaid.length - 1 ? last : base;
+            item.amount = nextAmount;
+            item.original_amount = nextAmount;
+            item.current_amount = nextAmount;
+            unpaidIndex += 1;
+          }
+        }
+
+        car.amount_paid = moneyAdd(amount, paidTotal);
+        car.amount_remaining = Math.max(0, Number(car.selling_price || 0) - Number(car.amount_paid || 0));
+        localStorage.setItem("mock_cars", JSON.stringify(cars));
+      }
+    }
+
+    localStorage.setItem("mock_partner_transactions", JSON.stringify(nextTx));
+    recalculateMockPartnerTotal(String(args.customerName ?? args.customer_name ?? tx.partner_name), "زبون");
     return undefined as T;
   }
 
@@ -1404,7 +1670,7 @@ export function buildCarInvokeArgs(form: CarFormState) {
     installmentMonths: isInstallment ? months : null,
     monthlyPayment: isInstallment ? remaining / months : null,
     buyerName: isSold ? form.buyerName.trim() || null : null,
-    buyerPhone: isSold ? form.phone.trim() || null : null,
+    buyerPhone: isSold ? normalizePhoneNumber(form.phone) || null : null,
     purchaseDate: form.purchaseDate || null,
     purchasePaymentType: form.purchasePaymentType,
     saleDate: isSold ? form.saleDate || null : null,
@@ -1446,13 +1712,15 @@ export async function callTauri<T>(
   command: string,
   args: Record<string, unknown> = {},
 ): Promise<T> {
+  const serializedArgs = serializeTauriMoneyArgs(args) as Record<string, unknown>;
+
   if (isTauri()) {
-    return invoke<T>(command, args);
+    return invoke<T>(command, serializedArgs);
   }
 
   if (isE2E()) {
-    return e2eInvoke<T>(command, args);
+    return e2eInvoke<T>(command, serializedArgs);
   }
 
-  return mockInvoke<T>(command, args);
+  return mockInvoke<T>(command, serializedArgs);
 }

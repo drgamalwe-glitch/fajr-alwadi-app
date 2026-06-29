@@ -44,11 +44,11 @@
 :root {
   /* ═══ MASTER COLORS (Single Source of Truth) ═══ */
   --red: #aa0000ff;
+  --green: #22c55e;
   --gold: #d8a85a;
-  --bg2: #ffffff18;
+  --bg2: #ffffff0d;
   --black: #1a1a2e;
   --white: #ffffff;
-  --green: #22c55e;
   --barnamaj_hisabi: #ffffff;
   --red2: #960000ff;
   --border-master: #00000011;
@@ -63,7 +63,7 @@
 
   /* ═══ BACKGROUNDS ═══ */
   --background: url('/backgrounds/bg.jpg');
-  --background-overlay: rgba(60, 60, 60, 0.525);
+  --background-overlay: rgba(27, 27, 27, 0.379);
   /* لتغيير مستوى ألوان الخلفية (تفتيح/تعتيم أو تلوين: مثلاً rgba(0,0,0,0.3)) */
   --background-brightness: 1;
   /* لتغيير مستوى سطوع الصورة (مثلاً 0.8 لتعتيم الصورة) */
@@ -74,13 +74,13 @@
   --background-hue: 0deg;
   /* لتغيير درجة لون الصورة */
   --background-secondary: var(--bg2);
-  --background-secondary-blur: 20px;
-  --background-secondary-saturate: 100%;
+  --background-secondary-blur: 32px;
+  --background-secondary-saturate: 160%;
   --text-input: color-mix(in srgb, var(--bg2) 100%, transparent);
-  --hidod: 1px solid color-mix(in srgb, var(--black) 8%, transparent);
-  --jadawil-hidod: 1px solid color-mix(in srgb, var(--black) 4%, transparent);
+  --hidod: 1px solid color-mix(in srgb, var(--white) 10%, transparent);
+  --jadawil-hidod: 1px solid color-mix(in srgb, var(--white) 10%, transparent);
 
-  --all-radius: 12px;
+  --all-radius: 8px;
   --font-color: var(--white);
   --font-size: 1.3rem;
   --font-size2: 1.5rem;
@@ -114,12 +114,12 @@
   --active-color: var(--red);
 
   /* ═══ GLASS SYSTEM ═══ */
-  --glass-bg: color-mix(in srgb, var(--white) 55%, transparent);
-  --glass-bg-strong: color-mix(in srgb, var(--white) 72%, transparent);
-  --glass-bg-subtle: color-mix(in srgb, var(--white) 35%, transparent);
-  --glass-border: color-mix(in srgb, var(--white) 40%, transparent);
+  --glass-bg: color-mix(in srgb, var(--white) 5%, transparent);
+  --glass-bg-strong: color-mix(in srgb, var(--white) 5%, transparent);
+  --glass-bg-subtle: color-mix(in srgb, var(--white) 5%, transparent);
+  --glass-border: color-mix(in srgb, var(--white) 10%, transparent);
   --glass-border-light: color-mix(in srgb, var(--white) 25%, transparent);
-  --glass-blur: 20px;
+  --glass-blur: 32px;
 
   /* ═══ MODAL OVERLAY ═══ */
   --mb-overlay-bg: rgba(0, 0, 0, 0.55);
@@ -335,7 +335,7 @@
   --table-card-border: 1px solid color-mix(in srgb, var(--black) 8%, transparent);
   --table-dots-margin-top: -15px;
   --table-header-padding: 9.3px 14px;
-  --table-cell-padding: 9.3px 30px;
+  --table-cell-padding: 9px 30px;
   /* ═══ عرض و ارتفاع الجداول الجدول═══ */
 
   /* ═══ MODAL SYSTEM ═══ */
@@ -384,7 +384,7 @@
   /* ═══ FOOTER ═══ */
   --ft-bg: var(--background-secondary);
   --ft-blur: 20px;
-  --ft-radius: 16px;
+  --ft-radius: var(--all-radius);
   --ft-padding: 0 24px;
   --ft-height: 46px;
   --ft-shadow: 0 -2px 16px color-mix(in srgb, var(--black) 4%, transparent);
@@ -497,7 +497,7 @@
 
   /* ═══ SEARCHING ═══ */
   --srch-width: 650px;
-  --srch-radius: 20px;
+  --srch-radius: var(--all-radius);
   --srch-padding-top: 80px;
   --srch-gold: color-mix(in srgb, var(--gold) 50%, transparent);
   --srch-gold-solid: var(--gold);
@@ -923,8 +923,8 @@ textarea,
   max-width: 1000px;
   width: 150px;
   filter: none;
-  margin-top: -5px;
-  margin-bottom: 6px;
+  margin-top: 0px;
+  margin-bottom: 30px;
   /* اللوجو لوجو لوكو*/
 }
 
@@ -942,7 +942,7 @@ textarea,
   position: relative;
   width: 300px;
   margin: 0 auto;
-  height: 50px;
+  height: 65px;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1002,6 +1002,12 @@ textarea,
   border: var(--input-border-color) !important;
   border-radius: var(--input-border-radius) !important;
   box-sizing: border-box !important;
+}
+
+.input-has-error .app-input-wrapper-sm,
+.input-has-error .app-input-wrapper {
+  border: 1px solid rgba(239, 68, 68, 0.7) !important;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.3) !important;
 }
 
 .app-input-field {
@@ -1195,7 +1201,7 @@ div.border:has(> textarea.input--error) textarea {
 #financer-select.input--error {
   border: 2px solid #f43f5e !important;
   box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.25), 0 20px 50px -15px rgba(244, 63, 94, 0.15) !important;
-  border-radius: 12px !important;
+  border-radius: var(--all-radius) !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
@@ -1971,6 +1977,19 @@ body {
   overflow-y: auto !important;
 }
 
+.table-wrapper::-webkit-scrollbar,
+.table-container::-webkit-scrollbar,
+.batch-table-wrapper::-webkit-scrollbar {
+  display: none !important;
+}
+
+.table-wrapper,
+.table-container,
+.batch-table-wrapper {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
 .table-wrapper .data-table,
 .table-container .data-table {
   background: transparent !important;
@@ -2022,7 +2041,7 @@ body {
   margin-right: 8px;
   padding: 2px 8px;
   background: rgba(255, 255, 255, 0.07);
-  border-radius: 6px;
+  border-radius: var(--all-radius);
   font-size: 1.3rem;
   color: var(--textinputtext);
 }
@@ -2390,7 +2409,7 @@ body {
 .modal-dialog textarea.input {
   background: rgba(0, 0, 0, 0.02) !important;
   border: 1px solid rgba(0, 0, 0, 0.08) !important;
-  border-radius: 10px !important;
+  border-radius: var(--all-radius) !important;
   color: var(--text-primary) !important;
   padding: 10px 14px !important;
   font-family: inherit !important;
@@ -2485,13 +2504,13 @@ body {
 
 .modal-dialog--has-header .modal-dialog__body--scroll::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
+  border-radius: var(--all-radius);
 }
 
 .modal-info-card {
   background: rgba(97, 3, 11, 0.03) !important;
   border: 1px solid rgba(97, 3, 11, 0.08) !important;
-  border-radius: 12px !important;
+  border-radius: var(--all-radius) !important;
   padding: 1rem !important;
 }
 
@@ -2502,7 +2521,7 @@ body {
   padding: 10px 14px !important;
   background: rgba(0, 0, 0, 0.02) !important;
   border: 1px solid rgba(0, 0, 0, 0.06) !important;
-  border-radius: 10px !important;
+  border-radius: var(--all-radius) !important;
   cursor: pointer !important;
   color: var(--text-primary) !important;
   font-family: inherit !important;
@@ -3118,14 +3137,21 @@ select option {
   align-items: center;
   gap: 12px;
   padding: 10px 32px;
-  border-radius: 16px;
-  font-size: var(--fs-lg);
+  border-radius: var(--all-radius) !important;
+  font-size: var(--font-size) !important;
   font-weight: 900;
   letter-spacing: 0.06em;
   border: 2px solid;
   transition: all 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
   position: relative;
   overflow: hidden;
+}
+
+.badge--available,
+.badge--sold,
+.search-popup__item-status {
+  font-size: var(--font-size) !important;
+  border-radius: var(--all-radius) !important;
 }
 
 .car-status-badge::before {
@@ -3222,7 +3248,7 @@ select option {
   align-items: center;
   gap: 8px;
   padding: 5px 12px 5px 8px;
-  border-radius: 100px;
+  border-radius: var(--all-radius);
   border: 1px solid rgba(255, 255, 255, 0.08);
   cursor: pointer;
   transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -3247,7 +3273,7 @@ select option {
   content: '';
   position: absolute;
   inset: -1px;
-  border-radius: 100px;
+  border-radius: inherit;
   padding: 1px;
   background: linear-gradient(145deg, rgba(34, 197, 94, 0.40), transparent 60%);
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
@@ -3284,7 +3310,7 @@ select option {
   content: '';
   position: absolute;
   inset: -1px;
-  border-radius: 100px;
+  border-radius: inherit;
   padding: 1px;
   background: linear-gradient(145deg, rgba(239, 68, 68, 0.40), transparent 60%);
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
@@ -3322,7 +3348,7 @@ select option {
   position: relative;
   width: 40px;
   height: 22px;
-  border-radius: 11px;
+  border-radius: var(--all-radius);
   transition: all 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
   flex-shrink: 0;
   overflow: hidden;
@@ -3388,7 +3414,7 @@ select option {
 }
 
 .status-toggle__text {
-  font-size: 12px;
+  font-size: var(--font-size);
   font-weight: 700;
   letter-spacing: 0.3px;
   white-space: nowrap;
@@ -3456,7 +3482,7 @@ select option {
   flex-direction: column;
   background: radial-gradient(circle at var(--mx) var(--my), rgba(97, 3, 11, 0.18), transparent 34%), linear-gradient(145deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.045)), rgba(10, 11, 16, 0.80);
   border: 1px solid rgba(255, 255, 255, 0.13);
-  border-radius: 20px;
+  border-radius: var(--all-radius);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   box-shadow: 0 34px 120px rgba(0, 0, 0, 0.54), 0 0 80px rgba(97, 3, 11, 0.20), inset 0 1px 1px rgba(255, 255, 255, 0.12);
@@ -3487,7 +3513,7 @@ select option {
   width: 32px;
   height: 32px;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
+  border-radius: var(--all-radius);
   background: rgba(255, 255, 255, 0.06);
   color: rgba(255, 255, 255, 0.88);
   font-size: var(--fs-lg);
@@ -3559,7 +3585,7 @@ select option {
   justify-content: center !important;
   background: rgba(34, 197, 94, 0.06) !important;
   border: 1px solid rgba(34, 197, 94, 0.2) !important;
-  border-radius: 12px !important;
+  border-radius: var(--all-radius) !important;
   box-shadow: none !important;
   overflow: hidden;
   cursor: pointer;
@@ -3590,7 +3616,7 @@ select option {
   justify-content: center !important;
   background: rgba(216, 168, 90, 0.06) !important;
   border: 1px solid rgba(216, 168, 90, 0.2) !important;
-  border-radius: 12px !important;
+  border-radius: var(--all-radius) !important;
   box-shadow: none !important;
   overflow: hidden;
   cursor: pointer;
@@ -3826,7 +3852,7 @@ select option {
   justify-content: center;
   width: 38px;
   height: 38px;
-  border-radius: 11px;
+  border-radius: var(--all-radius);
   background: var(--dc-card-icon-bg, rgba(255, 255, 255, 0.07));
   border: 1px solid color-mix(in srgb, var(--dc-card-accent) 22%, transparent);
   color: var(--dc-card-accent);
@@ -3944,7 +3970,7 @@ select option {
 
 .dashboard .dashboard-scroll-list::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
+  border-radius: var(--all-radius);
 }
 
 .dashboard .dashboard-scroll-list::-webkit-scrollbar-thumb:hover {
@@ -4258,7 +4284,7 @@ textarea::placeholder {
   height: var(--shared-height, 60px) !important;
   border: var(--border) !important;
   background: var(--textinputbg) !important;
-  border-radius: 12px !important;
+  border-radius: var(--all-radius) !important;
   box-shadow: none !important;
   font-size: var(--font-size) !important;
   font-weight: 800 !important;
@@ -4297,7 +4323,7 @@ textarea::placeholder {
   height: var(--shared-height, 60px);
   padding: 0 1rem;
   border: 1px solid var(--textinputborder);
-  border-radius: 12px;
+  border-radius: var(--all-radius);
   background: var(--textinputbg);
   color: var(--textinputtext);
   font-size: var(--font-size) !important;
@@ -4521,7 +4547,7 @@ textarea::placeholder {
 
 .combobox-dropdown-inner::-webkit-scrollbar-thumb {
   background: var(--cmb-gold);
-  border-radius: 20px;
+  border-radius: var(--all-radius);
 }
 
 .combobox-option {
@@ -4639,7 +4665,7 @@ textarea::placeholder {
   font-size: var(--srch-font-sub);
   font-weight: 700;
   padding: 2px 10px;
-  border-radius: 20px;
+  border-radius: var(--all-radius);
   border: 1px solid rgba(212, 175, 55, 0.25);
 }
 
@@ -4650,7 +4676,7 @@ textarea::placeholder {
   font-size: 1rem;
   cursor: pointer;
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: var(--all-radius);
   transition: color 0.18s, background 0.18s;
   line-height: 1;
 }
@@ -4709,7 +4735,7 @@ textarea::placeholder {
   font-size: 0.85rem;
   cursor: pointer;
   padding: 4px 7px;
-  border-radius: 6px;
+  border-radius: var(--all-radius);
   transition: color 0.18s, background 0.18s;
   line-height: 1;
 }
@@ -4736,7 +4762,7 @@ textarea::placeholder {
 
 .search-popup__results::-webkit-scrollbar-thumb {
   background: var(--srch-gold);
-  border-radius: 20px;
+  border-radius: var(--all-radius);
 }
 
 .search-popup__list {
@@ -4751,7 +4777,7 @@ textarea::placeholder {
 .search-popup__item {
   padding: 10px 16px;
   cursor: pointer;
-  border-radius: 10px;
+  border-radius: var(--all-radius);
   border-right: var(--srch-border-item);
   transition: background 0.15s, border-color 0.15s, padding-right 0.15s;
   direction: rtl;
@@ -4792,14 +4818,14 @@ textarea::placeholder {
   color: var(--srch-color-muted);
   background: rgba(255, 255, 255, 0.06);
   padding: 1px 7px;
-  border-radius: 10px;
+  border-radius: var(--all-radius);
 }
 
 .search-popup__item-status {
   font-size: 0.82rem;
   font-weight: 800;
   padding: 4px 14px;
-  border-radius: 10px;
+  border-radius: var(--all-radius);
   margin-right: auto;
   margin-top: 4px;
   letter-spacing: 0.02em;
@@ -4850,7 +4876,7 @@ textarea::placeholder {
 .search-popup__mark {
   background: var(--srch-mark-bg);
   color: var(--srch-mark-color);
-  border-radius: 3px;
+  border-radius: var(--all-radius);
   padding: 0 2px;
   font-weight: 700;
 }
@@ -4915,6 +4941,7 @@ textarea::placeholder {
   align-items: center;
   justify-content: center;
   padding: 20px;
+  overflow: auto !important;
   animation: mb-overlay-in var(--mb-anim-duration) ease-out;
 }
 
@@ -4953,6 +4980,8 @@ textarea::placeholder {
 
 .mb-dialog>.form {
   padding: 0 32px 28px;
+  overflow-y: auto !important;
+  min-height: 0;
 }
 
 .mb-dialog .mb-title {
@@ -5022,7 +5051,7 @@ textarea::placeholder {
   justify-content: center;
   width: 34px;
   height: 34px;
-  border-radius: 10px;
+  border-radius: var(--all-radius);
   background: rgba(var(--mb-accent-rgb), 0.1);
   border: 1px solid rgba(var(--mb-accent-rgb), 0.18);
   color: var(--mb-accent);
@@ -5032,7 +5061,7 @@ textarea::placeholder {
 .mb-dialog__close {
   width: 32px;
   height: 32px;
-  border-radius: 10px;
+  border-radius: var(--all-radius);
   border: var(--mb-close-border);
   background: var(--mb-close-bg);
   color: var(--mb-close-color);
@@ -5073,7 +5102,7 @@ textarea::placeholder {
 
 .mb-dialog__body::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
+  border-radius: var(--all-radius);
 }
 
 .mb-section {
@@ -5090,7 +5119,7 @@ textarea::placeholder {
   color: var(--labletext);
   background: var(--lable-bg);
   padding: 8px 14px;
-  border-radius: 8px;
+  border-radius: var(--all-radius);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -5232,7 +5261,7 @@ textarea::placeholder {
   padding: 0 42px 0 42px;
   background: var(--textinputbg);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
+  border-radius: var(--all-radius);
   color: var(--textinputtext);
   font-family: inherit;
   font-size: 1.1rem;
@@ -5260,7 +5289,7 @@ textarea::placeholder {
   transform: translateY(-50%);
   width: 26px;
   height: 26px;
-  border-radius: 8px;
+  border-radius: var(--all-radius);
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.04);
   color: var(--mb-text-muted);
@@ -5284,7 +5313,7 @@ textarea::placeholder {
   min-width: 24px;
   height: 24px;
   padding: 0 8px;
-  border-radius: 8px;
+  border-radius: var(--all-radius);
   background: rgba(var(--mb-accent-rgb), 0.12);
   color: var(--mb-accent);
   font-size: 0.78rem;
@@ -5307,7 +5336,7 @@ textarea::placeholder {
 
 .mb-search__results::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
+  border-radius: var(--all-radius);
 }
 
 .mb-search__list {
@@ -5321,7 +5350,7 @@ textarea::placeholder {
   flex-direction: column;
   gap: 4px;
   padding: 12px 16px;
-  border-radius: 12px;
+  border-radius: var(--all-radius);
   border-right: var(--mb-search-result-border);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, padding-right 0.15s;
@@ -5365,7 +5394,7 @@ textarea::placeholder {
 .mb-search__mark {
   background: var(--mb-search-mark-bg);
   color: var(--mb-search-mark-color);
-  border-radius: 3px;
+  border-radius: var(--all-radius);
   padding: 0 2px;
   font-weight: 800;
 }
@@ -5399,14 +5428,14 @@ textarea::placeholder {
   padding: 4px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 10px;
+  border-radius: var(--all-radius);
 }
 
 .mb-currency-btn {
   flex: 1;
   padding: 8px 14px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--all-radius);
   font-family: inherit;
   font-size: 0.82rem;
   font-weight: 800;
@@ -5426,7 +5455,7 @@ textarea::placeholder {
   .mb-dialog {
     max-width: 100%;
     margin: 10px;
-    border-radius: 16px;
+    border-radius: var(--all-radius);
   }
 
   .mb-dialog__header {
@@ -5456,7 +5485,7 @@ textarea::placeholder {
 
 .tx-badge {
   padding: 0.15rem 0.6rem;
-  border-radius: 6px;
+  border-radius: var(--all-radius);
   font-size: var(--fs-xs);
   font-weight: var(--fw-medium);
   display: inline-block;
@@ -5571,7 +5600,7 @@ textarea::placeholder {
   background: linear-gradient(145deg, rgba(30, 30, 40, 0.18), rgba(10, 12, 18, 0.08)) !important;
   backdrop-filter: blur(28px) saturate(140%) !important;
   -webkit-backdrop-filter: blur(28px) saturate(140%) !important;
-  border-radius: 20px !important;
+  border-radius: var(--all-radius) !important;
   border: 1px solid rgba(255, 255, 255, 0.075) !important;
   padding: 18px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
@@ -5582,10 +5611,15 @@ textarea::placeholder {
 .wadhisharikah-container .company-value {
   position: relative;
   overflow: hidden;
+  display: flex;
+  min-height: 200px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   margin-bottom: 14px;
-  padding: 18px 18px 16px;
-  border-radius: 18px;
+  padding: 24px 18px;
+  border-radius: var(--all-radius);
   background: rgba(30, 30, 40, 0.16);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -5597,10 +5631,10 @@ textarea::placeholder {
   content: "";
   position: absolute;
   inset: 0;
-  border-radius: 18px;
+  border-radius: var(--all-radius);
   background: radial-gradient(ellipse 120% 50% at 50% 100%,
-      rgba(216, 168, 90, 0.15) 0%,
-      rgba(216, 168, 90, 0.04) 30%,
+      color-mix(in srgb, var(--company-card-value, #eab308) 16%, transparent) 0%,
+      color-mix(in srgb, var(--company-card-value, #eab308) 4%, transparent) 32%,
       transparent 70%);
   pointer-events: none;
   z-index: 0;
@@ -5625,7 +5659,25 @@ textarea::placeholder {
   font-weight: 800;
   color: #ffffff;
   line-height: 1.1;
+  text-align: center;
   text-shadow: 0 0 40px rgba(255, 255, 255, 0.08);
+}
+
+.wadhisharikah-container .company-value .company-value__amount--negative {
+  color: #ef4444;
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  text-shadow: 0 0 34px rgba(239, 68, 68, 0.22);
+}
+
+.wadhisharikah-container .company-value .company-value__negative-label {
+  font-size: 0.72em;
+  font-weight: 900;
+  line-height: 1;
+  color: #ef4444;
 }
 
 .wadhisharikah-container .company-value .currency {
@@ -5663,7 +5715,7 @@ textarea::placeholder {
 .company-value__chips span {
   min-width: 0;
   padding: 7px 9px;
-  border-radius: 12px;
+  border-radius: var(--all-radius);
   background: rgba(255, 255, 255, 0.045);
   border: 1px solid rgba(255, 255, 255, 0.06);
   color: rgba(255, 255, 255, 0.74);
@@ -5704,7 +5756,7 @@ textarea::placeholder {
   align-items: center;
   justify-content: flex-start;
   padding: 22px 18px;
-  border-radius: 18px;
+  border-radius: var(--all-radius);
   background: rgba(30, 30, 40, 0.14);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -5718,7 +5770,7 @@ textarea::placeholder {
   content: "";
   position: absolute;
   inset: 0;
-  border-radius: 18px;
+  border-radius: var(--all-radius);
   background: radial-gradient(ellipse 140% 55% at 50% 100%,
       color-mix(in srgb, var(--partner-card-color) 20%, transparent) 0%,
       color-mix(in srgb, var(--partner-card-color) 5%, transparent) 30%,
@@ -5856,6 +5908,14 @@ textarea::placeholder {
   margin-top: 10px;
 }
 
+.wadhisharikah-container .company-status-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: minmax(132px, auto);
+  gap: 12px;
+  direction: rtl;
+}
+
 /* Unified Card structure in Company Status Tab */
 .wadhisharikah-container .card {
   position: relative;
@@ -5864,17 +5924,18 @@ textarea::placeholder {
   flex-direction: column;
   align-items: stretch;
   justify-content: space-between;
-  min-height: 130px;
-  padding: 14px;
-  border-radius: 18px;
+  min-height: 132px;
+  padding: 16px;
+  border-radius: var(--all-radius);
   background: rgba(30, 30, 40, 0.14);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: none;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.045);
   transition:
-    transform 0.4s cubic-bezier(0.25, 1, 0.5, 1),
-    border-color 0.4s ease;
+    transform 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.35s ease,
+    box-shadow 0.35s ease;
   animation: card-fade-in-up var(--card-entry-duration) var(--card-transition-easing) both;
 }
 
@@ -5882,10 +5943,10 @@ textarea::placeholder {
   content: "";
   position: absolute;
   inset: 0;
-  border-radius: 18px;
+  border-radius: var(--all-radius);
   background: radial-gradient(ellipse 140% 55% at 50% 100%,
-      color-mix(in srgb, var(--card-color) 25%, transparent) 0%,
-      color-mix(in srgb, var(--card-color) 6%, transparent) 30%,
+      color-mix(in srgb, var(--card-color) 22%, transparent) 0%,
+      color-mix(in srgb, var(--card-color) 5%, transparent) 32%,
       transparent 70%);
   pointer-events: none;
   z-index: 0;
@@ -5902,58 +5963,65 @@ textarea::placeholder {
 }
 
 .wadhisharikah-container .card:hover {
-  transform: translateY(-8px);
-  border-color: color-mix(in srgb, var(--card-color) 50%, transparent) !important;
+  transform: translateY(-4px);
+  border-color: color-mix(in srgb, var(--card-color) 42%, transparent) !important;
+  box-shadow: 0 20px 46px rgba(0, 0, 0, 0.22), 0 0 28px color-mix(in srgb, var(--card-color) 10%, transparent);
 }
 
 /* Individual card definitions */
 
-/* 1. Capital Card (الكاش) */
+/* 1. Cash Card (الكاش) */
+.wadhisharikah-container .card.cash-tall,
 .wadhisharikah-container .card.capital {
-  --card-color: #d8a85a;
-  border-color: rgba(216, 168, 90, 0.12);
+  --card-color: var(--company-card-cash, #14b8a6);
+  grid-row: span 2;
+  min-height: 276px;
+  border-color: color-mix(in srgb, var(--card-color) 16%, transparent);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--card-color) 10%, transparent), rgba(30, 30, 40, 0.14)),
+    rgba(30, 30, 40, 0.14);
 }
 
 /* 2. Cars Inventory Card (قيمة السيارات) */
 .wadhisharikah-container .card.cars {
-  --card-color: #06b6d4;
-  border-color: rgba(6, 182, 212, 0.12);
+  --card-color: var(--company-card-inventory, #38bdf8);
+  border-color: color-mix(in srgb, var(--card-color) 16%, transparent);
 }
 
 /* 3. Payable Card (نطلب) */
 .wadhisharikah-container .card.payable {
-  --card-color: #10b981;
-  border-color: rgba(16, 185, 129, 0.12);
+  --card-color: var(--company-card-receivables, #84cc16);
+  border-color: color-mix(in srgb, var(--card-color) 16%, transparent);
 }
 
 /* 4. Receivable Card (مطلوبين) */
 .wadhisharikah-container .card.receivable {
-  --card-color: #dc2626;
-  border-color: rgba(220, 38, 38, 0.12);
+  --card-color: var(--company-card-liabilities, #f43f5e);
+  border-color: color-mix(in srgb, var(--card-color) 16%, transparent);
 }
 
 /* 5. Qasa Card (القاصة) - Bottom row */
 .wadhisharikah-container .card.qasa-bottom {
-  --card-color: #e2e8f0;
-  border-color: rgba(226, 232, 240, 0.12);
+  --card-color: var(--company-card-qasa, #a78bfa);
+  border-color: color-mix(in srgb, var(--card-color) 16%, transparent);
 }
 
 /* 6. Cash Card (الكاش) - Bottom row */
 .wadhisharikah-container .card.cash-bottom {
-  --card-color: #22c55e;
-  border-color: rgba(34, 197, 94, 0.12);
+  --card-color: var(--company-card-cash, #14b8a6);
+  border-color: color-mix(in srgb, var(--card-color) 16%, transparent);
 }
 
 /* 7. Expenses Card (المصروفات) */
 .wadhisharikah-container .card.expenses {
-  --card-color: #ea580c;
-  border-color: rgba(234, 88, 12, 0.12);
+  --card-color: var(--company-card-expenses, #f97316);
+  border-color: color-mix(in srgb, var(--card-color) 16%, transparent);
 }
 
 /* 8. Profit Card (صافي الأرباح) - Bottom row */
 .wadhisharikah-container .card.profit-bottom {
-  --card-color: #10b981;
-  border-color: rgba(16, 185, 129, 0.12);
+  --card-color: var(--company-card-profit, #22c55e);
+  border-color: color-mix(in srgb, var(--card-color) 16%, transparent);
 }
 
 .wadhisharikah-container .card-labels {
@@ -5990,6 +6058,24 @@ textarea::placeholder {
   flex: 1;
 }
 
+.wadhisharikah-container .card.cash-tall .card-labels {
+  align-items: center;
+}
+
+.wadhisharikah-container .card.cash-tall .label {
+  font-size: calc(var(--card-title-size) * 1.1) !important;
+}
+
+.wadhisharikah-container .card.cash-tall .card-values {
+  justify-content: center;
+  gap: 10px;
+}
+
+.wadhisharikah-container .card.cash-tall .number,
+.wadhisharikah-container .card.cash-tall .card-sub-val {
+  font-size: calc(var(--card-value-size) * 1.15) !important;
+}
+
 .wadhisharikah-container .number {
   font-size: var(--card-value-size) !important;
   font-weight: 800;
@@ -6014,6 +6100,24 @@ textarea::placeholder {
 .wadhisharikah-container .card-currency-usd {
   font-size: var(--card-iq-size);
   opacity: 1;
+}
+
+@media (max-width: 1100px) {
+  .wadhisharikah-container .company-status-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .wadhisharikah-container .company-status-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .wadhisharikah-container .card.cash-tall,
+  .wadhisharikah-container .card.capital {
+    grid-row: span 1;
+    min-height: 160px;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
@@ -6106,7 +6210,7 @@ textarea::placeholder {
   height: var(--agency-rect-height);
   background: var(--agency-card-bg);
   border: 1px solid var(--agency-card-border);
-  border-radius: 10px;
+  border-radius: var(--all-radius);
   display: flex;
   align-items: center;
   overflow: hidden;
@@ -6254,7 +6358,7 @@ textarea::placeholder {
   width: 52px;
   height: 28px;
   background: var(--green, #16a34a);
-  border-radius: 28px;
+  border-radius: var(--all-radius);
   transition: background 0.25s;
   flex-shrink: 0;
 }
@@ -6459,7 +6563,7 @@ textarea::placeholder {
   width: 32px;
   height: 32px;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
+  border-radius: var(--all-radius);
   background: rgba(255, 255, 255, 0.06);
   color: rgba(255, 255, 255, 0.88);
   font-size: var(--fs-lg);
@@ -6523,7 +6627,7 @@ textarea::placeholder {
   min-height: 40px !important;
   padding: 6px 10px !important;
   font-size: var(--fs-base) !important;
-  border-radius: 10px !important;
+  border-radius: var(--all-radius) !important;
   text-align: center !important;
   border: 1px solid rgba(71, 85, 105, 0.6) !important;
 }
@@ -6561,7 +6665,7 @@ textarea::placeholder {
   width: 100%;
   max-width: 100%;
   padding: 14px 20px 16px;
-  border-radius: 14px;
+  border-radius: var(--all-radius);
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.08), 0 12px 36px rgba(0, 0, 0, 0.18);
 }
@@ -6877,7 +6981,7 @@ textarea::placeholder {
   font-size: var(--fs-xs);
   font-weight: var(--fw-medium);
   padding: 6px 14px;
-  border-radius: 20px;
+  border-radius: var(--all-radius);
   background: rgba(200, 200, 220, 0.06);
   border: 1px solid rgba(200, 200, 220, 0.12);
   color: rgba(200, 200, 220, 0.5);
@@ -6906,7 +7010,7 @@ textarea::placeholder {
   max-width: 128px;
   background: rgba(85, 245, 170, 0.06);
   border: 1px solid rgba(85, 245, 170, 0.15);
-  border-radius: 8px;
+  border-radius: var(--all-radius);
   padding: 4px 6px;
 }
 
@@ -7068,7 +7172,7 @@ textarea::placeholder {
   justify-content: space-between;
   align-items: center;
   background: rgba(255, 255, 255, 0.03);
-  border-radius: 14px 14px 0 0;
+  border-radius: var(--all-radius) var(--all-radius) 0 0;
   flex-shrink: 0;
 }
 
@@ -7083,7 +7187,7 @@ textarea::placeholder {
   background: color-mix(in srgb, var(--smiles-bg), transparent 94%);
   border: 1px solid color-mix(in srgb, var(--smiles-bg), transparent 82%);
   color: var(--smiles);
-  border-radius: 10px;
+  border-radius: var(--all-radius);
   font-size: var(--fs-lg);
   line-height: 1;
 }
@@ -7108,7 +7212,7 @@ textarea::placeholder {
   color: rgba(255, 255, 255, 0.48);
   cursor: pointer;
   padding: 8px;
-  border-radius: 8px;
+  border-radius: var(--all-radius);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -7169,7 +7273,7 @@ textarea::placeholder {
   flex: 1;
   padding: 7px 16px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--all-radius);
   background: transparent;
   color: var(--text-muted);
   font-size: var(--fs-base);
@@ -7356,7 +7460,7 @@ textarea::placeholder {
   display: flex;
   gap: 2px;
   background: rgba(0, 0, 0, 0.20);
-  border-radius: 5px;
+  border-radius: var(--all-radius);
   padding: 2px;
 }
 
@@ -7365,7 +7469,7 @@ textarea::placeholder {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--all-radius);
   padding: 3px 7px;
   font-size: var(--fs-xs);
   font-weight: var(--fw-bold);
@@ -7459,7 +7563,7 @@ textarea::placeholder {
   gap: 12px;
   padding: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  border-radius: var(--all-radius);
   background: rgba(255, 255, 255, 0.035);
 }
 
@@ -7516,7 +7620,7 @@ textarea::placeholder {
   padding: 10px 12px;
   background: rgba(255, 255, 255, 0.045);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
+  border-radius: var(--all-radius);
 }
 
 .partner-summary-field__label {
@@ -7556,7 +7660,7 @@ textarea::placeholder {
   margin-bottom: 10px;
   background: rgba(255, 255, 255, 0.055);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  border-radius: var(--all-radius);
 }
 
 .sidebar-form-actions {
@@ -7588,7 +7692,7 @@ textarea::placeholder {
   direction: rtl;
   padding: 14px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  border-radius: var(--all-radius);
   background: radial-gradient(220px circle at 50% 0%, rgba(97, 3, 11, 0.16), transparent 62%), rgba(255, 255, 255, 0.035);
   transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
 }
@@ -7611,7 +7715,7 @@ textarea::placeholder {
   gap: 10px;
   padding: 14px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  border-radius: var(--all-radius);
   background: rgba(255, 255, 255, 0.035);
 }
 
@@ -7812,7 +7916,7 @@ textarea::placeholder {
   cursor: pointer;
   font-size: var(--fs-sm);
   padding: 3px 5px;
-  border-radius: 4px;
+  border-radius: var(--all-radius);
   line-height: 1;
   transition: all 0.15s ease;
 }
@@ -7841,7 +7945,7 @@ textarea::placeholder {
   font-weight: var(--fw-bold);
   font-size: var(--fs-xs);
   padding: 2px 10px;
-  border-radius: 10px;
+  border-radius: var(--all-radius);
   letter-spacing: 0.3px;
 }
 
@@ -8014,7 +8118,7 @@ textarea::placeholder {
   flex-direction: column;
   background: radial-gradient(circle at var(--mx) var(--my), rgba(97, 3, 11, 0.18), transparent 34%), linear-gradient(145deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.030)), rgba(10, 11, 16, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.10);
-  border-radius: 14px;
+  border-radius: var(--all-radius);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48), inset 0 1px 1px rgba(255, 255, 255, 0.10);
   transition: all 0.2s;
   animation: fadeIn 0.2s ease-out;
@@ -8027,7 +8131,7 @@ textarea::placeholder {
   padding: 14px 24px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.035);
-  border-radius: 14px 14px 0 0;
+  border-radius: var(--all-radius) var(--all-radius) 0 0;
   flex-shrink: 0;
 }
 
@@ -8057,7 +8161,7 @@ textarea::placeholder {
   width: 32px;
   height: 32px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--all-radius);
   background: transparent;
   color: rgba(255, 255, 255, 0.55);
   cursor: pointer;
@@ -8105,7 +8209,7 @@ textarea::placeholder {
   padding: 14px 24px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.035);
-  border-radius: 0 0 14px 14px;
+  border-radius: 0 0 var(--all-radius) var(--all-radius);
   flex-shrink: 0;
 }
 
@@ -8553,36 +8657,69 @@ textarea::placeholder {
   min-width: 0;
 }
 
+.cars-data-table .cell-num {
+  width: 24px !important;
+}
+
 .cars-data-table .ct-num {
-  width: 10%;
+  width: 15%;
 }
 
 .cars-data-table .ct-model {
-  width: 14%;
-}
-
-.cars-data-table .ct-year {
-  width: 7%;
-}
-
-.cars-data-table .ct-chassis {
   width: 20%;
 }
 
-.cars-data-table .ct-color {
-  width: 7%;
-}
-
-.cars-data-table .ct-price {
+.cars-data-table .ct-year {
   width: 10%;
 }
 
+.cars-data-table .ct-chassis {
+  width: 25%;
+}
+
+.cars-data-table .ct-color {
+  width: 10%;
+}
+
+.cars-data-table .ct-price {
+  width: 15%;
+}
+
 .cars-data-table .ct-profit {
-  width: 14%;
+  width: 15%;
+}
+
+.cars-data-table .ct-buyer {
+  width: 20%;
 }
 
 .cars-data-table .ct-delete {
   width: 5%;
+}
+
+/* ── OVERRIDES FOR SOLD TAB (المباع) IN GALLERY ── */
+.cars-page[data-active-tab="sold"] .cars-data-table .ct-model {
+  width: 20% !important;
+}
+
+.cars-page[data-active-tab="sold"] .cars-data-table .ct-num {
+  width: 9% !important;
+}
+
+.cars-page[data-active-tab="sold"] .cars-data-table .ct-chassis {
+  width: 20% !important;
+}
+
+.cars-page[data-active-tab="sold"] .cars-data-table .ct-price {
+  width: 9% !important;
+}
+
+.cars-page[data-active-tab="sold"] .cars-data-table .ct-profit {
+  width: 9% !important;
+}
+
+.cars-page[data-active-tab="sold"] .cars-data-table .ct-buyer {
+  width: 40% !important;
 }
 
 .ct-num {
@@ -9007,7 +9144,7 @@ textarea::placeholder {
     min-height: 36px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.10);
-    border-radius: 8px;
+    border-radius: var(--all-radius);
     padding: 2px 10px;
     transition: border-color 0.2s, box-shadow 0.2s;
   }
@@ -9238,7 +9375,7 @@ textarea::placeholder {
 
   .car-modal {
     max-height: calc(100vh - 28px);
-    border-radius: 12px;
+    border-radius: var(--all-radius);
   }
 
   .car-modal__header {
@@ -9354,7 +9491,7 @@ textarea::placeholder {
     flex-direction: column !important;
     gap: 6px !important;
     padding: 14px 18px !important;
-    border-radius: 12px !important;
+    border-radius: var(--all-radius) !important;
     background: rgba(255, 255, 255, 0.02) !important;
     border: 1px solid rgba(255, 255, 255, 0.05) !important;
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
@@ -9417,7 +9554,7 @@ textarea::placeholder {
     flex-direction: column !important;
     margin-top: 12px !important;
     padding: 20px !important;
-    border-radius: 16px !important;
+    border-radius: var(--all-radius) !important;
     background: rgba(255, 255, 255, 0.015) !important;
     border: 1px solid rgba(255, 255, 255, 0.05) !important;
   }
@@ -9434,7 +9571,7 @@ textarea::placeholder {
     flex: 1 !important;
     overflow-y: auto !important;
     margin-top: 10px !important;
-    border-radius: 12px !important;
+    border-radius: var(--all-radius) !important;
     border: 1px solid rgba(255, 255, 255, 0.04) !important;
     background: rgba(0, 0, 0, 0.2) !important;
   }
@@ -9755,7 +9892,7 @@ textarea::placeholder {
   border: 1px solid rgba(255, 255, 255, 0.13);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  border-radius: var(--r-lg, 16px);
+  border-radius: var(--r-lg, var(--all-radius));
   box-shadow: none;
   overflow: hidden;
 }
@@ -9810,7 +9947,7 @@ textarea::placeholder {
 
 .account-badge {
   padding: 0.15rem 0.5rem;
-  border-radius: 6px;
+  border-radius: var(--all-radius);
   font-size: var(--fs-xs);
   font-weight: var(--fw-medium);
   display: inline-block;
@@ -9845,7 +9982,7 @@ textarea::placeholder {
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 .customers-page .stat-card {
-  border-radius: 12px !important;
+  border-radius: var(--all-radius) !important;
   padding: 1.5rem 2rem !important;
   backdrop-filter: blur(12px) !important;
 }
@@ -9868,7 +10005,7 @@ textarea::placeholder {
 
 .account-badge {
   padding: 2px 8px !important;
-  border-radius: 6px !important;
+  border-radius: var(--all-radius) !important;
   font-size: var(--fs-xs) !important;
   font-weight: var(--fw-bold) !important;
   display: inline-block !important;
@@ -10148,7 +10285,7 @@ textarea::placeholder {
   background: rgba(255, 255, 255, 0.72) !important;
   backdrop-filter: blur(8px) !important;
   border: 1px solid rgba(0, 0, 0, 0.08) !important;
-  border-radius: 12px;
+  border-radius: var(--all-radius);
   transition: all .2s ease-in-out;
 }
 
@@ -10172,7 +10309,7 @@ textarea::placeholder {
 }
 
 .btn:hover:not(:disabled) {
-  border-radius: 12px;
+  border-radius: var(--all-radius);
   border-color: rgba(255, 255, 255, 0.2);
 }
 
@@ -10188,7 +10325,7 @@ textarea::placeholder {
 
 .btn--primary:hover:not(:disabled) {
   border-color: rgba(255, 255, 255, 0.2) !important;
-  border-radius: 12px !important;
+  border-radius: var(--all-radius) !important;
 }
 
 .btn--ghost,
@@ -10206,7 +10343,7 @@ textarea::placeholder {
   color: #ffffff !important;
   background: rgba(255, 255, 255, 0.03) !important;
   border-color: rgba(255, 255, 255, 0.2) !important;
-  border-radius: 12px;
+  border-radius: var(--all-radius);
 }
 
 .badge {
@@ -10596,6 +10733,11 @@ textarea::placeholder {
   color: var(--textinputtext) !important;
 }
 
+.profit-distribution-table th.profit-currency-head,
+.profit-distribution-table th.profit-subhead--net {
+  color: #ffffff !important;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════════
    INLINE TABLE ACTIONS
    ═══════════════════════════════════════════════════════════════════════════════ */
@@ -10649,7 +10791,7 @@ textarea::placeholder {
 
 .account-badge {
   padding: 0.15rem 0.5rem;
-  border-radius: 6px;
+  border-radius: var(--all-radius);
   font-size: var(--fs-xs);
   font-weight: var(--fw-medium);
   display: inline-block;
@@ -10703,7 +10845,7 @@ textarea::placeholder {
   border: 1px solid rgba(216, 168, 90, 0.4);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 15px rgba(216, 168, 90, 0.1);
   padding: 12px 24px;
-  border-radius: 30px;
+  border-radius: var(--all-radius);
   color: var(--white);
   font-family: var(--font-family);
   font-size: var(--fs-md);
@@ -10768,7 +10910,7 @@ textarea::placeholder {
   align-items: center;
   gap: 8px;
   padding: 6px 14px;
-  border-radius: 20px;
+  border-radius: var(--all-radius);
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
   cursor: pointer;
@@ -10827,7 +10969,7 @@ textarea::placeholder {
   background: var(--lable-bg) !important;
   color: var(--labletext) !important;
   border: none !important;
-  border-radius: 8px !important;
+  border-radius: var(--all-radius) !important;
   padding: 8px 20px !important;
   opacity: var(--lable-opacity-inactive);
   transition: opacity 0.2s, transform 0.2s, box-shadow 0.2s;
@@ -10880,7 +11022,7 @@ textarea::placeholder {
   backdrop-filter: blur(32px) saturate(160%);
   -webkit-backdrop-filter: blur(32px) saturate(160%);
   border: 1px solid color-mix(in srgb, var(--white) 10%, transparent);
-  border-radius: 24px;
+  border-radius: var(--all-radius);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5), inset 0 1px 0 color-mix(in srgb, var(--white) 8%, transparent);
   animation: login-enter 0.5s ease-out;
   z-index: 1;
@@ -10930,38 +11072,16 @@ textarea::placeholder {
 }
 
 .login-screen__field label {
-  font-size: 0.85rem;
+  font-size: var(--font-size);
   color: var(--text-secondary);
   font-weight: 500;
-}
-
-.login-screen__field input {
-  width: 100%;
-  padding: 0.85rem 1rem;
-  background: color-mix(in srgb, var(--white) 6%, transparent);
-  border: 1px solid color-mix(in srgb, var(--white) 8%, transparent);
-  border-radius: 12px;
-  color: var(--white);
-  font-size: var(--fontsize);
-  outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
-  box-sizing: border-box;
-}
-
-.login-screen__field input::placeholder {
-  color: color-mix(in srgb, var(--white) 35%, transparent);
-}
-
-.login-screen__field input:focus {
-  border-color: var(--gold);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 20%, transparent);
 }
 
 .login-screen__error {
   padding: 0.65rem 0.9rem;
   background: color-mix(in srgb, var(--red) 20%, transparent);
   border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
-  border-radius: 10px;
+  border-radius: var(--all-radius);
   color: #ff6b6b;
   font-size: 0.9rem;
   text-align: center;
@@ -10972,7 +11092,7 @@ textarea::placeholder {
   padding: 0.85rem 1rem;
   background: linear-gradient(135deg, var(--red), var(--red2));
   border: none;
-  border-radius: 12px;
+  border-radius: var(--all-radius);
   color: var(--white);
   font-size: var(--fontsize);
   font-weight: 700;
@@ -11107,7 +11227,7 @@ textarea::placeholder {
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   border: 1px solid color-mix(in srgb, var(--white) 10%, transparent);
-  border-radius: 18px;
+  border-radius: var(--all-radius);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.4);
 }
 
@@ -11135,7 +11255,7 @@ textarea::placeholder {
   padding: 0.7rem 0.95rem;
   background: color-mix(in srgb, var(--white) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--white) 10%, transparent);
-  border-radius: 10px;
+  border-radius: var(--all-radius);
   color: var(--white);
   font-size: 0.95rem;
   outline: none;
@@ -11151,7 +11271,7 @@ textarea::placeholder {
   padding: 0.5rem 0.75rem;
   background: color-mix(in srgb, var(--red) 18%, transparent);
   border: 1px solid color-mix(in srgb, var(--red) 25%, transparent);
-  border-radius: 8px;
+  border-radius: var(--all-radius);
   color: #ff6b6b;
   font-size: 0.85rem;
   text-align: center;
@@ -11277,7 +11397,7 @@ textarea::placeholder {
 .batch-count-dialog__field input {
   width: 100%;
   height: 44px;
-  border-radius: 12px;
+  border-radius: var(--all-radius);
   border: var(--hidod);
   background: color-mix(in srgb, var(--white) 7%, transparent);
   color: var(--text-primary);
@@ -11301,7 +11421,7 @@ textarea::placeholder {
 
 .batch-count-chip {
   height: 34px;
-  border-radius: 10px;
+  border-radius: var(--all-radius);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.72);
@@ -11320,7 +11440,7 @@ textarea::placeholder {
   padding: 0.5rem 0.75rem;
   background: color-mix(in srgb, var(--green) 18%, transparent);
   border: 1px solid color-mix(in srgb, var(--green) 25%, transparent);
-  border-radius: 8px;
+  border-radius: var(--all-radius);
   color: var(--green);
   font-size: 0.85rem;
   text-align: center;
@@ -11332,4 +11452,165 @@ textarea::placeholder {
   gap: 0.75rem;
   justify-content: flex-end;
   margin-top: 0.5rem;
+}
+
+/* ═══ DEVELOPER MODE BANNER ═══ */
+.developer-mode-banner {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.75rem 1.5rem;
+  background: rgba(17, 24, 39, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+  color: var(--white);
+  font-family: 'Tajawal', sans-serif;
+  font-size: 0.95rem;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+  animation: slideDownDev 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  direction: rtl;
+}
+
+@keyframes slideDownDev {
+  from {
+    transform: translate(-50%, -100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translate(-50%, 0);
+    opacity: 1;
+  }
+}
+
+.developer-mode-banner span {
+  font-weight: 500;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.developer-mode-exit-btn {
+  background: linear-gradient(135deg, #d8a85a 0%, #a9803d 100%) !important;
+  color: #000 !important;
+  border: none !important;
+  border-radius: 9999px !important;
+  padding: 0.4rem 1.2rem !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+  box-shadow: 0 2px 8px rgba(216, 168, 90, 0.3) !important;
+}
+
+.developer-mode-exit-btn:hover {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 4px 12px rgba(216, 168, 90, 0.5) !important;
+}
+
+/* Installment Dialog Styling */
+.installment-pay-dialog {
+  font-size: var(--font-size) !important;
+}
+
+.installment-pay-dialog .form.tx-dialog-form {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+/* Force all text elements, input elements, labels, and buttons inside the installment dialog to use --font-size */
+.installment-pay-dialog p,
+.installment-pay-dialog li,
+.installment-pay-dialog span,
+.installment-pay-dialog div {
+  font-size: 1em !important;
+}
+
+/* Dialog Title styling */
+.installment-pay-dialog h3,
+.installment-pay-dialog .mb-title {
+  font-size: 1.3em !important;
+  font-weight: 800;
+}
+
+/* Warning alert and section titles */
+.installment-pay-dialog h4 {
+  font-size: 1.1em !important;
+  font-weight: 700;
+}
+
+/* Helper labels in grids/inputs */
+.installment-pay-dialog .installment-dialog-grid-2 span:first-child,
+.installment-pay-dialog .installment-dialog-grid-3 span:first-child,
+.installment-pay-dialog .app-input-label {
+  font-size: 0.85em !important;
+}
+
+/* Price display and input value styling */
+.installment-pay-dialog .installment-dialog-grid-2 div,
+.installment-pay-dialog .app-input-field {
+  font-size: 1.25em !important;
+  font-weight: bold;
+}
+
+/* Grid value items */
+.installment-pay-dialog .installment-dialog-grid-3 span:last-child {
+  font-size: 1.05em !important;
+  font-weight: bold;
+}
+
+/* Action button labels */
+.installment-pay-dialog .gold-fx-btn,
+.installment-pay-dialog .gold-fx-btn__label {
+  font-size: 0.95em !important;
+}
+
+/* Input currency symbol styling */
+.installment-pay-dialog .app-input-wrapper button,
+.installment-pay-dialog .app-input-wrapper button span {
+  font-size: 12px !important;
+}
+
+/* Custom Scrollbar for form in dialog */
+.installment-pay-dialog .form.tx-dialog-form::-webkit-scrollbar {
+  width: 6px;
+}
+
+.installment-pay-dialog .form.tx-dialog-form::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.installment-pay-dialog .form.tx-dialog-form::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+.installment-pay-dialog .form.tx-dialog-form::-webkit-scrollbar-thumb:hover {
+  background: var(--gold, #d8a85a);
+}
+
+.installment-dialog-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.installment-dialog-grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.75rem;
+}
+
+@media (max-width: 500px) {
+  .installment-dialog-grid-2 {
+    grid-template-columns: 1fr;
+  }
+
+  .installment-dialog-grid-3 {
+    grid-template-columns: 1fr;
+  }
 }

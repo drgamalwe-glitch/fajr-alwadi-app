@@ -3,32 +3,43 @@
  * Every color value is derived from these 6 core master colors.
  */
 
+export const COMPANY_STATUS_CARD_COLORS = {
+  cash: "#00ffe1ff",
+  inventory: "#38bdf8",
+  receivables: "#a78bfa",
+  liabilities: "#f43f5e",
+  qasa: "#ffffffff",
+  expenses: "#f97316",
+  profit: "#22c55e",
+  companyValue: "#eab308",
+} as const;
+
 export const MASTER_COLORS = {
-  border: "#ffffff4e",
-  lable_bg: "#f6f6f6af",
+  border: "#a3a3a318",
+  lable_bg: "#ffffff55",
   lable_opacity_inactive: 0.3,
   lable_opacity_hover: 0.5,
-  labletext: "#303030ff",
-  textinputlabletext: "#262626ff",
+  labletext: "#ffffffff",
+  textinputlabletext: "#ffffffff",
 
-  textinputbg: "#ffffff50",
-  textinputtext: "#303030ff",
+  textinputbg: "#00000050",
+  textinputtext: "#ffffffff",
   textinputborder: "#ffffff4e",
   textinputfocusborder: "#ffffffff",
 
   sharikahname: "#ec0000",
-  red: "#ec0000",
+  red: "#a00101ff",
   red2: "#960000ff",
-  gold: "#ffae00ff",
+  gold: "#d7a538ff",
 
-  bg2: "#ffffff1a",
-  bg2blur: "20px",
-  bg2saturation: "180%",
+  bg2: "#ffffff0d",
+  bg2blur: "32px",
+  bg2saturation: "160%",
 
   black: "#000000cb",
   white: "#ffffff",
-  green: "#22c55e",
-  monsadilahbg: "#ffffffcb",
+  green: "#03ca4cff",
+  monsadilahbg: "#1b1b1bcb",
 } as const;
 
 /**
@@ -64,6 +75,7 @@ export const COLORS = {
   // Expose the 6 master colors directly at the root
   ...MASTER_COLORS,
   red2: MASTER_COLORS.red2,
+  companyStatusCards: COMPANY_STATUS_CARD_COLORS,
 
   background: {
     page: toRgba(MASTER_COLORS.bg2, 0.1),
@@ -133,13 +145,13 @@ export const COLORS = {
   },
 
   glass: {
-    bg: toRgba(MASTER_COLORS.bg2, 0.65),
-    bgStrong: toRgba(MASTER_COLORS.bg2, 0.75),
-    bgSubtle: toRgba(MASTER_COLORS.bg2, 0.45),
-    border: toRgba(MASTER_COLORS.white, 0.12),
+    bg: "color-mix(in srgb, var(--white) 5%, transparent)",
+    bgStrong: "color-mix(in srgb, var(--white) 5%, transparent)",
+    bgSubtle: "color-mix(in srgb, var(--white) 5%, transparent)",
+    border: "color-mix(in srgb, var(--white) 10%, transparent)",
     borderLight: toRgba(MASTER_COLORS.white, 0.06),
-    blur: "20px",
-    saturation: "180%",
+    blur: MASTER_COLORS.bg2blur,
+    saturation: MASTER_COLORS.bg2saturation,
   },
 } as const;
 

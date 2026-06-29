@@ -118,7 +118,9 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
       if (key === "date") {
         const dtA = `${a.date}T${a.time || "00:00"}`;
         const dtB = `${b.date}T${b.time || "00:00"}`;
-        return dtA.localeCompare(dtB) * sign;
+        const diff = dtA.localeCompare(dtB) * sign;
+        if (diff !== 0) return diff;
+        return (a.id - b.id) * sign;
       }
       return String(valA).localeCompare(String(valB), "ar", { numeric: true }) * sign;
     });
@@ -179,9 +181,9 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
               <tr><td colSpan={paymentType === "ممول" ? 8 : 7} className="empty-cell">لا توجد معاملات بعد</td></tr>
             ) : (
               <>
-                {pageEntries.map((entry) => (
+                {pageEntries.map((entry, idx) => (
                   <tr key={entry.id}>
-                    <td className="cell-num">{entry.id}</td>
+                    <td className="cell-num">{currentPage * PAGE_SIZE + idx + 1}</td>
                     <td style={{ whiteSpace: "nowrap" }}>{entry.date}</td>
                     <td style={{ whiteSpace: "nowrap", fontSize: "var(--fs-sm)", textAlign: "center" }}>{entry.time}</td>
                     <td style={{ whiteSpace: "nowrap", color: "#fff" }}>

@@ -11,9 +11,17 @@ export const normalizeNumbers = cleanAndNormalizeNumbers;
 
 export function toEnglishDigits(value: string): string {
   return value
+    .normalize("NFKC")
     .replace(/[\u0660-\u0669]/g, (c) => String(c.charCodeAt(0) - 0x0660))
     .replace(/[\u06f0-\u06f9]/g, (c) => String(c.charCodeAt(0) - 0x06f0))
     .replace(/[\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\ufeff]/g, "");
+}
+
+export function normalizePhoneNumber(value: string): string {
+  return toEnglishDigits(value)
+    .replace(/[‐‑‒–—−]/g, "-")
+    .replace(/[^\d+\s()-]/g, "")
+    .trim();
 }
 
 /** تحويل نص بفواصل آلاف إلى رقم */

@@ -55,7 +55,7 @@ def create_car_cash_purchase(cur, cn, name, price, pdate=None):
         (pdate, price, cn, f"سحب نقدي لشراء سيارة: {name} ({cn}) من قاصه"))
     for p in ["أمير", "منتصر"]:
         cur.execute(
-            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit) VALUES (?,'شريك','سحب شراء سيارة',?,?,'00:00','IQD','قاصه','car_purchase',?,'cash_payment',1,1,0)",
+            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit) VALUES (?,'شريك','سحب شراء',?,?,'00:00','IQD','قاصه','car_purchase',?,'cash_payment',1,1,0)",
             (p, price/2, pdate, cn))
 
 def sell_car_cash(cur, cn, name, buyer, price, pdate=None):
@@ -118,7 +118,7 @@ def sell_car_installments(cur, cn, name, buyer, price, down_pmt, remaining, mont
     dp_id = cur.lastrowid
     for p in ["أمير", "منتصر"]:
         cur.execute(
-            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit, related_source_type, related_source_id) VALUES (?,'شريك','ايداع مقدمة سيارة',?,?,'00:00',?,'IQD','قاصه','customer_payment',?,'cash_movement',1,1,0,'car',?)",
+            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit, related_source_type, related_source_id) VALUES (?,'شريك','ايداع مقدمة',?,?,'00:00',?,'IQD','قاصه','customer_payment',?,'cash_movement',1,1,0,'car',?)",
             (p, down_pmt/2, pdate, f"دفعة زبون: استلام مقدمة سيارة من {buyer} #بيع_سيارة_{cn}", str(dp_id), cn))
     cur.execute("INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description) VALUES (?,'00:00','receivable',?,0,?,'IQD','partner_transaction',?,?,?)",
                 (pdate, buyer, down_pmt, str(dp_id), "تخفيض ذمة مدينة", f"من دفعة زبون {buyer}"))
@@ -172,7 +172,7 @@ def pay_installment(cur, cn, buyer, installment_idx, amount_paid):
     # Cash movement for this payment
     for p in ["أمير", "منتصر"]:
         cur.execute(
-            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit, related_source_type, related_source_id) VALUES (?,'شريك','ايداع مقدمة سيارة',?,?,'00:00',?,'IQD','قاصه','customer_payment',?,'cash_movement',1,1,0,'car',?)",
+            "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit, related_source_type, related_source_id) VALUES (?,'شريك','ايداع مقدمة',?,?,'00:00',?,'IQD','قاصه','customer_payment',?,'cash_movement',1,1,0,'car',?)",
             (p, amount_paid/2, TD, f"دفعة زبون: تسديد قسط {buyer} #بيع_سيارة_{cn}", str(cust_pay_id), cn))
     cur.execute("INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description) VALUES (?,'00:00','receivable',?,0,?,'IQD','partner_transaction',?,?,?)",
                 (TD, buyer, amount_paid, str(cust_pay_id), "تخفيض ذمة مدينة", f"من دفعة زبون {buyer}"))

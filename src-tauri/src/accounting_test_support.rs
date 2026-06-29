@@ -617,8 +617,7 @@ impl TestHarness {
             .filter(|tx| {
                 tx.source_type.as_deref() == Some("expense")
                     && tx.source_id.as_deref() == Some(&expense_id.to_string())
-                    && (tx.amount - stale_amount / Money(dec!(2))).abs()
-                        < Money(dec!(0.01))
+                    && (tx.amount - stale_amount / Money(dec!(2))).abs() < Money(dec!(0.01))
             })
             .count() as i64
     }
@@ -1082,8 +1081,14 @@ fn verify_json_match(expected: &serde_json::Value, actual: &serde_json::Value) -
 fn values_near(expected: &serde_json::Value, actual: &serde_json::Value) -> bool {
     match (expected, actual) {
         (serde_json::Value::Number(e), serde_json::Value::Number(a)) => {
-            let expected_money = e.to_string().parse::<Money>().unwrap_or_else(|_| Money::zero());
-            let actual_money = a.to_string().parse::<Money>().unwrap_or_else(|_| Money::zero());
+            let expected_money = e
+                .to_string()
+                .parse::<Money>()
+                .unwrap_or_else(|_| Money::zero());
+            let actual_money = a
+                .to_string()
+                .parse::<Money>()
+                .unwrap_or_else(|_| Money::zero());
             near(expected_money, actual_money)
         }
         (serde_json::Value::String(e), serde_json::Value::String(a)) => e == a,

@@ -2,8 +2,7 @@
  * Unified radius system — Controls all border radius values across buttons, cards, inputs, modals, and containers.
  */
 
-// Single master variable for all border radius values in the program
-export const MASTER_RADIUS = "8px";
+export const MASTER_RADIUS = "var(--all-radius)";
 
 export const RADIUS = {
   none: "0",

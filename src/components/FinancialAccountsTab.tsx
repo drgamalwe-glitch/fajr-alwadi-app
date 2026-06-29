@@ -4,16 +4,24 @@ import type { FinancialSummary } from "../types";
 import { CashRegisterTab } from "./CashRegisterTab";
 import { PriceDisplay } from "@/components/ui";
 import type { MoneyValue } from "../utils/money";
+import { FinancialTransactionsTab } from "./FinancialTransactionsTab";
 
-type PaymentTab = "قاصه" | "الكاش";
+type PaymentTab = "قاصه" | "الكاش" | "transactions";
 
 const PAYMENT_TABS: { id: PaymentTab; label: string }[] = [
   { id: "قاصه", label: "قاصه" },
   { id: "الكاش", label: "الكاش" },
+  { id: "transactions", label: "سجل المعاملات" },
 ];
 
 
-export function FinancialAccountsTab({ initialPaymentTab }: { initialPaymentTab?: PaymentTab }) {
+export function FinancialAccountsTab({
+  initialPaymentTab,
+  onSubTabChange,
+}: {
+  initialPaymentTab?: PaymentTab;
+  onSubTabChange?: (tab: PaymentTab) => void;
+}) {
   const [activeTab, setActiveTab] = useState<PaymentTab>(initialPaymentTab || "قاصه");
 
   useEffect(() => {
@@ -22,10 +30,18 @@ export function FinancialAccountsTab({ initialPaymentTab }: { initialPaymentTab?
     }
   }, [initialPaymentTab]);
 
+  useEffect(() => {
+    onSubTabChange?.(activeTab);
+  }, [activeTab, onSubTabChange]);
+
   const [balance, setBalance] = useState<{ iqd: MoneyValue; usd: MoneyValue }>({ iqd: 0, usd: 0 });
   const [loadingBalance, setLoadingBalance] = useState(true);
 
   const loadBalance = useCallback(async (tab: PaymentTab) => {
+    if (tab === "transactions") {
+      setLoadingBalance(false);
+      return;
+    }
     setLoadingBalance(true);
     try {
       const data = await callTauri<FinancialSummary>("get_financial_summary", {
@@ -88,7 +104,7 @@ export function FinancialAccountsTab({ initialPaymentTab }: { initialPaymentTab?
           )}
         </div>
         <div className="unified-toolbar__left">
-          {!loadingBalance && (
+          {!loadingBalance && activeTab !== "transactions" && (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", alignItems: "flex-start" }}>
               <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
                 <div className="currency-card currency-card--usd">
@@ -105,6 +121,7 @@ export function FinancialAccountsTab({ initialPaymentTab }: { initialPaymentTab?
 
       {activeTab === "قاصه" && <CashRegisterTab paymentType="قاصه" />}
       {activeTab === "الكاش" && <CashRegisterTab paymentType="الكاش" />}
+      {activeTab === "transactions" && <FinancialTransactionsTab hideToolbar />}
     </div>
   );
 }

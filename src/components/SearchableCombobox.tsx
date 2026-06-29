@@ -10,6 +10,7 @@ export interface SearchableComboboxProps {
   clearOptionText?: string;
   onClear?: () => void;
   suffix?: string;
+  disabled?: boolean;
 }
 
 export function SearchableCombobox({
@@ -21,6 +22,7 @@ export function SearchableCombobox({
   clearOptionText,
   onClear,
   suffix,
+  disabled,
 }: SearchableComboboxProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -114,12 +116,15 @@ export function SearchableCombobox({
           type="text"
           dir="rtl"
           value={isOpen ? search : selectedLabel}
+          disabled={disabled}
           onChange={(e) => {
+            if (disabled) return;
             setSearch(e.target.value);
             setHighlightedIndex(-1);
             if (!isOpen) handleOpenChange(true);
           }}
           onFocus={(e) => {
+            if (disabled) return;
             isFocusingRef.current = true;
             handleOpenChange(true);
             setTimeout(() => {
@@ -128,9 +133,13 @@ export function SearchableCombobox({
             }, 150);
           }}
           onClick={() => {
+            if (disabled) return;
             if (!isFocusingRef.current) handleOpenChange(!isOpen);
           }}
-          onKeyDown={handleKeyDown}
+          onKeyDown={(e) => {
+            if (disabled) return;
+            handleKeyDown(e);
+          }}
           placeholder={placeholder}
           autoComplete="off"
           className={`combobox-trigger ${suffix ? "combobox-trigger--has-suffix" : ""}`}

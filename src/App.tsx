@@ -6,15 +6,11 @@ import { Dashboard } from "./components/Dashboard";
 import { Header } from "./components/Header";
 import { ExpensesTab } from "./components/ExpensesTab";
 import { FinancialAccountsTab } from "./components/FinancialAccountsTab";
-import { FinancialTransactionsTab } from "./components/FinancialTransactionsTab";
 import { PartnersTab } from "./components/PartnersTab";
 import { AgenciesTab } from "./components/AgenciesTab";
-import { ProfitDistributionTab } from "./components/ProfitDistributionTab";
 import { LoginScreen } from "./components/LoginScreen";
-import { UsersTab } from "./components/UsersTab";
 import type { Car, Partner, TabId, UserInfo } from "./types";
 import { APP_VERSION } from "./version";
-import { SECTION_TABS } from "./constants";
 
 type PartnerOpenTarget = {
   name: string;
@@ -23,14 +19,16 @@ type PartnerOpenTarget = {
   transactionId?: number | null;
 };
 
-type DashboardSubTab = "dashboard" | "company-status";
+type CarOpenTarget = {
+  mode: "new" | "edit";
+  car?: Car;
+  initialPage?: 0 | 1;
+};
+
+type DashboardSubTab = "dashboard" | "company-status" | "users";
 type PartnersFinancialSubTab = "customers" | "personal" | "receivables" | "liabilities";
 type CarsSubTab = "available" | "sold";
-type FinancialSubTab = "قاصه" | "الكاش";
-
 const CARS_SUB_TABS = new Set<CarsSubTab>(["available", "sold"]);
-const PARTNERS_FINANCIAL_SUB_TABS = new Set<PartnersFinancialSubTab>(["customers", "personal", "receivables", "liabilities"]);
-const FINANCIAL_SUB_TABS = new Set<FinancialSubTab>(["قاصه", "الكاش"]);
 
 /** Narrow an arbitrary string to a known sub-tab union, or return null. */
 function narrowSubTab<T extends string>(value: string | undefined | null, allowed: ReadonlySet<T>): T | null {
@@ -43,60 +41,81 @@ const INITIAL_BG_PATHS = ["/backgrounds/bg.jpg"];
 
 
 const DEFAULT_BG = "/backgrounds/bg.jpg";
+const AVAILABLE_BACKGROUNDS_STORAGE_KEY = "app_available_backgrounds";
+const SELECTED_BACKGROUND_STORAGE_KEY = "app_selected_background";
+
+function normalizeBackgroundPath(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().replace(/\\/g, "/");
+  const pathPart = normalized.split(/[?#]/)[0]?.trim() ?? "";
+  const filename = pathPart.split("/").filter(Boolean).pop();
+  if (!filename || /[\\/]/.test(filename)) return null;
+  if (!/\.(jpe?g|png|webp|gif|bmp)$/i.test(filename)) return null;
+  if (filename.toLowerCase().includes("logo")) return null;
+  return `/backgrounds/${filename}`;
+}
+
+function readSavedBackgroundPaths(): string[] {
+  const saved = localStorage.getItem(AVAILABLE_BACKGROUNDS_STORAGE_KEY);
+  if (!saved) return INITIAL_BG_PATHS;
+
+  try {
+    const parsed = JSON.parse(saved);
+    if (Array.isArray(parsed)) {
+      const paths = Array.from(
+        new Set(parsed.map(normalizeBackgroundPath).filter((path): path is string => Boolean(path)))
+      );
+      if (paths.length > 0) return paths;
+    }
+  } catch (e) {
+    console.error("Failed to parse saved backgrounds", e);
+  }
+
+  return INITIAL_BG_PATHS;
+}
+
+function pickAvailableBackground(preferred: string | null | undefined, available: string[]) {
+  if (preferred && available.includes(preferred)) return preferred;
+  if (available.includes(DEFAULT_BG)) return DEFAULT_BG;
+  return available[0] || DEFAULT_BG;
+}
 
 // Ordered list of tabs — matches sidebar order top → bottom
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
+  const [isDeveloperMode, setIsDeveloperMode] = useState(false);
+  const typedKeysRef = useRef<string>("");
 
   const [dashboardSubTab, setDashboardSubTab] = useState<DashboardSubTab | null>(null);
   const [partnersFinancialSubTab, setPartnersFinancialSubTab] = useState<PartnersFinancialSubTab | null>(null);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [carsSubTab, setCarsSubTab] = useState<"available" | "sold" | null>(null);
-  const [financialSubTab, setFinancialSubTab] = useState<"قاصه" | "الكاش">("قاصه");
+  const [financialSubTab, setFinancialSubTab] = useState<"قاصه" | "الكاش" | "transactions">("قاصه");
+
+  // Synchronized sub-tab states to cycle from currently active sub-tab
+  const [currentDashboardSubTab, setCurrentDashboardSubTab] = useState<DashboardSubTab>("dashboard");
+  const [currentCarsSubTab, setCurrentCarsSubTab] = useState<"available" | "sold">("available");
+  const [currentPartnersFinancialSubTab, setCurrentPartnersFinancialSubTab] = useState<PartnersFinancialSubTab>("customers");
+  const [currentFinancialSubTab, setCurrentFinancialSubTab] = useState<"قاصه" | "الكاش" | "transactions">("قاصه");
+  const [expensesSubTab, setExpensesSubTab] = useState<"expenses" | "profit">("expenses");
+  const [currentExpensesSubTab, setCurrentExpensesSubTab] = useState<"expenses" | "profit">("expenses");
+  const [backgroundPersistReady, setBackgroundPersistReady] = useState(false);
 
   // List of available backgrounds state
-  const [bgPaths, setBgPaths] = useState<string[]>(() => {
-    const saved = localStorage.getItem("app_available_backgrounds");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      } catch (e) {
-        console.error("Failed to parse saved backgrounds", e);
-      }
-    }
-    return INITIAL_BG_PATHS;
-  });
+  const [bgPaths, setBgPaths] = useState<string[]>(readSavedBackgroundPaths);
 
   // Background selection state
   const [currentBg, setCurrentBg] = useState<string>(() => {
-    const savedBg = localStorage.getItem("app_selected_background");
-
-    // Determine available backgrounds at init
-    let initialPaths = INITIAL_BG_PATHS;
-    const savedPaths = localStorage.getItem("app_available_backgrounds");
-    if (savedPaths) {
-      try {
-        const parsed = JSON.parse(savedPaths);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          initialPaths = parsed;
-        }
-      } catch { }
-    }
-
-    if (savedBg && initialPaths.includes(savedBg)) {
-      return savedBg;
-    }
-    return initialPaths.includes(DEFAULT_BG) ? DEFAULT_BG : initialPaths[0] || DEFAULT_BG;
+    const initialPaths = readSavedBackgroundPaths();
+    const savedBg = normalizeBackgroundPath(localStorage.getItem(SELECTED_BACKGROUND_STORAGE_KEY));
+    return pickAvailableBackground(savedBg, initialPaths);
   });
 
   // Sync available backgrounds list to localStorage
   useEffect(() => {
-    localStorage.setItem("app_available_backgrounds", JSON.stringify(bgPaths));
+    localStorage.setItem(AVAILABLE_BACKGROUNDS_STORAGE_KEY, JSON.stringify(bgPaths));
   }, [bgPaths]);
 
   // Warn before closing if there are unsaved changes
@@ -111,11 +130,11 @@ export default function App() {
     return () => window.removeEventListener("beforeunload", handler);
   }, []);
 
-  const [carFormTrigger, setCarFormTrigger] = useState<{ mode: "new" | "edit"; car?: Car } | null>(null);
+  const [carFormTrigger, setCarFormTrigger] = useState<CarOpenTarget | null>(null);
   const [carsSearchOpen, setCarsSearchOpen] = useState(false);
   const [partnersSearchOpen, setPartnersSearchOpen] = useState(false);
   const [partnerActions, setPartnerActions] = useState<{ onDeposit: () => void; onWithdraw: () => void; depositLabel?: string; withdrawLabel?: string } | null>(null);
-  const [carFormActions, setCarFormActions] = useState<{ onSave: () => void; onCancel: () => void } | null>(null);
+  const [carFormActions, setCarFormActions] = useState<{ onSave: () => void; onCancel: () => void; disabled?: boolean } | null>(null);
   const [returnState, setReturnState] = useState<{ section: TabId; subTab?: string } | null>(null);
 
   const [addAccountAction, setAddAccountAction] = useState<{ action: () => void } | null>(null);
@@ -148,11 +167,101 @@ export default function App() {
     setActiveTab("dashboard");
   }, []);
 
+  const exitDeveloperMode = useCallback(() => {
+    setIsDeveloperMode(false);
+    if (currentUser?.username === "developer") {
+      setCurrentUser(null);
+      localStorage.removeItem("app_current_user");
+    }
+  }, [currentUser]);
+
+  // Navigation history variables
+  const navigationHistoryRef = useRef<{ section: TabId; subTab: string | null }[]>([]);
+  const isBackingRef = useRef<boolean>(false);
+
+  const pushToHistory = useCallback((fromTab: TabId) => {
+    let subTab: string | null = null;
+    if (fromTab === "dashboard") subTab = currentDashboardSubTab;
+    else if (fromTab === "cars") subTab = currentCarsSubTab;
+    else if (fromTab === "partners-financial") subTab = currentPartnersFinancialSubTab;
+    else if (fromTab === "financial-accounts") subTab = currentFinancialSubTab;
+
+    const history = navigationHistoryRef.current;
+    const last = history[history.length - 1];
+    
+    // Only push if it is different from the last entry in history
+    if (!last || last.section !== fromTab || last.subTab !== subTab) {
+      history.push({ section: fromTab, subTab });
+    }
+  }, [currentDashboardSubTab, currentCarsSubTab, currentPartnersFinancialSubTab, currentFinancialSubTab]);
+
   // Navigate to a tab
   const navigateTo = useCallback((nextTab: TabId) => {
-    setActiveTab(nextTab);
+    let targetTab = nextTab;
+    if (nextTab === "users") {
+      setDashboardSubTab("users");
+      setCurrentDashboardSubTab("users");
+      targetTab = "dashboard";
+    } else if (nextTab === "financial-transactions") {
+      setFinancialSubTab("transactions");
+      setCurrentFinancialSubTab("transactions");
+      targetTab = "financial-accounts";
+    } else if (nextTab === "profit-distribution") {
+      setExpensesSubTab("profit");
+      setCurrentExpensesSubTab("profit");
+      targetTab = "expenses";
+    }
+
+    setActiveTab(prevTab => {
+      if (prevTab !== targetTab && !isBackingRef.current) {
+        pushToHistory(prevTab);
+      }
+      return targetTab;
+    });
     setPartnerActions(null);
-  }, []);
+  }, [pushToHistory]);
+  const handleNavigateToPartner = useCallback((name: string, kind: string = "زبون") => {
+    setPendingPartnerOpen({ name, kind });
+    setCurrentPartnersFinancialSubTab("customers");
+    setPartnersFinancialSubTab("customers");
+    navigateTo("partners-financial");
+  }, [navigateTo]);
+
+  const handleNavigateToCar = useCallback((carNumber: string, status: "available" | "sold" = "sold", initialPage: 0 | 1 = 0) => {
+    setCarsSubTab(status);
+    setCurrentCarsSubTab(status);
+    const car = cars.find((c) => c.car_number === carNumber);
+    if (car) {
+      setCarFormTrigger({ mode: "edit", car, initialPage });
+    }
+    navigateTo("cars");
+  }, [cars, navigateTo]);
+  const handleSmartBack = useCallback(() => {
+    const history = navigationHistoryRef.current;
+    if (history.length === 0) return;
+
+    const prev = history.pop();
+    if (prev) {
+      isBackingRef.current = true;
+      navigateTo(prev.section);
+      
+      // Restore the sub-tab
+      if (prev.section === "dashboard" && prev.subTab) {
+        setCurrentDashboardSubTab(prev.subTab as DashboardSubTab);
+        setDashboardSubTab(prev.subTab as DashboardSubTab);
+      } else if (prev.section === "cars" && prev.subTab) {
+        setCurrentCarsSubTab(prev.subTab as "available" | "sold");
+        setCarsSubTab(prev.subTab as "available" | "sold");
+      } else if (prev.section === "partners-financial" && prev.subTab) {
+        setCurrentPartnersFinancialSubTab(prev.subTab as PartnersFinancialSubTab);
+        setPartnersFinancialSubTab(prev.subTab as PartnersFinancialSubTab);
+      } else if (prev.section === "financial-accounts" && prev.subTab) {
+        setCurrentFinancialSubTab(prev.subTab as "قاصه" | "الكاش");
+        setFinancialSubTab(prev.subTab as "قاصه" | "الكاش");
+      }
+      isBackingRef.current = false;
+    }
+  }, [navigateTo]);
 
   const clearReturnState = useCallback(() => {
     setReturnState(prev => {
@@ -174,52 +283,112 @@ export default function App() {
     dirtyRef.current = dirty;
   }, []);
 
+  // Reset all sub-tabs to their default first values and erase memory when navigating to a different section
+  // Optionally supports excluding the target section and applying a specific sub-tab to it
+  const resetAllSubTabsToDefault = useCallback((excludeSection?: TabId, targetSubTab?: string) => {
+    if (excludeSection !== "dashboard") {
+      setCurrentDashboardSubTab("dashboard");
+      setDashboardSubTab("dashboard");
+    } else if (targetSubTab) {
+      setCurrentDashboardSubTab(targetSubTab as DashboardSubTab);
+      setDashboardSubTab(targetSubTab as DashboardSubTab);
+    }
+
+    if (excludeSection !== "cars") {
+      setCurrentCarsSubTab("available");
+      setCarsSubTab("available");
+    } else if (targetSubTab) {
+      setCurrentCarsSubTab(targetSubTab as "available" | "sold");
+      setCarsSubTab(targetSubTab as "available" | "sold");
+    }
+
+    if (excludeSection !== "partners-financial") {
+      setCurrentPartnersFinancialSubTab("customers");
+      setPartnersFinancialSubTab("customers");
+    } else if (targetSubTab) {
+      setCurrentPartnersFinancialSubTab(targetSubTab as PartnersFinancialSubTab);
+      setPartnersFinancialSubTab(targetSubTab as PartnersFinancialSubTab);
+    }
+
+    if (excludeSection !== "financial-accounts") {
+      setCurrentFinancialSubTab("قاصه");
+      setFinancialSubTab("قاصه");
+    } else if (targetSubTab) {
+      setCurrentFinancialSubTab(targetSubTab as "قاصه" | "الكاش" | "transactions");
+      setFinancialSubTab(targetSubTab as "قاصه" | "الكاش" | "transactions");
+    }
+
+    if (excludeSection !== "expenses") {
+      setCurrentExpensesSubTab("expenses");
+      setExpensesSubTab("expenses");
+    } else if (targetSubTab) {
+      setCurrentExpensesSubTab(targetSubTab as "expenses" | "profit");
+      setExpensesSubTab(targetSubTab as "expenses" | "profit");
+    }
+  }, []);
+
   // Manual tab click: check for unsaved changes before switching
-  const handleTabChange = useCallback((nextTab: TabId) => {
+  const handleTabChange = useCallback((nextTab: TabId, targetSubTab?: string) => {
+    const doChange = () => {
+      if (nextTab !== activeTab) {
+        resetAllSubTabsToDefault(nextTab, targetSubTab);
+      }
+      navigateTo(nextTab);
+    };
     if (tabCloseRequestRef.current) {
       pendingTabRef.current = nextTab;
       tabCloseRequestRef.current.request(() => {
         const pending = pendingTabRef.current;
         pendingTabRef.current = null;
-        if (pending) navigateTo(pending);
+        if (pending) {
+          if (pending !== activeTab) {
+            resetAllSubTabsToDefault(pending, targetSubTab);
+          }
+          navigateTo(pending);
+        }
       });
       return;
     }
-    navigateTo(nextTab);
-  }, [navigateTo]);
+    doChange();
+  }, [activeTab, navigateTo, resetAllSubTabsToDefault]);
 
-  // Sidebar section click with sub-tab cycling
+  // Sidebar section click with sub-tab cycling (left-click: forward, right-click: backward)
   const handleSidebarSectionClick = useCallback((section: TabId) => {
     const doNavigate = () => {
-      const tabs = SECTION_TABS[section];
-      if (!tabs || tabs.length <= 1) {
-        navigateTo(section);
-        return;
-      }
       if (section !== activeTab) {
+        resetAllSubTabsToDefault();
         navigateTo(section);
-        if (section === "dashboard") setDashboardSubTab("dashboard");
-        else if (section === "cars") setCarsSubTab("available");
-        else if (section === "partners-financial") setPartnersFinancialSubTab("customers");
       } else {
         if (section === "dashboard") {
-          setDashboardSubTab(prev => {
-            const arr: DashboardSubTab[] = ["dashboard", "company-status"];
-            const idx = arr.indexOf(prev ?? "dashboard");
-            return arr[(idx + 1) % arr.length];
-          });
+          const arr: DashboardSubTab[] = ["dashboard", "company-status", "users"];
+          const idx = arr.indexOf(currentDashboardSubTab);
+          const nextVal = arr[(idx + 1) % arr.length];
+          setCurrentDashboardSubTab(nextVal);
+          setDashboardSubTab(nextVal);
         } else if (section === "cars") {
-          setCarsSubTab(prev => {
-            const arr: ("available" | "sold")[] = ["available", "sold"];
-            const idx = arr.indexOf(prev ?? "available");
-            return arr[(idx + 1) % arr.length];
-          });
+          const arr: ("available" | "sold")[] = ["available", "sold"];
+          const idx = arr.indexOf(currentCarsSubTab);
+          const nextVal = arr[(idx + 1) % arr.length];
+          setCurrentCarsSubTab(nextVal);
+          setCarsSubTab(nextVal);
         } else if (section === "partners-financial") {
-          setPartnersFinancialSubTab(prev => {
-            const arr: PartnersFinancialSubTab[] = ["customers", "personal", "receivables", "liabilities"];
-            const idx = arr.indexOf(prev ?? "customers");
-            return arr[(idx + 1) % arr.length];
-          });
+          const arr: PartnersFinancialSubTab[] = ["customers", "personal", "receivables", "liabilities"];
+          const idx = arr.indexOf(currentPartnersFinancialSubTab);
+          const nextVal = arr[(idx + 1) % arr.length];
+          setCurrentPartnersFinancialSubTab(nextVal);
+          setPartnersFinancialSubTab(nextVal);
+        } else if (section === "financial-accounts") {
+          const arr: ("قاصه" | "الكاش" | "transactions")[] = ["قاصه", "الكاش", "transactions"];
+          const idx = arr.indexOf(currentFinancialSubTab);
+          const nextVal = arr[(idx + 1) % arr.length];
+          setCurrentFinancialSubTab(nextVal);
+          setFinancialSubTab(nextVal);
+        } else if (section === "expenses") {
+          const arr: ("expenses" | "profit")[] = ["expenses", "profit"];
+          const idx = arr.indexOf(currentExpensesSubTab);
+          const nextVal = arr[(idx + 1) % arr.length];
+          setCurrentExpensesSubTab(nextVal);
+          setExpensesSubTab(nextVal);
         }
       }
     };
@@ -233,7 +402,58 @@ export default function App() {
       return;
     }
     doNavigate();
-  }, [activeTab, navigateTo]);
+  }, [activeTab, navigateTo, resetAllSubTabsToDefault, currentDashboardSubTab, currentCarsSubTab, currentPartnersFinancialSubTab, currentFinancialSubTab, currentExpensesSubTab]);
+
+  const handleSidebarSectionRightClick = useCallback((section: TabId) => {
+    const doNavigate = () => {
+      if (section !== activeTab) {
+        resetAllSubTabsToDefault();
+        navigateTo(section);
+      } else {
+        if (section === "dashboard") {
+          const arr: DashboardSubTab[] = ["dashboard", "company-status", "users"];
+          const idx = arr.indexOf(currentDashboardSubTab);
+          const nextVal = arr[(idx - 1 + arr.length) % arr.length];
+          setCurrentDashboardSubTab(nextVal);
+          setDashboardSubTab(nextVal);
+        } else if (section === "cars") {
+          const arr: ("available" | "sold")[] = ["available", "sold"];
+          const idx = arr.indexOf(currentCarsSubTab);
+          const nextVal = arr[(idx - 1 + arr.length) % arr.length];
+          setCurrentCarsSubTab(nextVal);
+          setCarsSubTab(nextVal);
+        } else if (section === "partners-financial") {
+          const arr: PartnersFinancialSubTab[] = ["customers", "personal", "receivables", "liabilities"];
+          const idx = arr.indexOf(currentPartnersFinancialSubTab);
+          const nextVal = arr[(idx - 1 + arr.length) % arr.length];
+          setCurrentPartnersFinancialSubTab(nextVal);
+          setPartnersFinancialSubTab(nextVal);
+        } else if (section === "financial-accounts") {
+          const arr: ("قاصه" | "الكاش" | "transactions")[] = ["قاصه", "الكاش", "transactions"];
+          const idx = arr.indexOf(currentFinancialSubTab);
+          const nextVal = arr[(idx - 1 + arr.length) % arr.length];
+          setCurrentFinancialSubTab(nextVal);
+          setFinancialSubTab(nextVal);
+        } else if (section === "expenses") {
+          const arr: ("expenses" | "profit")[] = ["expenses", "profit"];
+          const idx = arr.indexOf(currentExpensesSubTab);
+          const nextVal = arr[(idx - 1 + arr.length) % arr.length];
+          setCurrentExpensesSubTab(nextVal);
+          setExpensesSubTab(nextVal);
+        }
+      }
+    };
+    if (tabCloseRequestRef.current) {
+      pendingTabRef.current = section;
+      tabCloseRequestRef.current.request(() => {
+        const pending = pendingTabRef.current;
+        pendingTabRef.current = null;
+        if (pending) doNavigate();
+      });
+      return;
+    }
+    doNavigate();
+  }, [activeTab, navigateTo, resetAllSubTabsToDefault, currentDashboardSubTab, currentCarsSubTab, currentPartnersFinancialSubTab, currentFinancialSubTab, currentExpensesSubTab]);
 
   const refreshData = useCallback(async () => {
     setError(null);
@@ -271,26 +491,125 @@ export default function App() {
   // Update CSS property and persist background selection
   useEffect(() => {
     document.documentElement.style.setProperty("--background", `url('${currentBg}')`);
-    localStorage.setItem("app_selected_background", currentBg);
-  }, [currentBg]);
+    localStorage.setItem(SELECTED_BACKGROUND_STORAGE_KEY, currentBg);
+
+    if (backgroundPersistReady) {
+      callTauri<string>("set_selected_background", { background: currentBg }).catch((err) => {
+        console.error("تعذر حفظ الخلفية المختارة في إعدادات التطبيق:", err);
+      });
+    }
+  }, [currentBg, backgroundPersistReady]);
 
   // Load available backgrounds dynamically from Rust/Tauri on mount
   useEffect(() => {
-    callTauri<string[]>("get_backgrounds")
-      .then((paths) => {
-        if (paths && paths.length > 0) {
-          setBgPaths(paths);
-          // Sync currentBg to be one of the loaded paths if current is invalid
-          setCurrentBg((prev) => {
-            if (paths.includes(prev)) return prev;
-            return paths.includes(DEFAULT_BG) ? DEFAULT_BG : paths[0];
-          });
+    let cancelled = false;
+
+    Promise.allSettled([
+      callTauri<string[]>("get_backgrounds"),
+      callTauri<string | null>("get_selected_background"),
+    ])
+      .then(([pathsResult, selectedResult]) => {
+        if (cancelled) return;
+
+        const loadedPaths = pathsResult.status === "fulfilled"
+          ? Array.from(
+            new Set(
+              (pathsResult.value ?? [])
+                .map(normalizeBackgroundPath)
+                .filter((path): path is string => Boolean(path))
+            )
+          )
+          : [];
+
+        if (pathsResult.status === "rejected") {
+          console.error("فشل جلب الخلفيات ديناميكياً من الرست، جاري استخدام الاحتياطية:", pathsResult.reason);
         }
+
+        const availablePaths = loadedPaths.length > 0 ? loadedPaths : readSavedBackgroundPaths();
+        if (loadedPaths.length > 0) {
+          setBgPaths(loadedPaths);
+        }
+
+        const persistedBackground = selectedResult.status === "fulfilled"
+          ? normalizeBackgroundPath(selectedResult.value)
+          : null;
+
+        if (selectedResult.status === "rejected") {
+          console.error("تعذر قراءة الخلفية المختارة من إعدادات التطبيق:", selectedResult.reason);
+        }
+
+        const localBackground = normalizeBackgroundPath(localStorage.getItem(SELECTED_BACKGROUND_STORAGE_KEY));
+        setCurrentBg((prev) => pickAvailableBackground(persistedBackground ?? localBackground ?? prev, availablePaths));
       })
-      .catch((err) => {
-        console.error("فشل جلب الخلفيات ديناميكياً من الرست، جاري استخدام الاحتياطية:", err);
+      .finally(() => {
+        if (!cancelled) setBackgroundPersistReady(true);
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // Global Developer Mode shortcut "maloka4444"
+  useEffect(() => {
+    const handleGlobalKeyPress = (e: KeyboardEvent) => {
+      if (e.key.length !== 1) return;
+
+      typedKeysRef.current = (typedKeysRef.current + e.key).slice(-10);
+
+      if (typedKeysRef.current === "maloka4444") {
+        setIsDeveloperMode(true);
+        typedKeysRef.current = "";
+
+        // Automatically log in if not logged in
+        setCurrentUser((prev) => {
+          if (!prev) {
+            return {
+              id: 999,
+              username: "developer",
+              display_name: "وضع المطور",
+              profile_image: null,
+            };
+          }
+          return prev;
+        });
+      }
+    };
+
+    window.addEventListener("keydown", handleGlobalKeyPress);
+    return () => window.removeEventListener("keydown", handleGlobalKeyPress);
+  }, []);
+
+  // Arrow keys navigation for backgrounds in Developer Mode
+  useEffect(() => {
+    if (!isDeveloperMode) return;
+
+    const handleArrowNav = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+
+      e.preventDefault();
+
+      if (bgPaths.length === 0) return;
+
+      setCurrentBg((prev) => {
+        const index = bgPaths.indexOf(prev);
+        if (index === -1) {
+          return bgPaths[0];
+        }
+
+        let nextIndex;
+        if (e.key === "ArrowRight") {
+          nextIndex = (index + 1) % bgPaths.length;
+        } else {
+          nextIndex = (index - 1 + bgPaths.length) % bgPaths.length;
+        }
+        return bgPaths[nextIndex];
+      });
+    };
+
+    window.addEventListener("keydown", handleArrowNav);
+    return () => window.removeEventListener("keydown", handleArrowNav);
+  }, [isDeveloperMode, bgPaths]);
 
 
 
@@ -320,6 +639,43 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeTab]);
 
+  // Smart Escape back navigation
+  useEffect(() => {
+    const handleEscapeKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+
+      // Check if there are any overlays, modals, search inputs, or other Escape handlers active
+      const isOverlayActive = !!(
+        document.querySelector(".modal-overlay") ||
+        document.querySelector(".fx-confirm-overlay") ||
+        document.querySelector(".search-overlay") ||
+        document.querySelector(".confirm-dialog-overlay") ||
+        document.querySelector(".modal-dialog") ||
+        document.querySelector(".fx-confirm-dialog") ||
+        document.querySelector(".car-panel") ||
+        document.querySelector(".add-sharik-modal") ||
+        document.querySelector(".add-expense-modal")
+      );
+
+      const activeTag = (document.activeElement?.tagName ?? "").toLowerCase();
+      const isEditable =
+        activeTag === "input" ||
+        activeTag === "textarea" ||
+        activeTag === "select" ||
+        (document.activeElement as HTMLElement)?.isContentEditable;
+
+      if (isOverlayActive || isEditable) {
+        return;
+      }
+
+      e.preventDefault();
+      handleSmartBack();
+    };
+
+    window.addEventListener("keydown", handleEscapeKey);
+    return () => window.removeEventListener("keydown", handleEscapeKey);
+  }, [handleSmartBack]);
+
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     event.currentTarget.style.setProperty("--mx", `${event.clientX}px`);
     event.currentTarget.style.setProperty("--my", `${event.clientY}px`);
@@ -347,6 +703,14 @@ export default function App() {
 
   return (
     <>
+      {isDeveloperMode && (
+        <div className="developer-mode-banner">
+          <span>وضع المطور نشط | الخلفية الحالية: {currentBg.split("/").pop()} (تصفح بالأسهم ➔ ➔)</span>
+          <button onClick={exitDeveloperMode} className="developer-mode-exit-btn">
+            حفظ الخلفية والخروج من وضع المطور
+          </button>
+        </div>
+      )}
       <div className="app" onPointerMove={handlePointerMove}>
         <div className="app-bg" aria-hidden>
           <div className="app-bg__mesh" />
@@ -360,6 +724,7 @@ export default function App() {
           activeTab={activeTab}
           onTabChange={handleTabChange}
           onSidebarSectionClick={handleSidebarSectionClick}
+          onSidebarSectionRightClick={handleSidebarSectionRightClick}
           onDeposit={partnerActions?.onDeposit}
           onWithdraw={partnerActions?.onWithdraw}
           depositLabel={partnerActions?.depositLabel}
@@ -372,6 +737,7 @@ export default function App() {
           onAddDistribute={addDistributeAction?.action}
           onSaveCar={carFormActions?.onSave}
           onCancelCar={carFormActions?.onCancel}
+          saveCarDisabled={carFormActions?.disabled}
           fromDate={fromDate}
           toDate={toDate}
           onFromDateChange={setFromDate}
@@ -407,6 +773,7 @@ export default function App() {
                     onRefresh={refreshData}
                     initialSubTab={dashboardSubTab}
                     onInitialSubTabSet={() => setDashboardSubTab(null)}
+                    onSubTabChange={setCurrentDashboardSubTab}
                     returnState={returnState}
                     onReturn={clearReturnState}
                     onOpenCarForm={(mode, car) => {
@@ -419,15 +786,9 @@ export default function App() {
                       setPendingPartnerOpen(typeof target === "string" ? { name: target } : target);
                     }}
                     onNavigateToTab={(tab, subTab) => {
-                      if (tab === "partners-financial") {
-                        setPartnersFinancialSubTab(narrowSubTab(subTab, PARTNERS_FINANCIAL_SUB_TABS));
-                      } else if (tab === "cars") {
-                        setCarsSubTab(narrowSubTab(subTab, CARS_SUB_TABS));
-                      } else if (tab === "financial-accounts") {
-                        setFinancialSubTab(narrowSubTab(subTab, FINANCIAL_SUB_TABS) ?? "قاصه");
-                      }
-                      handleTabChange(tab);
+                      handleTabChange(tab, subTab);
                     }}
+                    onLogout={handleLogout}
                   />
                 )}
                 {activeTab === "cars" && (
@@ -448,6 +809,8 @@ export default function App() {
                     requestCloseRef={tabCloseRequestRef}
                     initialSubTab={carsSubTab}
                     onInitialSubTabSet={() => setCarsSubTab(null)}
+                    onSubTabChange={setCurrentCarsSubTab}
+                    onNavigateToPartner={handleNavigateToPartner}
                   />
                 )}
                 {activeTab === "partners-financial" && (
@@ -465,8 +828,11 @@ export default function App() {
                     onDirtyChange={handleDirtyChange}
                     initialSubTab={partnersFinancialSubTab}
                     onInitialSubTabSet={() => setPartnersFinancialSubTab(null)}
+                    onSubTabChange={setCurrentPartnersFinancialSubTab}
                     returnState={returnState}
                     onReturn={clearReturnState}
+                    cars={cars}
+                    onNavigateToCar={handleNavigateToCar}
                   />
                 )}
                 {activeTab === "expenses" && (
@@ -474,9 +840,20 @@ export default function App() {
                     onAddExpenseChange={setAddExpenseAction}
                     requestCloseRef={tabCloseRequestRef}
                     onDirtyChange={handleDirtyChange}
+                    onRefreshAllData={refreshData}
+                    onDistributeChange={setAddDistributeAction}
+                    fromDate={fromDate}
+                    toDate={toDate}
+                    initialSubTab={expensesSubTab}
+                    onSubTabChange={setExpensesSubTab}
                   />
                 )}
-                {activeTab === "financial-accounts" && <FinancialAccountsTab initialPaymentTab={financialSubTab} />}
+                {activeTab === "financial-accounts" && (
+                  <FinancialAccountsTab 
+                    initialPaymentTab={financialSubTab} 
+                    onSubTabChange={setCurrentFinancialSubTab}
+                  />
+                )}
                 {activeTab === "agencies" && (
                   <AgenciesTab
                     onRefresh={refreshData}
@@ -486,13 +863,6 @@ export default function App() {
                     requestCloseRef={tabCloseRequestRef}
                     onDirtyChange={handleDirtyChange}
                   />
-                )}
-                {activeTab === "financial-transactions" && <FinancialTransactionsTab />}
-                {activeTab === "profit-distribution" && (
-                  <ProfitDistributionTab onRefreshAllData={refreshData} onDistributeChange={setAddDistributeAction} fromDate={fromDate} toDate={toDate} />
-                )}
-                {activeTab === "users" && (
-                  <UsersTab onLogout={handleLogout} />
                 )}
               </div>
             </main>

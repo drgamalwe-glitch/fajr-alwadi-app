@@ -11,11 +11,11 @@ import { compareMoney, moneyAdd } from "../utils/money";
 const isOutgoingEntry = (entry: CashRegisterEntry) =>
   compareMoney(entry.amount, 0) < 0 || entry.type_.includes("سحب") || entry.type_.includes("شراء") || entry.type_.includes("مصروف");
 
-/**
- * سجل المعاملات – يعرض جميع سجل المعاملات من كافة الحسابات (قاصه + مصرف)
- * مجمّعة في جدول واحد.
- */
-export function FinancialTransactionsTab() {
+interface FinancialTransactionsTabProps {
+  hideToolbar?: boolean;
+}
+
+export function FinancialTransactionsTab({ hideToolbar }: FinancialTransactionsTabProps = {}) {
   const [entries, setEntries] = useState<(CashRegisterEntry & { _source?: "قاصه" | "مصرف" })[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
@@ -145,11 +145,13 @@ export function FinancialTransactionsTab() {
       tabIndex={0}
     >
       {/* شريط الأدوات الموحد في الأعلى */}
-      <div className="cars-page__toolbar unified-toolbar">
-        <div className="unified-toolbar__right"></div>
-        <div className="unified-toolbar__center"></div>
-        <div className="unified-toolbar__left"></div>
-      </div>
+      {!hideToolbar && (
+        <div className="cars-page__toolbar unified-toolbar">
+          <div className="unified-toolbar__right"></div>
+          <div className="unified-toolbar__center"></div>
+          <div className="unified-toolbar__left"></div>
+        </div>
+      )}
 
       {totalPages >= 1 && (
         <div className="table-page-dots" aria-label="تنقل بين الصفحات">
@@ -172,7 +174,6 @@ export function FinancialTransactionsTab() {
             <thead>
               <tr>
                 <th className={`cell-num ${sortConfig?.key === "id" ? "th--sorted" : ""}`} onClick={() => handleSort("id")} style={{ width: "40px", cursor: "pointer" }}>ت</th>
-                <th className={sortConfig?.key === "_source" ? "th--sorted" : ""} onClick={() => handleSort("_source")} style={{ width: "90px", cursor: "pointer" }}>الحساب</th>
                 <th className={sortConfig?.key === "date" ? "th--sorted" : ""} onClick={() => handleSort("date")} style={{ width: "110px", cursor: "pointer" }}>التاريخ</th>
                 <th className={sortConfig?.key === "time" ? "th--sorted" : ""} onClick={() => handleSort("time")} style={{ width: "60px", cursor: "pointer" }}>الساعة</th>
                 <th className={sortConfig?.key === "type_" ? "th--sorted" : ""} onClick={() => handleSort("type_")} style={{ width: "200px", cursor: "pointer" }}>نوع العملية</th>
@@ -183,17 +184,14 @@ export function FinancialTransactionsTab() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8} className="empty-cell">جاري التحميل...</td></tr>
+                <tr><td colSpan={7} className="empty-cell">جاري التحميل...</td></tr>
               ) : entries.length === 0 ? (
-                <tr><td colSpan={8} className="empty-cell">لا توجد حركات مالية</td></tr>
+                <tr><td colSpan={7} className="empty-cell">لا توجد حركات مالية</td></tr>
               ) : (
                 <>
                   {pageEntries.map((entry, idx) => (
                     <tr key={`${entry._source}-${entry.id}-${idx}`}>
                       <td className="cell-num">{currentPage * PAGE_SIZE + idx + 1}</td>
-                      <td style={{ whiteSpace: "nowrap", color: "#fff" }}>
-                        {entry._source}
-                      </td>
                       <td style={{ whiteSpace: "nowrap" }}>{entry.date}</td>
                       <td style={{ whiteSpace: "nowrap", fontSize: "var(--fs-sm)", textAlign: "center" }}>{entry.time}</td>
                       <td style={{ whiteSpace: "nowrap", color: "#fff" }}>
@@ -220,7 +218,6 @@ export function FinancialTransactionsTab() {
                   {Array.from({ length: PAGE_SIZE - pageEntries.length }).map((_, i) => (
                     <tr key={`empty-${i}`} style={{ pointerEvents: "none" }}>
                       <td className="cell-num">&nbsp;</td>
-                      <td>&nbsp;</td>
                       <td>&nbsp;</td>
                       <td>&nbsp;</td>
                       <td>&nbsp;</td>

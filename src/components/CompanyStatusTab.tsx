@@ -42,7 +42,7 @@ export function CompanyStatusTab({
   unifiedAccounts: UnifiedAccount[];
   partners: Partner[];
   onNavigateToTab?: (tab: TabId, subTab?: string) => void;
-  onNavigateToPartner?: (target: string | { name: string; kind?: string | null }) => void;
+  onNavigateToPartner?: (target: string | { name: string; kind?: string | null; action?: "deposit" | "withdraw" | "settle_installment"; transactionId?: number | null }) => void;
 }) {
   const sharikPartners = partners.filter((p) => p.kind === "شريك");
   const amirPartner = sharikPartners.find((p) => normalizePartnerName(p.partner_name).includes("امير"));
@@ -86,6 +86,8 @@ export function CompanyStatusTab({
   // Fixed: Company Value follows Instructions.md with Decimal math: Cash + Available Inventory + Receivables - Liabilities.
   const companyValueIqd = moneySub(moneyAdd(netCashIqd, summary.inventory_value_iqd, receivablesIqd), liabilitiesIqd);
   const companyValueUsd = moneySub(moneyAdd(netCashUsd, summary.inventory_value_usd, receivablesUsd), liabilitiesUsd);
+  const isCompanyValueIqdNegative = compareMoney(companyValueIqd, 0) < 0;
+  const isCompanyValueUsdNegative = compareMoney(companyValueUsd, 0) < 0;
 
   const formatCompact = (value: MoneyValue): string => {
     const money = toMoney(value);
@@ -105,8 +107,20 @@ export function CompanyStatusTab({
     return formatMoney(money);
   };
 
-  const sharedIqd = moneyDiv(moneySub(moneyAdd(summary.inventory_value_iqd, receivablesIqd), liabilitiesIqd), 2);
-  const sharedUsd = moneyDiv(moneySub(moneyAdd(summary.inventory_value_usd, receivablesUsd), liabilitiesUsd), 2);
+  const sharedIqd = moneyDiv(
+    moneySub(
+      moneyAdd(summary.inventory_value_iqd, receivablesIqd),
+      liabilitiesIqd
+    ),
+    2
+  );
+  const sharedUsd = moneyDiv(
+    moneySub(
+      moneyAdd(summary.inventory_value_usd, receivablesUsd),
+      liabilitiesUsd
+    ),
+    2
+  );
 
   const p1CapitalIqd = partner1 ? moneyAdd(partner1.iqd_balance ?? 0, sharedIqd) : toMoney(0);
   const p1CapitalUsd = partner1 ? moneyAdd(partner1.usd_balance ?? 0, sharedUsd) : toMoney(0);
@@ -158,54 +172,23 @@ export function CompanyStatusTab({
           <div className="company-value-center">
             <div className="company-value" data-testid="company-value">
               <h2>قيمة الشركة</h2>
-              <div className="value" data-testid="company-value-iqd">{formatMoney(companyValueIqd)}</div>
+              <div
+                className={`value ${isCompanyValueIqdNegative ? "company-value__amount--negative" : ""}`}
+                data-testid="company-value-iqd"
+              >
+                {isCompanyValueIqdNegative && <span className="company-value__negative-label">-</span>}
+                <span>{formatMoney(companyValueIqd)}</span>
+              </div>
               <div className="currency">دينار عراقي</div>
               {compareMoney(companyValueUsd, 0) !== 0 && (
                 <>
-                  <div className="value-usd">
-                    {formatMoney(companyValueUsd, "USD")}
+                  <div className={`value-usd ${isCompanyValueUsdNegative ? "company-value__amount--negative" : ""}`}>
+                    {isCompanyValueUsdNegative && <span className="company-value__negative-label">-</span>}
+                    <span>{formatMoney(companyValueUsd, "USD")}</span>
                   </div>
                   <div className="currency-usd">دولار أمريكي</div>
                 </>
               )}
-              <div className="company-value__chips" aria-label="تفاصيل قيمة الشركة">
-                <span
-                  style={{ cursor: "pointer" }}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onNavigateToTab?.("partners-financial", "personal")}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onNavigateToTab?.("partners-financial", "personal"); }}
-                >
-                  الكاش: {formatCompact(netCashIqd)} IQ
-                </span>
-                <span
-                  style={{ cursor: "pointer" }}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onNavigateToTab?.("cars", "available")}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onNavigateToTab?.("cars", "available"); }}
-                >
-                  السيارات: {formatCompact(summary.inventory_value_iqd)} IQ
-                </span>
-                <span
-                  style={{ cursor: "pointer" }}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onNavigateToTab?.("partners-financial", "receivables")}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onNavigateToTab?.("partners-financial", "receivables"); }}
-                >
-                  نطلب: {formatCompact(receivablesIqd)} IQ
-                </span>
-                <span
-                  style={{ cursor: "pointer" }}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => onNavigateToTab?.("partners-financial", "liabilities")}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onNavigateToTab?.("partners-financial", "liabilities"); }}
-                >
-                  مطلوبين: {formatCompact(liabilitiesIqd)} IQ
-                </span>
-              </div>
             </div>
           </div>
 
@@ -214,22 +197,22 @@ export function CompanyStatusTab({
 
         <div className="line"></div>
 
-        <div className="stats">
+        <div className="company-status-cards">
           <div
-            className="card capital"
+            className="card cash-tall"
             data-testid="card-cash"
             style={{ cursor: "pointer" }}
             role="button"
             tabIndex={0}
-            onClick={() => onNavigateToTab?.("partners-financial", "personal")}
+            onClick={() => onNavigateToTab?.("financial-accounts", "الكاش")}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
-                onNavigateToTab?.("partners-financial", "personal");
+                onNavigateToTab?.("financial-accounts", "الكاش");
               }
             }}
           >
             <div className="card-labels">
-              <div className="label">الشركاء</div>
+              <div className="label">الكاش</div>
             </div>
             <div className="card-values">
               <div className="number">{formatCompact(netCashIqd)} <span className="card-currency-iq">IQ</span></div>
@@ -308,9 +291,6 @@ export function CompanyStatusTab({
               )}
             </div>
           </div>
-        </div>
-
-        <div className="stats">
           <div
             className="card qasa-bottom"
             data-testid="card-qasa-bottom"
@@ -331,30 +311,6 @@ export function CompanyStatusTab({
               <div className="number">{formatCompact(summary.qasa_iqd)} <span className="card-currency-iq">IQ</span></div>
               {compareMoney(summary.qasa_usd, 0) !== 0 && (
                 <div className="card-sub-val">{formatCompact(summary.qasa_usd)} <span className="card-currency-usd">USD</span></div>
-              )}
-            </div>
-          </div>
-
-          <div
-            className="card cash-bottom"
-            data-testid="card-cash-bottom"
-            style={{ cursor: "pointer" }}
-            role="button"
-            tabIndex={0}
-            onClick={() => onNavigateToTab?.("financial-accounts", "الكاش")}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                onNavigateToTab?.("financial-accounts", "الكاش");
-              }
-            }}
-          >
-            <div className="card-labels">
-              <div className="label">الكاش</div>
-            </div>
-            <div className="card-values">
-              <div className="number">{formatCompact(summary.cash_iqd)} <span className="card-currency-iq">IQ</span></div>
-              {compareMoney(summary.cash_usd, 0) !== 0 && (
-                <div className="card-sub-val">{formatCompact(summary.cash_usd)} <span className="card-currency-usd">USD</span></div>
               )}
             </div>
           </div>

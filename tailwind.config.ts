@@ -58,7 +58,7 @@ export default {
         md: RADIUS.lg,
         lg: RADIUS.xl,
         xl: RADIUS["2xl"],
-        "2xl": "28px",
+        "2xl": RADIUS["2xl"],
         pill: RADIUS.full,
       },
       boxShadow: {

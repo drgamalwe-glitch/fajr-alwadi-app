@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { callTauri } from "../api/tauri";
 import { BrandLogo } from "./BrandLogo";
+import { TextInput } from "./ui";
 import type { LoginResult, UserInfo } from "../types";
 
 interface LoginScreenProps {
@@ -80,9 +81,10 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
         <form className="login-screen__form" onSubmit={handleLogin}>
           <div className="login-screen__field">
             <label htmlFor="login-username">اسم المستخدم</label>
-            <input
+            <TextInput
               id="login-username"
               type="text"
+              inputSize="sm"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="أدخل اسم المستخدم"
@@ -94,9 +96,10 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
           </div>
           <div className="login-screen__field">
             <label htmlFor="login-password">كلمة المرور</label>
-            <input
+            <TextInput
               id="login-password"
               type="password"
+              inputSize="sm"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="أدخل كلمة المرور"

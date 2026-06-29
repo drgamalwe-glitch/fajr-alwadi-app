@@ -34,7 +34,9 @@
   },
   "dependencies": {
     "@radix-ui/react-select": "^2.2.6",
+    "@react-pdf/renderer": "^4.5.1",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-fs": "^2.5.1",
     "@tauri-apps/plugin-opener": "^2",
     "autoprefixer": "^10.5.0",
     "bidi": "^0.0.1",

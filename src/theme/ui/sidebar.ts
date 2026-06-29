@@ -80,7 +80,7 @@ export const SIDEBAR = {
     top: 20%;
     height: 60%;
     width: 3px;
-    border-radius: 10px 0 0 10px;
+    border-radius: var(--all-radius) 0 0 var(--all-radius);
     background: ${COLORS.primary.DEFAULT};
   `.trim(),
 
@@ -90,7 +90,7 @@ export const SIDEBAR = {
     justify-content: center;
     width: 28px;
     height: 28px;
-    border-radius: 8px;
+    border-radius: var(--all-radius);
     font-size: 18px;
     flex-shrink: 0;
     background: ${COLORS.background.subtle};

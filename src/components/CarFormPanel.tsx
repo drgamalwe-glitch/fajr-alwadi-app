@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import type { CarFormState, Partner, CarExpenseRecord } from "../types";
 import { callTauri } from "../api/tauri";
 import { SearchableCombobox } from "./SearchableCombobox";
 import { QuickAddPartnerModal } from "./QuickAddPartnerModal";
 
 import { toChassisText } from "../utils/keyboardLayout";
-import { toEnglishDigits } from "../utils/numberInput";
+import { normalizePhoneNumber, toEnglishDigits } from "../utils/numberInput";
 import { formatMoney, moneyAdd, moneySum } from "../utils/money";
 import { todayIsoDate } from "../utils/dateSegments";
 import { UnifiedDateField } from "./UnifiedDateField";
@@ -28,6 +28,11 @@ interface CarFormPanelProps {
   embedMode?: boolean;
   onSwitchToSpecs?: () => void;
   onExpenseDirtyChange?: (dirty: boolean) => void;
+  onFormValidityChange?: (isValid: boolean) => void;
+  onNavigateToPartner?: (name: string, kind?: string) => void;
+  initialPage?: 0 | 1;
+  saleFieldsLocked?: boolean;
+  receivedInstallmentsTotal?: number;
 }
 
 export function CarFormPanel({
@@ -36,6 +41,11 @@ export function CarFormPanel({
   embedMode = false,
   onSwitchToSpecs,
   onExpenseDirtyChange,
+  onFormValidityChange,
+  onNavigateToPartner,
+  initialPage = 0,
+  saleFieldsLocked = false,
+  receivedInstallmentsTotal = 0,
 }: CarFormPanelProps) {
   const [allPartners, setAllPartners] = useState<Partner[]>([]);
   const [carExpenses, setCarExpenses] = useState<CarExpenseRecord[]>([]);
@@ -46,13 +56,52 @@ export function CarFormPanel({
   // ── نظام الصفحتين: 0 = مواصفات السيارة، 1 = تفاصيل البيع ──
   const [formPage, setFormPage] = useState(0);
   const [deletedExpenseIds, setDeletedExpenseIds] = useState<number[]>([]);
-  // نافذة الإضافة السريعة للممول / الشركة
-  const [quickAddKind, setQuickAddKind] = useState<"ممول" | "شركة" | null>(null);
+  // نافذة الإضافة السريعة للممول / الشركة / الزبون
+  const [quickAddKind, setQuickAddKind] = useState<"ممول" | "شركة" | "زبون" | null>(null);
+  const [existingCars, setExistingCars] = useState<any[]>([]);
+
+  useEffect(() => {
+    setFormPage(initialPage);
+  }, [initialPage, form.oldNum, form.num]);
+
+  useEffect(() => {
+    callTauri<any[]>("get_cars")
+      .then((res) => setExistingCars(res || []))
+      .catch(console.error);
+  }, []);
+
+  const isPlateDuplicate = form.num.trim() !== "" && (() => {
+    const normalizedNum = form.num.trim().toLowerCase().replace(/\s/g, "");
+    return existingCars.some((c) => {
+      if (isEditing && form.oldNum && (c.car_plate_num || "").trim().toLowerCase() === form.oldNum.trim().toLowerCase()) {
+        return false;
+      }
+      return (c.car_plate_num || "").trim().toLowerCase().replace(/\s/g, "") === normalizedNum;
+    });
+  })();
+
+  const isChassisDuplicate = form.chassis.trim() !== "" && (() => {
+    const normalizedChassis = form.chassis.trim().toLowerCase().replace(/\s/g, "");
+    return existingCars.some((c) => {
+      if (isEditing && form.oldNum && (c.car_plate_num || "").trim().toLowerCase() === form.oldNum.trim().toLowerCase()) {
+        return false;
+      }
+      return c.chassis_number && c.chassis_number.trim().toLowerCase().replace(/\s/g, "") === normalizedChassis;
+    });
+  })();
+
+
 
   const reloadPartners = () =>
     callTauri<Partner[]>("get_partners")
-      .then((res) => setAllPartners(res || []))
-      .catch(console.error);
+      .then((res) => {
+        setAllPartners(res || []);
+        return res || [];
+      })
+      .catch((err) => {
+        console.error(err);
+        return [] as Partner[];
+      });
 
   useEffect(() => {
     reloadPartners();
@@ -157,6 +206,72 @@ export function CarFormPanel({
   };
 
   const isSold = form.status === "مبيوعة";
+
+  const isFormValid = useMemo(() => {
+    // 1. Check basic specs (always required)
+    if (!form.model.trim()) return false;
+    if (!form.year.trim()) return false;
+    if (!form.color.trim()) return false;
+    if (!form.num.trim()) return false;
+    if (!form.chassis.trim()) return false;
+    if (form.purchase === "" || Number(form.purchase) <= 0) return false;
+
+    // 2. Check purchase type financer/company select
+    if (form.purchaseType === "تمويل" || form.purchaseType === "شركة") {
+      if (!form.financerName.trim()) return false;
+    }
+
+    // 3. Check duplicate fields
+    if (isPlateDuplicate || isChassisDuplicate) return false;
+
+    // 4. Check sale fields if the car is sold
+    if (isSold) {
+      if (form.selling === "" || Number(form.selling) <= 0) return false;
+      if (!form.buyerName.trim()) return false;
+      if (!form.phone.trim()) return false;
+      if (form.amountPaid === "" || Number(form.amountPaid) < 0) return false;
+
+      if (form.paymentType !== "كاش") {
+        if (form.amountRemaining === "" || Number(form.amountRemaining) < 0) return false;
+      }
+
+      if (form.paymentType === "اقساط") {
+        if (form.installmentMonths === "" || Number(form.installmentMonths) <= 0) return false;
+        if (!(form.firstPaymentDate || form.deliveryDate)?.trim()) return false;
+      }
+
+      if (form.paymentType === "موعد") {
+        if (!(form.deliveryDate || form.firstPaymentDate)?.trim()) return false;
+      }
+    }
+
+    return true;
+  }, [
+    form.model,
+    form.year,
+    form.color,
+    form.num,
+    form.chassis,
+    form.purchase,
+    form.purchaseType,
+    form.financerName,
+    isSold,
+    form.selling,
+    form.buyerName,
+    form.phone,
+    form.amountPaid,
+    form.paymentType,
+    form.amountRemaining,
+    form.installmentMonths,
+    form.firstPaymentDate,
+    form.deliveryDate,
+    isPlateDuplicate,
+    isChassisDuplicate,
+  ]);
+
+  useEffect(() => {
+    onFormValidityChange?.(isFormValid);
+  }, [isFormValid, onFormValidityChange]);
   const installmentMonths = Number(form.installmentMonths) || 1;
   const amountRemaining = Number(form.amountRemaining) || 0;
 
@@ -240,6 +355,15 @@ export function CarFormPanel({
     const formEl = formRef.current;
     if (!formEl) return;
 
+    if (isPlateDuplicate) {
+      alert("تنبيه: رقم اللوحة مكرر بالفعل!");
+      return;
+    }
+    if (isChassisDuplicate) {
+      alert("تنبيه: رقم الشاصي مكرر بالفعل!");
+      return;
+    }
+
     formEl.querySelectorAll(".input--error").forEach(el => el.classList.remove("input--error"));
     formEl.classList.remove("form--submitted");
 
@@ -318,8 +442,12 @@ export function CarFormPanel({
       const selling = Number(form.selling) || 0;
       const paid = Number(form.amountPaid) || 0;
       const remaining = Number(form.amountRemaining) || 0;
-      if (Math.abs(selling - (paid + remaining)) > 0.01) {
-        alert("تنبيه: مجموع (المبلغ المدفوع + المبلغ المتبقي) يجب أن يساوي سعر البيع!");
+      if (Math.abs(selling - (paid + remaining + receivedInstallmentsTotal)) > 0.01) {
+        if (receivedInstallmentsTotal > 0) {
+          alert("تنبيه: مجموع (المقدمة + المبلغ المتبقي + الأقساط الواصلة) يجب أن يساوي سعر البيع!");
+        } else {
+          alert("تنبيه: مجموع (المبلغ المدفوع + المبلغ المتبقي) يجب أن يساوي سعر البيع!");
+        }
         const elPaid = formEl.querySelector<HTMLElement>("#amount-paid");
         const elRemaining = formEl.querySelector<HTMLElement>("#amount-remaining");
         elPaid?.classList.add("input--error");
@@ -357,6 +485,26 @@ export function CarFormPanel({
   const patchEnglishText = (key: "num" | "chassis", value: string) => {
     const next = key === "chassis" ? toChassisText(value) : toEn(value);
     onChange({ [key]: next } as Pick<CarFormState, typeof key>);
+  };
+
+  const handlePhoneBeforeInput = (e: React.FormEvent<HTMLInputElement>) => {
+    const data = (e.nativeEvent as InputEvent).data;
+    if (!data) return;
+    const normalized = normalizePhoneNumber(data);
+    if (normalized === data) return;
+    e.preventDefault();
+
+    const input = e.currentTarget;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    const next = normalizePhoneNumber(
+      `${input.value.slice(0, start)}${normalized}${input.value.slice(end)}`
+    );
+    onChange({ phone: next });
+    requestAnimationFrame(() => {
+      const pos = start + normalized.length;
+      input.setSelectionRange(pos, pos);
+    });
   };
 
   const formContent = (
@@ -503,7 +651,15 @@ export function CarFormPanel({
                     />
                   </div>
                   <div className="col-span-2">
-                    <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">رقم اللوحة</label>
+                    <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center" style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+                      {isPlateDuplicate ? (
+                        <span style={{ color: "#ef4444", fontSize: "var(--font-size)", fontWeight: "bold" }}>
+                          رقم اللوحة موجود
+                        </span>
+                      ) : (
+                        <span>رقم اللوحة</span>
+                      )}
+                    </label>
                     <TextInput
                       id="car-num"
                       inputSize="sm"
@@ -520,7 +676,15 @@ export function CarFormPanel({
                     />
                   </div>
                   <div className="col-span-2">
-                    <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">رقم الشاصي</label>
+                    <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center" style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+                      {isChassisDuplicate ? (
+                        <span style={{ color: "#ef4444", fontSize: "var(--font-size)", fontWeight: "bold" }}>
+                          رقم الشاصي موجود
+                        </span>
+                      ) : (
+                        <span>رقم الشاصي</span>
+                      )}
+                    </label>
                     <TextInput
                       id="car-chassis"
                       inputSize="sm"
@@ -568,7 +732,7 @@ export function CarFormPanel({
                               padding: "0 0.75rem",
                               background: "var(--textinputbg)",
                               border: "1px solid var(--textinputborder)",
-                              borderRadius: "8px",
+                              borderRadius: "var(--all-radius)",
                               color: "var(--textinputtext)",
                               fontWeight: 700,
                               fontSize: "var(--fs-base)",
@@ -624,7 +788,7 @@ export function CarFormPanel({
                               flexShrink: 0,
                               width: "34px",
                               height: "34px",
-                              borderRadius: "9px",
+                              borderRadius: "var(--all-radius)",
                               border: "1px solid rgba(59,130,246,0.4)",
                               background: "rgba(59,130,246,0.12)",
                               color: "#93c5fd",
@@ -662,7 +826,7 @@ export function CarFormPanel({
                               flexShrink: 0,
                               width: "34px",
                               height: "34px",
-                              borderRadius: "9px",
+                              borderRadius: "var(--all-radius)",
                               border: "1px solid rgba(251,146,60,0.4)",
                               background: "rgba(251,146,60,0.12)",
                               color: "#fdba74",
@@ -683,18 +847,6 @@ export function CarFormPanel({
                     </div>
                   )}
 
-                  {/* نافذة الإضافة السريعة */}
-                  {quickAddKind && (
-                    <QuickAddPartnerModal
-                      kind={quickAddKind}
-                      onClose={() => setQuickAddKind(null)}
-                      onSaved={(name) => {
-                        setQuickAddKind(null);
-                        reloadPartners();
-                        onChange({ financerName: name });
-                      }}
-                    />
-                  )}
                 </div>
               </div>
 
@@ -802,7 +954,11 @@ export function CarFormPanel({
                     key={opt.value}
                     type="button"
                     data-testid={`payment-type-${opt.value}`}
-                    onClick={() => onChange({ paymentType: opt.value })}
+                    onClick={() => {
+                      if (saleFieldsLocked) return;
+                      onChange({ paymentType: opt.value });
+                    }}
+                    disabled={saleFieldsLocked}
                     className={`flex-1 h-10 rounded-lg text-[var(--car-fs-button)] font-bold transition-all ${form.paymentType === opt.value
                       ? opt.color === "emerald"
                         ? "bg-[var(--car-btn-cash)] text-white shadow-md"
@@ -820,15 +976,94 @@ export function CarFormPanel({
               <div className="grid grid-cols-3" style={{ columnGap: "var(--car-gap-x)", rowGap: "var(--car-gap-y)" }}>
                 <div>
                   <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">اسم المشتري</label>
-                  <TextInput
-                    id="buyer-name"
-                    inputSize="sm"
-                    value={form.buyerName}
-                    onChange={(e) => onChange({ buyerName: e.target.value })}
-                    placeholder="الاسم"
-                    required={isSold}
-                    tabIndex={1}
-                  />
+                  {form.paymentType === "اقساط" || form.paymentType === "موعد" ? (
+                    <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <SearchableCombobox
+                          value={form.buyerName}
+                          onChange={(name) => {
+                            if (saleFieldsLocked) return;
+                            const partner = allPartners.find((p) => p.partner_name === name);
+                            onChange({
+                              buyerName: name,
+                              ...(partner ? { phone: partner.phone } : {}),
+                            });
+                          }}
+                          onOpenChange={setIsSelectOpen}
+                          placeholder="اختر الزبون"
+                          disabled={saleFieldsLocked}
+                          options={allPartners
+                            .filter((p) => (p.kind || "").trim().replace(/ة/g, "ه") === "زبون")
+                            .map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
+                        />
+                      </div>
+                      {form.buyerName.trim() && form.status === "مبيوعة" && onNavigateToPartner && (
+                        <button
+                          type="button"
+                          title="الانتقال إلى حساب الزبون"
+                          onClick={() => onNavigateToPartner(form.buyerName, "زبون")}
+                          style={{
+                            flexShrink: 0,
+                            width: "34px",
+                            height: "34px",
+                            borderRadius: "var(--all-radius)",
+                            border: "1px solid rgba(16, 185, 129, 0.4)",
+                            background: "rgba(16, 185, 129, 0.12)",
+                            color: "rgb(110, 231, 183)",
+                            fontSize: "18px",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            transition: "all 0.18s",
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = "rgba(16, 185, 129, 0.25)";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = "rgba(16, 185, 129, 0.12)";
+                          }}
+                        >
+                          👤
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        title="إضافة زبون جديد"
+                        onClick={() => setQuickAddKind("زبون")}
+                        style={{
+                          flexShrink: 0,
+                          width: "34px",
+                          height: "34px",
+                          borderRadius: "var(--all-radius)",
+                          border: "1px solid rgba(59, 130, 246, 0.4)",
+                          background: "rgba(59, 130, 246, 0.12)",
+                          color: "rgb(147, 197, 253)",
+                          fontSize: "18px",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          lineHeight: 1,
+                          transition: "background 0.18s",
+                        }}
+                      >
+                        +
+                      </button>
+                    </div>
+                  ) : (
+                    <TextInput
+                      id="buyer-name"
+                      inputSize="sm"
+                      value={form.buyerName}
+                      onChange={(e) => onChange({ buyerName: e.target.value })}
+                      placeholder="الاسم"
+                      required={isSold}
+                      disabled={saleFieldsLocked}
+                      tabIndex={1}
+                    />
+                  )}
                 </div>
                 <div>
                   <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">سعر البيع</label>
@@ -860,11 +1095,20 @@ export function CarFormPanel({
                     inputSize="sm"
                     value={form.phone}
                     autoComplete="new-password"
+                    type="tel"
+                    inputMode="tel"
                     dir="ltr"
                     placeholder="07XX XXX XXXX"
-                    onInput={(e: React.FormEvent<HTMLInputElement>) => onChange({ phone: toEn((e.target as HTMLInputElement).value).replace(/[^\d+\s()-]/g, "") })}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ phone: toEn(e.target.value).replace(/[^\d+\s()-]/g, "") })}
-                    onBlur={(e: React.FocusEvent<HTMLInputElement>) => onChange({ phone: toEn(e.target.value).replace(/[^\d+\s()-]/g, "") })}
+                    onBeforeInput={handlePhoneBeforeInput}
+                    onInput={(e: React.FormEvent<HTMLInputElement>) => {
+                      onChange({ phone: normalizePhoneNumber((e.target as HTMLInputElement).value) });
+                    }}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                      onChange({ phone: normalizePhoneNumber(e.target.value) });
+                    }}
+                    onBlur={(e: React.FocusEvent<HTMLInputElement>) => {
+                      onChange({ phone: normalizePhoneNumber(e.target.value) });
+                    }}
                     tabIndex={4}
                   />
                 </div>
@@ -881,6 +1125,7 @@ export function CarFormPanel({
                         currency={form.saleCurrency as Currency}
                         onCurrencyChange={(saleCurrency) => onChange({ saleCurrency })}
                         required={isSold}
+                        disabled={saleFieldsLocked}
                         tabIndex={5}
                       />
                     </div>
@@ -904,12 +1149,13 @@ export function CarFormPanel({
                 {form.paymentType === "موعد" && (
                   <div className="col-span-3">
                     <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">موعد التسليم</label>
-                    <UnifiedDateField
-                      id="first-payment-date"
-                      value={form.deliveryDate}
-                      onChange={(v) => onChange({ deliveryDate: v })}
-                      tabIndex={9}
-                    />
+                      <UnifiedDateField
+                        id="first-payment-date"
+                        value={form.deliveryDate}
+                        onChange={(v) => onChange({ deliveryDate: v })}
+                        disabled={saleFieldsLocked}
+                        tabIndex={9}
+                      />
                   </div>
                 )}
 
@@ -922,6 +1168,7 @@ export function CarFormPanel({
                         id="first-payment-date"
                         value={form.firstPaymentDate}
                         onChange={(v) => onChange({ firstPaymentDate: v })}
+                        disabled={saleFieldsLocked}
                         tabIndex={9}
                       />
                     </div>
@@ -952,6 +1199,29 @@ export function CarFormPanel({
                 )}
               </div>
             </div>
+          )}
+          {/* نافذة الإضافة السريعة للممول / الشركة / الزبون */}
+          {quickAddKind && (
+            <QuickAddPartnerModal
+              kind={quickAddKind}
+              onClose={() => setQuickAddKind(null)}
+              onSaved={(name, savedPhone) => {
+                const currentKind = quickAddKind;
+                const phone = normalizePhoneNumber(savedPhone);
+                if (currentKind === "زبون") {
+                  onChange({ buyerName: name, phone });
+                } else {
+                  onChange({ financerName: name });
+                }
+                setQuickAddKind(null);
+                reloadPartners().then((updatedPartners) => {
+                  const partner = updatedPartners?.find((p) => p.partner_name === name);
+                  if (currentKind === "زبون" && !phone && partner?.phone) {
+                    onChange({ buyerName: name, phone: normalizePhoneNumber(partner.phone) });
+                  }
+                });
+              }}
+            />
           )}
         </div>
       </div>

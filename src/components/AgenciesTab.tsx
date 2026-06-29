@@ -10,7 +10,7 @@ import { UnifiedDateField } from "./UnifiedDateField";
 import { compareMoney, moneySum } from "../utils/money";
 
 import { toEnglishDigits } from "../utils/numberInput";
-import { todayIsoDate } from "../utils/dateSegments";
+import { todayIsoDate, formatDisplayDate } from "../utils/dateSegments";
 import { GoldFxButton } from "./ui/GoldFxButton";
 
 interface AgenciesTabProps {
@@ -26,6 +26,9 @@ const AGENCIES_TABS: { id: "list" | "details"; label: string }[] = [
   { id: "list", label: "الوكالات" },
   { id: "details", label: "تفاصيل" },
 ];
+
+const normalizeAgencyPlate = (value: string | null | undefined) =>
+  toEnglishDigits(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
 
 export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClose, onAddAgencyChange, onDirtyChange, requestCloseRef }: AgenciesTabProps) {
   const [agencies, setAgencies] = useState<Agency[]>([]);
@@ -50,6 +53,15 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   const [deleteAgencyConfirm, setDeleteAgencyConfirm] = useState<Agency | null>(null);
 
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const selectedAgencyPlate = normalizeAgencyPlate(selectedAgency?.car_number);
+  const isDuplicateAgencyPlate = useMemo(() => {
+    if (!selectedAgency || !selectedAgencyPlate) return false;
+    return agencies.some((agency) => (
+      agency.id !== selectedAgency.id &&
+      normalizeAgencyPlate(agency.car_number) === selectedAgencyPlate
+    ));
+  }, [agencies, selectedAgency, selectedAgencyPlate]);
 
   const agencyDirty = useMemo(() => {
     if (!selectedAgency) return false;
@@ -117,6 +129,12 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
         }
       }
       if (hasError) return;
+      if (isDuplicateAgencyPlate) {
+        const input = document.getElementById("agency-car-number") as HTMLElement | null;
+        input?.classList.add("input--error");
+        input?.focus();
+        return;
+      }
 
       try {
         if (selectedAgency.id < 0) {
@@ -180,6 +198,12 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   };
 
   const handleAgencySaveConfirmSave = async () => {
+    if (isDuplicateAgencyPlate) {
+      const input = document.getElementById("agency-car-number") as HTMLElement | null;
+      input?.classList.add("input--error");
+      input?.focus();
+      return;
+    }
     await handleSaveAgency();
     setShowAgencySaveConfirm(false);
     pendingAgencyActionRef.current = null;
@@ -247,7 +271,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   }, [agencies, agenciesSearch]);
 
   const sortedAgencies = useMemo(() => {
-    return [...filteredAgencies].sort((a, b) => b.id - a.id);
+    return [...filteredAgencies].sort((a, b) => a.id - b.id);
   }, [filteredAgencies]);
 
   useEffect(() => {
@@ -508,7 +532,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                           title="اضغط لعرض التفاصيل"
                         >
                           <td className="cell-num col-seq">{currentPage * PAGE_SIZE + idx + 1}</td>
-                          <td className="col-date">{agency.date || "—"}</td>
+                          <td className="col-date">{formatDisplayDate(agency.date)}</td>
                           <td className="col-old-agent cell-bold">{agency.old_agent_name}</td>
                           <td className="col-car-num">{agency.car_number || "—"}</td>
                           <td className="col-model">{agency.car_model || "—"}</td>
@@ -565,7 +589,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
           </section>
         </>
       ) : agenciesTab === "details" && selectedAgency ? (
-        <div className="agency-unified-details" onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void handleSaveAgency(); } }}>
+        <div className="agency-unified-details" onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (!isDuplicateAgencyPlate) void handleSaveAgency(); } }}>
 
           {/* ── صف 1: الوكيلان والهاتف ── */}
           <div className="agency-section">
@@ -630,7 +654,9 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
           <div className="agency-section">
             <div className="agency-fields-row">
               <div className="agency-field agency-field--md">
-                <label className="agency-label">رقم اللوحة</label>
+                <label className="agency-label" style={isDuplicateAgencyPlate ? { color: "#ff5a5a" } : undefined}>
+                  {isDuplicateAgencyPlate ? "رقم اللوحة مضاف!" : "رقم اللوحة"}
+                </label>
                 <TextInput
                   id="agency-car-number"
                   inputSize="sm"
@@ -638,6 +664,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                   inputMode="decimal"
                   value={selectedAgency.car_number}
                   dir="ltr"
+                  className={isDuplicateAgencyPlate ? "input--error" : undefined}
                   onInput={(e: React.FormEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits((e.target as HTMLInputElement).value).replace(/[^\w\s\u0600-\u06FF-]/g, "") }); }}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits(e.target.value).replace(/[^\w\s\u0600-\u06FF-]/g, "") }); }}
                   onBlur={(e: React.FocusEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits(e.target.value).replace(/[^\w\s\u0600-\u06FF-]/g, "") }); }}
@@ -681,8 +708,13 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
             <GoldFxButton
               type="button"
               variant="green"
-              style={{ flex: 1, margin: 0 }}
+              style={{
+                flex: 1,
+                margin: 0,
+                ...(isDuplicateAgencyPlate ? { opacity: 0.42, cursor: "not-allowed", filter: "grayscale(0.55)" } : {}),
+              }}
               onClick={handleSaveAgency}
+              disabled={isDuplicateAgencyPlate}
             >
               <span className="gold-fx-btn__label">حفظ</span>
             </GoldFxButton>
@@ -716,7 +748,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                 type="button"
                 variant="success"
                 onClick={() => void handleAgencySaveConfirmSave()}
-                disabled={saving}
+                disabled={saving || isDuplicateAgencyPlate}
               >
                 {saving ? "جاري الحفظ..." : "نعم"}
               </ActionButton>

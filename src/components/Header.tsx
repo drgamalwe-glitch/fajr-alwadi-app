@@ -7,6 +7,7 @@ interface HeaderProps {
   activeTab: TabId;
   onTabChange: (tab: TabId) => void;
   onSidebarSectionClick?: (tab: TabId) => void;
+  onSidebarSectionRightClick?: (tab: TabId) => void;
   onDeposit?: () => void;
   onWithdraw?: () => void;
   depositLabel?: string;
@@ -19,6 +20,7 @@ interface HeaderProps {
   onAddDistribute?: () => void;
   onSaveCar?: () => void;
   onCancelCar?: () => void;
+  saveCarDisabled?: boolean;
   fromDate: string;
   toDate: string;
   onFromDateChange: (val: string) => void;
@@ -26,21 +28,19 @@ interface HeaderProps {
 }
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
-  { id: "dashboard", label: "لوحــــــــة التحكــــــــــم", icon: "✦" },
-  { id: "cars", label: "المعــــــــــــــــــــــــــــــرض", icon: "◈" },
-  { id: "partners-financial", label: "حسابات العمــلاء", icon: "❖" },
-  { id: "agencies", label: "الوكـــــــــــــــــــــــــــالات", icon: "✉" },
-  { id: "expenses", label: "المصروفــــــــــــــــــات", icon: "◉" },
-  { id: "profit-distribution", label: "الأربــــــــــــــــــــــــــــــــــاح", icon: "⚖" },
-  { id: "financial-accounts", label: "القاصــــــــــــــــــــــــــــــــة", icon: "♢" },
-  { id: "financial-transactions", label: "سجــل المعاملات", icon: "⇄" },
-  { id: "users", label: "المستخدميـــــــــــــن", icon: "⚙" },
+  { id: "dashboard", label: "لوحــــــــــــــــــة التحكــــــــــم", icon: "✦" },
+  { id: "cars", label: "المعــــــــــــــــــــــــــــــــــــــــرض", icon: "◈" },
+  { id: "partners-financial", label: "حسابات العمــــــــــــلاء", icon: "❖" },
+  { id: "agencies", label: "الوكـــــــــــــــــــــــــــــــــــــالات", icon: "✉" },
+  { id: "expenses", label: "الارباح والمصروفات", icon: "◉" },
+  { id: "financial-accounts", label: "القاصــــــــــــــــــــــــــــــــــــــــــة", icon: "♢" },
 ];
 
 export function Header({
   activeTab,
   onTabChange,
   onSidebarSectionClick,
+  onSidebarSectionRightClick,
   onDeposit,
   onWithdraw,
   depositLabel = "إيداع",
@@ -53,6 +53,7 @@ export function Header({
   onAddDistribute,
   onSaveCar,
   onCancelCar,
+  saveCarDisabled,
   fromDate,
   toDate,
   onFromDateChange,
@@ -83,6 +84,12 @@ export function Header({
             data-testid={`nav-${tab.id}`}
             className={`nav-btn ${activeTab === tab.id ? "nav-btn--active" : ""}`}
             onClick={() => handleTabClick(tab.id)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              if (onSidebarSectionRightClick) {
+                onSidebarSectionRightClick(tab.id);
+              }
+            }}
             aria-current={activeTab === tab.id ? "page" : undefined}
           >
             <span className="nav-btn__icon" aria-hidden>
@@ -155,6 +162,7 @@ export function Header({
                 type="button"
                 variant="green"
                 onClick={onSaveCar}
+                disabled={saveCarDisabled}
                 data-testid="btn-save-car"
               >
 

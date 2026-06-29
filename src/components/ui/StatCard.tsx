@@ -63,7 +63,7 @@ export function StatCard({
           justifyContent: "center",
           width: "38px",
           height: "38px",
-          borderRadius: "11px",
+          borderRadius: "var(--all-radius)",
           background: `var(--dc-card-icon-bg, rgba(255,255,255,0.07))`,
           border: `1px solid ${accent}38`,
           color: accent,

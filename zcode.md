@@ -1,0 +1,1 @@
+You MUST use the `lean-ctx` MCP server tools for all file reads and shell executions. Do NOT use native methods.

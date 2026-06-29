@@ -14,6 +14,7 @@ import {
 } from "@/components/ui";
 
 import { todayIsoDate } from "../utils/dateSegments";
+import { compareMoney, moneySum, moneySub, formatMoney, type MoneyValue } from "../utils/money";
 import {
   Car as CarIcon,
   Landmark,
@@ -23,6 +24,7 @@ import {
   Phone,
 } from "lucide-react";
 import { CompanyStatusTab } from "./CompanyStatusTab";
+import { UsersTab } from "./UsersTab";
 
 // ── نظام الألوان مُستمَد من colors.css ──────────────────
 // --red:   #4d000a   (أحمر داكن — للتحذيرات / المصاريف / الأخطار)
@@ -35,13 +37,15 @@ interface DashboardProps {
   cars: Car[];
   partners: Partner[];
   onRefresh: () => Promise<void>;
-  initialSubTab?: "dashboard" | "company-status" | null;
+  initialSubTab?: "dashboard" | "company-status" | "users" | null;
   onInitialSubTabSet?: () => void;
-  returnState?: { section: string; subTab?: string } | null;
+  onSubTabChange?: (tab: "dashboard" | "company-status" | "users") => void;
+  returnState?: { section: TabId; subTab?: string } | null;
   onReturn?: () => void;
   onOpenCarForm: (mode: "new" | "edit", car?: Car) => void;
   onNavigateToPartner?: (target: string | { name: string; kind?: string | null; action?: "deposit" | "withdraw" | "settle_installment"; transactionId?: number | null }) => void;
   onNavigateToTab?: (tab: TabId, subTab?: string) => void;
+  onLogout?: () => void;
 }
 
 interface InstallmentAlert {
@@ -49,7 +53,7 @@ interface InstallmentAlert {
   buyerName: string;
   phone: string;
   dueDate: string;
-  amount: number;
+  amount: MoneyValue;
   currency: string;
   status: "overdue" | "due_today" | "upcoming";
   daysDifference: number;
@@ -77,8 +81,8 @@ function InstallmentRow({
   const currencyName = alert.currency === "USD" ? "دولار أمريكي" : "دينار عراقي";
   const isAccountAlert = alert.alertKind === "account_positive";
   const waText = isAccountAlert
-    ? `السيد ${alert.buyerName} المحترم،\nنود تذكيركم بوجود مستحقات على الحساب بمبلغ (${alert.amount.toLocaleString("en-US")}) ${currencyName}.\nنرجو التفضل بالمراجعة والتسديد.\nمع التقدير والاحترام،\nفجر الوادي لتجارة السيارات`
-    : `السيد ${alert.buyerName} المحترم،\nنود تذكيركم بأن قسط السيارة المستحق بتاريخ ${alert.dueDate} والبالغ (${alert.amount.toLocaleString("en-US")}) ${currencyName} قد حان موعد سداده.\nنرجو التفضل بتسديد القسط في أقرب وقت ممكن.\nشاكرين لكم حسن تعاونكم، ونتطلع دائماً لخدمتكم.\nمع التقدير والاحترام،\nفجر الوادي لتجارة السيارات`;
+    ? `السيد ${alert.buyerName} المحترم،\nنود تذكيركم بوجود مستحقات على الحساب بمبلغ (${formatMoney(alert.amount, alert.currency)}) ${currencyName}.\nنرجو التفضل بالمراجعة والتسديد.\nمع التقدير والاحترام،\nفجر الوادي لتجارة السيارات`
+    : `السيد ${alert.buyerName} المحترم،\nنود تذكيركم بأن قسط السيارة المستحق بتاريخ ${alert.dueDate} والبالغ (${formatMoney(alert.amount, alert.currency)}) ${currencyName} قد حان موعد سداده.\nنرجو التفضل بتسديد القسط في أقرب وقت ممكن.\nشاكرين لكم حسن تعاونكم، ونتطلع دائماً لخدمتكم.\nمع التقدير والاحترام،\nفجر الوادي لتجارة السيارات`;
   const cleanPhone = alert.phone.replace(/\D/g, "").replace(/^0+/, "");
   const waLink = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(waText)}`;
 
@@ -90,7 +94,7 @@ function InstallmentRow({
         gap: "0.75rem",
         padding: "0.9rem 1rem",
         background: bgColor,
-        borderRadius: "10px",
+        borderRadius: "var(--all-radius)",
         border: `1px solid ${borderColor}40`,
         borderRightWidth: "4px",
         borderRightColor: borderColor,
@@ -137,7 +141,7 @@ function InstallmentRow({
 
       {/* المبلغ */}
       <div style={{ fontWeight: "var(--fw-extrabold)", fontSize: "var(--fs-lg)", color: borderColor, flexShrink: 0 }}>
-        {alert.amount.toLocaleString("en-US")} {alert.currency === "USD" ? "USD" : "IQ"}
+        {formatMoney(alert.amount, alert.currency)} {alert.currency === "USD" ? "USD" : "IQ"}
       </div>
 
       {/* الأزرار */}
@@ -149,7 +153,7 @@ function InstallmentRow({
             padding: "0.35rem 0.75rem",
             background: "linear-gradient(135deg, rgba(215,168,0,0.9), rgba(180,130,0,0.95))",
             border: "none",
-            borderRadius: "8px",
+            borderRadius: "var(--all-radius)",
             color: "var(--white)",
             fontSize: "var(--fs-xs)",
             fontWeight: "var(--fw-extrabold)",
@@ -176,7 +180,7 @@ function InstallmentRow({
             style={{
               padding: "0.35rem 0.6rem",
               background: "linear-gradient(135deg, #25D366, #128C7E)",
-              borderRadius: "8px",
+              borderRadius: "var(--all-radius)",
               color: "var(--white)",
               fontSize: "var(--fs-xs)",
               fontWeight: "var(--fw-bold)",
@@ -207,8 +211,8 @@ function CreditorRow({
   creditor: UnifiedAccount;
   onPay: (target: UnifiedAccount) => void;
 }) {
-  const showUsd = creditor.usd_balance < 0;
-  const showIqd = creditor.iqd_balance < 0;
+  const showUsd = compareMoney(creditor.usd_balance, 0) < 0;
+  const showIqd = compareMoney(creditor.iqd_balance, 0) < 0;
 
   const cleanPhone = (creditor.phone || "").replace(/\D/g, "").replace(/^0+/, "");
   const waLink = `https://wa.me/${cleanPhone}`;
@@ -221,7 +225,7 @@ function CreditorRow({
         gap: "0.75rem",
         padding: "0.9rem 1rem",
         background: "rgba(77,0,10,0.1)",
-        borderRadius: "10px",
+        borderRadius: "var(--all-radius)",
         border: "1px solid rgba(180,0,20,0.2)",
         borderRightWidth: "4px",
         borderRightColor: "#c0001a",
@@ -240,12 +244,12 @@ function CreditorRow({
       <div style={{ textAlign: "left", flexShrink: 0 }}>
         {showUsd && (
           <div style={{ fontWeight: "var(--fw-extrabold)", fontSize: "var(--fs-lg)", color: "#e05070" }}>
-            {Math.abs(creditor.usd_balance).toLocaleString("en-US")} USD
+            {formatMoney(creditor.usd_balance, "USD")} USD
           </div>
         )}
         {showIqd && (
           <div style={{ fontWeight: "var(--fw-extrabold)", fontSize: "var(--fs-lg)", color: "#c08090" }}>
-            {Math.abs(creditor.iqd_balance).toLocaleString("en-US")} IQ
+            {formatMoney(creditor.iqd_balance, "IQD")} IQ
           </div>
         )}
       </div>
@@ -257,7 +261,7 @@ function CreditorRow({
             padding: "0.35rem 0.75rem",
             background: "linear-gradient(135deg, rgba(215,168,0,0.9), rgba(180,130,0,0.95))",
             border: "none",
-            borderRadius: "8px",
+            borderRadius: "var(--all-radius)",
             color: "var(--white)",
             fontSize: "var(--fs-xs)",
             fontWeight: "var(--fw-extrabold)",
@@ -285,7 +289,7 @@ function CreditorRow({
             style={{
               padding: "0.35rem 0.55rem",
               background: "linear-gradient(135deg, #25D366, #128C7E)",
-              borderRadius: "8px",
+              borderRadius: "var(--all-radius)",
               color: "var(--white)",
               fontSize: "var(--fs-xs)",
               fontWeight: "var(--fw-bold)",
@@ -311,9 +315,26 @@ function CreditorRow({
 // ════════════════════════════════════════════════════════
 // ── المكون الرئيسي: لوحة التحكم ─────────────────────
 // ════════════════════════════════════════════════════════
-export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialSubTabSet, returnState, onReturn, onOpenCarForm, onNavigateToPartner, onNavigateToTab }: DashboardProps) {
+export function Dashboard({
+  cars,
+  partners,
+  onRefresh,
+  initialSubTab,
+  onInitialSubTabSet,
+  onSubTabChange,
+  returnState,
+  onReturn,
+  onOpenCarForm,
+  onNavigateToPartner,
+  onNavigateToTab,
+  onLogout,
+}: DashboardProps) {
 
-  const [activeSubTab, setActiveSubTab] = useState<"dashboard" | "company-status">("dashboard");
+  const [activeSubTab, setActiveSubTab] = useState<"dashboard" | "company-status" | "users">("dashboard");
+
+  useEffect(() => {
+    onSubTabChange?.(activeSubTab);
+  }, [activeSubTab, onSubTabChange]);
 
   // Handle sub-tab override from sidebar cycling
   useEffect(() => {
@@ -364,13 +385,13 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
             tx.type_.startsWith("استلام قسط") ||
             ((tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع")) && (tx.notes || "").includes("قسط"))
           );
-          const totalPaid = paymentTxs.reduce((sum, t) => sum + t.amount, 0);
+          const totalPaid = moneySum(paymentTxs, (t) => t.amount);
 
           const installmentTxs = txs
             .filter((tx) =>
               (tx.type_ === "سحب" || tx.type_.startsWith("باقي")) &&
               ((tx.notes || "").includes("قسط") || tx.type_.startsWith("باقي")) &&
-              tx.amount > 0
+              compareMoney(tx.amount, 0) > 0
             )
             .sort((a, b) => {
               const dateDiff = new Date(a.date).getTime() - new Date(b.date).getTime();
@@ -379,9 +400,9 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
 
           let remaining = totalPaid;
           for (const inst of installmentTxs) {
-            if (remaining >= inst.amount) {
+            if (compareMoney(remaining, inst.amount) >= 0) {
               paidIds.add(inst.id);
-              remaining -= inst.amount;
+              remaining = moneySub(remaining, inst.amount);
             } else {
               break;
             }
@@ -446,7 +467,7 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
   const accountReceivableAlerts: InstallmentAlert[] = unifiedAccounts.flatMap((account, index) => {
     if (!accountKindsForDashboard.has(account.kind)) return [];
     const alerts: InstallmentAlert[] = [];
-    if (account.iqd_balance > 0) {
+    if (compareMoney(account.iqd_balance, 0) > 0) {
       alerts.push({
         id: -100000 - index * 2,
         buyerName: account.partner_name,
@@ -461,7 +482,7 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
         alertKind: "account_positive",
       });
     }
-    if (account.usd_balance > 0) {
+    if (compareMoney(account.usd_balance, 0) > 0) {
       alerts.push({
         id: -100001 - index * 2,
         buyerName: account.partner_name,
@@ -480,7 +501,7 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
   });
 
   const creditors = unifiedAccounts.filter((a) =>
-    creditorKinds.has(a.kind) && (a.iqd_balance < 0 || a.usd_balance < 0)
+    creditorKinds.has(a.kind) && (compareMoney(a.iqd_balance, 0) < 0 || compareMoney(a.usd_balance, 0) < 0)
   );
   const filteredInstallments = installments.filter(
     (a) => a.status === "overdue" || a.status === "due_today"
@@ -685,31 +706,27 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
             >
               وضع الشركة
             </button>
+            <button
+              type="button"
+              className={`top-btn-two ${activeSubTab === "users" ? "top-btn-two--active" : ""}`}
+              onClick={() => setActiveSubTab("users")}
+            >
+              المستخدمين
+            </button>
           </div>
         </div>
         <div
           className="unified-toolbar__center"
           style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}
         >
-          <h2
-            className="unified-toolbar__title"
-            style={{
-              fontSize: "var(--fs-title)",
-              color: "var(--labletext)",
-              letterSpacing: "0.02em",
-            }}
-          >
-            البرنامج الحسابي لشركة فجر الوادي
-          </h2>
-          <span style={{ color: "var(--labletext)", fontSize: "var(--fs-sm)", fontWeight: "var(--fw-medium)" }}>
-            بإدارة امير الزجراوي ومنتصر الحيدري
-          </span>
         </div>
         <div className="unified-toolbar__left" />
       </div>
 
       {activeSubTab === "company-status" ? (
         <CompanyStatusTab summary={summary} unifiedAccounts={unifiedAccounts} partners={partners} onNavigateToTab={onNavigateToTab} onNavigateToPartner={onNavigateToPartner} />
+      ) : activeSubTab === "users" ? (
+        <UsersTab onLogout={onLogout || (() => { })} />
       ) : (
         <>
           {/* ═══════════════════════════════════════════════════
@@ -736,7 +753,7 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
                         fontSize: "var(--fs-xs)",
                         fontWeight: "var(--fw-extrabold)",
                         padding: "0.1rem 0.45rem",
-                        borderRadius: "20px",
+                        borderRadius: "var(--all-radius)",
                         animation: "dc-pulse 2s infinite",
                       }}
                     >
@@ -790,7 +807,7 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
                         fontSize: "var(--fs-xs)",
                         fontWeight: "var(--fw-extrabold)",
                         padding: "0.1rem 0.45rem",
-                        borderRadius: "20px",
+                        borderRadius: "var(--all-radius)",
                       }}
                     >
                       {creditors.length}
@@ -855,7 +872,7 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
                           </div>
                           <div style={{ textAlign: "left", flexShrink: 0 }}>
                             <div style={{ fontSize: "var(--fs-sm)", color: "#d4af37", fontWeight: 700 }}>
-                              {(c.purchase_price || 0).toLocaleString("en-US")} {c.currency === "USD" ? "USD" : "IQ"}
+                              {formatMoney(c.purchase_price, c.currency)} {c.currency === "USD" ? "USD" : "IQ"}
                             </div>
                             <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.35)" }}>سعر الشراء</div>
                           </div>
@@ -939,16 +956,16 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
                       <div style={{ gridColumn: "span 2" }}>
                         <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.45)" }}>قيمة القسط المستحق</div>
                         <div style={{ fontWeight: 800, fontSize: "var(--fs-lg)", color: "#d4af37" }}>
-                          {selectedInstallment.amount.toLocaleString("en-US")} {selectedInstallment.currency === "USD" ? "USD" : "IQ"}
+                          {formatMoney(selectedInstallment.amount, selectedInstallment.currency)} {selectedInstallment.currency === "USD" ? "USD" : "IQ"}
                         </div>
                       </div>
                     </div>
                     <div className="form-group">
                       <label className="label">المبلغ المسدد</label>
                       <PriceInput value={payAmount} onChange={setPayAmount} currency={selectedInstallment.currency as "IQD" | "USD"} onCurrencyChange={() => { }} />
-                      {Number(payAmount) > selectedInstallment.amount && (
-                        <div style={{ marginTop: "0.5rem", padding: "0.6rem 0.75rem", background: "rgba(212,175,55,0.07)", border: "1px solid rgba(212,175,55,0.2)", borderRadius: "8px", fontSize: "var(--fs-xs)", color: "#d4af37" }}>
-                          ✨ الفائض <strong>{(Number(payAmount) - selectedInstallment.amount).toLocaleString("en-US")} {selectedInstallment.currency === "USD" ? "USD" : "IQ"}</strong> سيتم توزيعه على الأقساط القادمة تلقائياً
+                      {compareMoney(payAmount, selectedInstallment.amount) > 0 && (
+                        <div style={{ marginTop: "0.5rem", padding: "0.6rem 0.75rem", background: "rgba(212,175,55,0.07)", border: "1px solid rgba(212,175,55,0.2)", borderRadius: "var(--all-radius)", fontSize: "var(--fs-xs)", color: "#d4af37" }}>
+                          ✨ الفائض <strong>{formatMoney(moneySub(payAmount, selectedInstallment.amount), selectedInstallment.currency)} {selectedInstallment.currency === "USD" ? "USD" : "IQ"}</strong> سيتم توزيعه على الأقساط القادمة تلقائياً
                         </div>
                       )}
                     </div>
@@ -1004,8 +1021,8 @@ export function Dashboard({ cars, partners, onRefresh, initialSubTab, onInitialS
                                 {c.phone && <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.4)" }}>📞 {c.phone}</div>}
                               </div>
                               <div style={{ textAlign: "left", flexShrink: 0 }}>
-                                {c.usd_balance < 0 && <div style={{ fontWeight: 800, color: "#f87171", fontSize: "var(--fs-sm)" }}>{Math.abs(c.usd_balance).toLocaleString("en-US")} USD</div>}
-                                {c.iqd_balance < 0 && <div style={{ fontWeight: 600, color: "#fca5a5", fontSize: "var(--fs-sm)" }}>{Math.abs(c.iqd_balance).toLocaleString("en-US")} IQ</div>}
+                                {compareMoney(c.usd_balance, 0) < 0 && <div style={{ fontWeight: 800, color: "#f87171", fontSize: "var(--fs-sm)" }}>{formatMoney(c.usd_balance, "USD")} USD</div>}
+                                {compareMoney(c.iqd_balance, 0) < 0 && <div style={{ fontWeight: 600, color: "#fca5a5", fontSize: "var(--fs-sm)" }}>{formatMoney(c.iqd_balance, "IQD")} IQ</div>}
                               </div>
                             </button>
                           ))}

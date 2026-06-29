@@ -18,6 +18,7 @@ accounting-test-support = ["tauri/test"]
 
 [dependencies]
 tauri = { version = "2", features = [] }
+tauri-plugin-fs = "2"
 tauri-plugin-opener = "2"
 open = "5"
 serde = { version = "1", features = ["derive"] }
@@ -38,3 +39,11 @@ panic = "abort"
 codegen-units = 1
 lto = true
 opt-level = "z"
+strip = true
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.dev.build-override]
+debug = 0

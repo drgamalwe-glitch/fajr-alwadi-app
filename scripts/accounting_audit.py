@@ -396,7 +396,7 @@ def audit_db(db_path):
         FROM financial_ledger fl
         WHERE fl.reference_type = 'partner_transaction'
           AND fl.account_type = 'receivable'
-          AND fl.type_ = 'ايداع مقدمة سيارة'
+          AND fl.type_ IN ('ايداع مقدمة سيارة', 'ايداع مقدمة', 'استلام قسط سيارة', 'تسديد قسط')
           AND fl.reference_id IN (
               SELECT CAST(pt.id AS TEXT) FROM partner_transactions pt
               WHERE pt.source_type = 'customer_payment'
@@ -432,7 +432,7 @@ def audit_db(db_path):
     print("\n[24] Car purchase source_type check...")
     bad_purchase = conn.execute("""
         SELECT COUNT(*) FROM partner_transactions
-        WHERE type = 'سحب شراء سيارة'
+        WHERE type = 'سحب شراء'
           AND source_type = 'car_sale'
           AND source_role = 'cash_payment'
     """).fetchone()[0]
@@ -745,16 +745,16 @@ def audit_db(db_path):
     # 40. No duplicate sale-generated customer rows per car (ISSUE 2)
     print("\n[40] No duplicate sale-generated customer rows per car...")
     dup_customer_rows = conn.execute("""
-        SELECT related_source_id, source_role, COUNT(*) as cnt
+        SELECT related_source_id, source_role, source_id, COUNT(*) as cnt
         FROM partner_transactions
         WHERE kind = 'زبون' AND related_source_type = 'car'
           AND source_role IS NOT NULL
-        GROUP BY related_source_id, source_role
+        GROUP BY related_source_id, source_role, source_id
         HAVING cnt > 1
     """).fetchall()
     if dup_customer_rows:
         for r in dup_customer_rows:
-            errors.append(f"FAIL: Car {r['related_source_id']} has {r['cnt']} customer rows with role '{r['source_role']}'")
+            errors.append(f"FAIL: Car {r['related_source_id']} has {r['cnt']} customer rows with role '{r['source_role']}' and source_id '{r['source_id']}'")
     else:
         print("  PASS")
 
@@ -777,7 +777,8 @@ def audit_db(db_path):
     print("\n[42] update_partner financial_ledger consistency...")
     orphan_account_ids = conn.execute("""
         SELECT COUNT(*) FROM financial_ledger
-        WHERE account_id NOT IN (SELECT partner_name FROM partners)
+        WHERE account_type IN ('receivable', 'funder', 'payable', 'investor')
+          AND account_id NOT IN (SELECT partner_name FROM partners)
     """).fetchone()[0]
     if orphan_account_ids > 0:
         errors.append(f"FAIL: {orphan_account_ids} ledger entries with non-existing account_id")
@@ -870,7 +871,8 @@ def audit_db(db_path):
     print("\n[48] No orphan account_ids in financial_ledger...")
     partial_renames = conn.execute("""
         SELECT COUNT(*) FROM financial_ledger fl
-        WHERE fl.account_id NOT IN (
+        WHERE fl.account_type IN ('receivable', 'funder', 'payable', 'investor')
+          AND fl.account_id NOT IN (
             SELECT partner_name FROM partners
         )
     """).fetchone()[0]

@@ -22,4 +22,5 @@ export const SECTION_TABS: Record<string, readonly string[]> = {
   dashboard: ["dashboard", "company-status"],
   cars: ["available", "sold"],
   "partners-financial": ["customers", "personal", "receivables", "liabilities"],
+  "financial-accounts": ["قاصه", "الكاش"],
 };

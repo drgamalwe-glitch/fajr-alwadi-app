@@ -392,7 +392,7 @@ def check(db_path):
     print("\n[15] CAR PURCHASE SOURCE TYPE")
     bad_purchase_source = conn.execute("""
         SELECT COUNT(*) FROM partner_transactions
-        WHERE type = 'سحب شراء سيارة'
+        WHERE type = 'سحب شراء'
           AND source_type = 'car_sale'
           AND source_role = 'cash_payment'
     """).fetchone()[0]
@@ -784,7 +784,7 @@ def check(db_path):
             FROM partner_transactions
             WHERE kind = 'زبون' AND related_source_type = 'car'
               AND source_role IS NOT NULL
-            GROUP BY related_source_id, source_role
+            GROUP BY related_source_id, source_role, source_id
             HAVING cnt > 1
         """).fetchall()
         if dup_customer:
@@ -827,8 +827,17 @@ def check(db_path):
     print("\n[38] FINANCIAL LEDGER ACCOUNT_ID CONSISTENCY")
     orphan_accounts = conn.execute("""
         SELECT COUNT(*) FROM financial_ledger
-        WHERE account_id NOT IN (SELECT partner_name FROM partners)
+        WHERE account_type IN ('receivable', 'funder', 'payable', 'investor')
+          AND account_id NOT IN (SELECT partner_name FROM partners)
     """).fetchone()[0]
+    if orphan_accounts > 0:
+        details = conn.execute("""
+            SELECT account_type, account_id, debit, credit, type_, reference_type, reference_id FROM financial_ledger
+            WHERE account_type IN ('receivable', 'funder', 'payable', 'investor')
+              AND account_id NOT IN (SELECT partner_name FROM partners)
+        """).fetchall()
+        for d in details:
+            print("  ORPHAN DETAILED:", dict(d))
     test("No orphan account_ids in financial_ledger",
          orphan_accounts == 0, f"orphan count={orphan_accounts}")
 
@@ -929,7 +938,8 @@ def check(db_path):
     print("\n[44] UPDATE_PARTNER TRANSACTION INTEGRITY")
     orphan_ids = conn.execute("""
         SELECT COUNT(*) FROM financial_ledger fl
-        WHERE fl.account_id NOT IN (SELECT partner_name FROM partners)
+        WHERE fl.account_type IN ('receivable', 'funder', 'payable', 'investor')
+          AND fl.account_id NOT IN (SELECT partner_name FROM partners)
     """).fetchone()[0]
     test("No orphan financial_ledger account_ids",
          orphan_ids == 0, f"orphan count={orphan_ids}")

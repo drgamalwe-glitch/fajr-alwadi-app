@@ -87,6 +87,32 @@ export interface PartnerTransaction {
   affects_profit?: number;
   related_source_type?: string | null;
   related_source_id?: string | null;
+  original_amount?: MoneyValue | null;
+  current_amount?: MoneyValue | null;
+  actual_paid_amount?: MoneyValue | null;
+  paid_event_id?: number | null;
+  due_date?: string | null;
+  ledger_batch_id?: string | null;
+  is_reversed?: number;
+}
+
+export interface InstallmentPreviewRow {
+  installment_id: number;
+  due_date: string;
+  old_amount: MoneyValue;
+  new_amount: MoneyValue;
+  currency: string;
+  status: string;
+}
+
+export interface InstallmentPaymentPreview {
+  installment_id: number;
+  current_amount: MoneyValue;
+  actual_paid_amount: MoneyValue;
+  difference_amount: MoneyValue;
+  affected_count: number;
+  redistribution_direction: string;
+  preview_installments: InstallmentPreviewRow[];
 }
 
 export interface ExpenseEntry {

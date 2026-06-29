@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { buildCarInvokeArgs, callTauri } from "../api/tauri";
 import type { Car, CarExpenseRecord, CarFormState, Partner, PartnerTransaction } from "../types";
 import { compareCarNetProfit, carProfitPercentage } from "../utils/finance";
-import { cleanAndNormalizeNumbers, toEnglishDigits } from "../utils/numberInput";
+import { cleanAndNormalizeNumbers, normalizePhoneNumber, toEnglishDigits } from "../utils/numberInput";
 import { compareMoney, moneyAdd, moneySum } from "../utils/money";
 import { todayIsoDate } from "../utils/dateSegments";
 import { CarFormPanel } from "./CarFormPanel";
@@ -19,19 +19,21 @@ interface CarsTabProps {
   cars: Car[];
   partners: Partner[];
   onRefresh: () => Promise<void>;
-  carFormTrigger: { mode: "new" | "edit"; car?: Car } | null;
+  carFormTrigger: { mode: "new" | "edit"; car?: Car; initialPage?: 0 | 1 } | null;
   onClearCarFormTrigger: () => void;
   searchOpen?: boolean;
   onSearchClose?: () => void;
   onAddCarChange?: (onAddCar: { action: () => void } | null) => void;
   onAddBatchCarChange?: (onAddBatchCar: { action: () => void } | null) => void;
-  onCarFormActionsChange?: (actions: { onSave: () => void; onCancel: () => void } | null) => void;
+  onCarFormActionsChange?: (actions: { onSave: () => void; onCancel: () => void; disabled?: boolean } | null) => void;
   onFormDirtyChange?: (isDirty: boolean) => void;
   requestCloseRef?: React.MutableRefObject<{ request: (afterClose?: () => void) => void } | null>;
   initialSubTab?: "available" | "sold" | null;
   onInitialSubTabSet?: () => void;
+  onSubTabChange?: (tab: "available" | "sold") => void;
   returnState?: { section: string; subTab?: string } | null;
   onReturn?: () => void;
+  onNavigateToPartner?: (name: string, kind?: string) => void;
 }
 
 /** وضع اللوحة الجانبية */
@@ -99,7 +101,7 @@ function carToForm(car: Car): CarFormState {
     amountRemaining: String(car.amount_remaining ?? 0),
     installmentMonths: String(car.installment_months ?? 1),
     buyerName: car.buyer_name ?? "",
-    phone: car.buyer_phone ?? "",
+    phone: normalizePhoneNumber(car.buyer_phone ?? ""),
     purchaseDate: car.purchase_date ?? "",
     saleDate: car.sale_date ?? "",
     deliveryDate: car.delivery_date ?? "",
@@ -132,13 +134,33 @@ export function CarsTab({
   requestCloseRef,
   initialSubTab,
   onInitialSubTabSet,
+  onSubTabChange,
   returnState,
   onReturn,
+  onNavigateToPartner,
 }: CarsTabProps) {
   const [form, setForm] = useState<CarFormState>(emptyForm);
   const formRef = useRef<CarFormState>(emptyForm());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode | null>(null);
+  const [isCarFormValid, setIsCarFormValid] = useState(false);
+  const [initialFormPage, setInitialFormPage] = useState<0 | 1>(0);
+  const [receivedInstallmentsTotal, setReceivedInstallmentsTotal] = useState(0);
+  const [receivedInstallmentsCount, setReceivedInstallmentsCount] = useState(0);
+  const [saleFieldsLocked, setSaleFieldsLocked] = useState(false);
+  const [salePaymentContextLoading, setSalePaymentContextLoading] = useState(false);
+
+  const onFormDirtyChangeRef = useRef(onFormDirtyChange);
+  onFormDirtyChangeRef.current = onFormDirtyChange;
+
+  const onInitialSubTabSetRef = useRef(onInitialSubTabSet);
+  onInitialSubTabSetRef.current = onInitialSubTabSet;
+
+  const onAddCarChangeRef = useRef(onAddCarChange);
+  onAddCarChangeRef.current = onAddCarChange;
+
+  const onAddBatchCarChangeRef = useRef(onAddBatchCarChange);
+  onAddBatchCarChangeRef.current = onAddBatchCarChange;
 
   // Batch Car states
   interface BatchCarRow {
@@ -260,6 +282,86 @@ export function CarsTab({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [searchHighlightIdx, setSearchHighlightIdx] = useState(0);
   const [carsTab, setCarsTab] = useState<CarsTabId>("available");
+
+  useEffect(() => {
+    onSubTabChange?.(carsTab);
+  }, [carsTab, onSubTabChange]);
+
+  const [duplicateNumIndexes, setDuplicateNumIndexes] = useState<Set<number>>(new Set());
+  const [duplicateChassisIndexes, setDuplicateChassisIndexes] = useState<Set<number>>(new Set());
+  const [isBatchFormValid, setIsBatchFormValid] = useState(false);
+
+  useEffect(() => {
+    if (panelMode !== "batch") return;
+
+    const dupNums = new Set<number>();
+    const dupChassis = new Set<number>();
+
+    const seenNums = new Map<string, number>();
+    const seenChassis = new Map<string, number>();
+
+    batchRows.forEach((row, idx) => {
+      const num = row.num.trim().toUpperCase();
+      const chassis = row.chassis.trim().toUpperCase();
+
+      if (num) {
+        if (seenNums.has(num)) {
+          dupNums.add(idx);
+          dupNums.add(seenNums.get(num)!);
+        } else {
+          seenNums.set(num, idx);
+        }
+
+        const existingByNum = cars.find(c =>
+          c.car_number.trim().toUpperCase() === num ||
+          (c.car_plate_num ?? "").trim().toUpperCase() === num
+        );
+        if (existingByNum) {
+          dupNums.add(idx);
+        }
+      }
+
+      if (chassis) {
+        if (seenChassis.has(chassis)) {
+          dupChassis.add(idx);
+          dupChassis.add(seenChassis.get(chassis)!);
+        } else {
+          seenChassis.set(chassis, idx);
+        }
+
+        const existingByChassis = cars.find(c =>
+          (c.chassis_number ?? "").trim().toUpperCase() === chassis
+        );
+        if (existingByChassis) {
+          dupChassis.add(idx);
+        }
+      }
+    });
+
+    setDuplicateNumIndexes(dupNums);
+    setDuplicateChassisIndexes(dupChassis);
+
+    const allValid = batchRows.every((row, idx) => {
+      const hasFields = !!row.model.trim() &&
+        !!row.year.trim() &&
+        !!row.color.trim() &&
+        row.purchase !== "" &&
+        Number(row.purchase) > 0 &&
+        !!row.num.trim() &&
+        !!row.chassis.trim();
+
+      if (!hasFields) return false;
+
+      if (idx === 0 && (row.purchaseType === "تمويل" || row.purchaseType === "شركة")) {
+        if (!row.financerName.trim()) return false;
+      }
+
+      return true;
+    });
+
+    setIsBatchFormValid(allValid && dupNums.size === 0 && dupChassis.size === 0);
+  }, [batchRows, cars, panelMode]);
+
   const [sortConfig, setSortConfig] = useState<{ key: CarSortKey; direction: "asc" | "desc" } | null>(null);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -302,31 +404,37 @@ export function CarsTab({
   hasFormChangesRef.current = hasFormChanges;
 
   useEffect(() => {
-    onFormDirtyChange?.(hasFormChanges);
-  }, [hasFormChanges, onFormDirtyChange]);
+    onFormDirtyChangeRef.current?.(hasFormChanges);
+  }, [hasFormChanges]);
 
   useEffect(() => {
     if (initialSubTab) {
       setCarsTab(initialSubTab);
-      onInitialSubTabSet?.();
+      onInitialSubTabSetRef.current?.();
     }
-  }, [initialSubTab, onInitialSubTabSet]);
+  }, [initialSubTab]);
 
   /* ── فلترة وترتيب ── */
   const filteredCars = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = toEnglishDigits(search.trim()).toLowerCase();
     let result = cars.filter((car) => {
       const matchesStatus =
-        carsTab === "available" ? car.status === "متوفرة"
+        q !== ""
+          ? true
+          : carsTab === "available"
+          ? car.status === "متوفرة"
           : car.status === "مبيوعة";
       const matchesSearch =
         !q ||
         car.car_number.toLowerCase().includes(q) ||
         car.car_name.toLowerCase().includes(q) ||
+        (car.car_plate_num ?? "").toLowerCase().includes(q) ||
         (car.car_model ?? "").toLowerCase().includes(q) ||
-        (car.car_year ?? "").includes(q) ||
+        (car.car_year ?? "").toLowerCase().includes(q) ||
         (car.chassis_number ?? "").toLowerCase().includes(q) ||
-        (car.color ?? "").toLowerCase().includes(q);
+        (car.color ?? "").toLowerCase().includes(q) ||
+        (car.buyer_name ?? "").toLowerCase().includes(q) ||
+        (car.buyer_phone ?? "").toLowerCase().includes(q);
       return matchesStatus && matchesSearch;
     });
 
@@ -380,19 +488,97 @@ export function CarsTab({
   const showToast = (msg: string) => setToast(msg);
 
   /* نقرة واحدة → تعديل مباشر */
-  const handleSingleClick = (car: Car) => {
+  const loadSalePaymentContext = async (car: Car, baseForm: CarFormState) => {
+    const isDeferredSale = car.status === "مبيوعة" && (car.payment_type === "اقساط" || car.payment_type === "موعد");
+    if (!isDeferredSale || !car.buyer_name?.trim()) {
+      setReceivedInstallmentsTotal(0);
+      setReceivedInstallmentsCount(0);
+      setSaleFieldsLocked(false);
+      setSalePaymentContextLoading(false);
+      return;
+    }
+
+    setSalePaymentContextLoading(true);
+    try {
+      const txs = await callTauri<PartnerTransaction[]>("get_partner_transactions", {
+        partnerName: car.buyer_name.trim(),
+        kind: "زبون",
+      });
+      const activeTxs = (txs || []).filter((tx) => Number(tx.is_reversed ?? 0) === 0);
+      const isForCar = (tx: PartnerTransaction) =>
+        tx.related_source_id === car.car_number ||
+        (tx.source_id ?? "").startsWith(`${car.car_number}:`) ||
+        (tx.notes ?? "").includes(`#بيع_سيارة_${car.car_number}`);
+      const downPayment = activeTxs
+        .filter((tx) =>
+          tx.source_type === "customer_sale_payment" &&
+          tx.source_role === "sale_down_payment" &&
+          isForCar(tx)
+        )
+        .reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
+      const paymentRows = activeTxs.filter((tx) =>
+        tx.source_type === "customer_payment" &&
+        tx.source_role === "customer_payment" &&
+        isForCar(tx) &&
+        ((tx.type_ ?? "").includes("قسط") || (tx.notes ?? "").includes("قسط#"))
+      );
+      const paidScheduleRows = activeTxs.filter((tx) =>
+        tx.source_type === "customer_installment_schedule" &&
+        tx.source_role === "installment_schedule" &&
+        (tx.type_ ?? "").startsWith("واصل") &&
+        (tx.source_id ?? "").startsWith(`${car.car_number}:installment:`)
+      );
+      const paidTotal = paymentRows.length > 0
+        ? paymentRows.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0)
+        : paidScheduleRows.reduce((sum, tx) => sum + (Number(tx.actual_paid_amount ?? tx.amount) || 0), 0);
+      const paidCount = paymentRows.length > 0 ? paymentRows.length : paidScheduleRows.length;
+      const adjustedForm = {
+        ...baseForm,
+        amountPaid: String(downPayment || 0),
+        amountRemaining: String(Math.max(0, Number(baseForm.selling) - (downPayment || 0) - paidTotal)),
+      };
+
+      if (selectedId === car.car_number || formRef.current.oldNum === car.car_number || formRef.current.num === car.car_number) {
+        setReceivedInstallmentsTotal(paidTotal);
+        setReceivedInstallmentsCount(paidCount);
+        setSaleFieldsLocked(paidCount > 0);
+        replaceForm(adjustedForm);
+        initialFormRef.current = JSON.parse(JSON.stringify(adjustedForm));
+      }
+    } catch (err) {
+      console.error("فشل تحميل حالة دفعات السيارة:", err);
+      setReceivedInstallmentsTotal(0);
+      setReceivedInstallmentsCount(0);
+      setSaleFieldsLocked(false);
+    } finally {
+      setSalePaymentContextLoading(false);
+    }
+  };
+
+  const handleSingleClick = (car: Car, initialPage: 0 | 1 = 0) => {
     const newForm = carToForm(car);
     setSelectedId(car.car_number);
+    const isSoldCar = car.status === "مبيوعة" || (car.buyer_name && car.buyer_name.trim() !== "");
+    setInitialFormPage(isSoldCar ? initialPage : 0);
+    setReceivedInstallmentsTotal(0);
+    setReceivedInstallmentsCount(0);
+    setSaleFieldsLocked(false);
     replaceForm(newForm);
     initialFormRef.current = JSON.parse(JSON.stringify(newForm));
     setExpenseDirty(false);
     setPanelMode("edit");
+    void loadSalePaymentContext(car, newForm);
   };
 
   /* سيارة جديدة */
   const startNewCar = () => {
     const newForm = { ...emptyForm(), purchaseDate: todayIsoDate() };
     setSelectedId(null);
+    setInitialFormPage(0);
+    setReceivedInstallmentsTotal(0);
+    setReceivedInstallmentsCount(0);
+    setSaleFieldsLocked(false);
+    setSalePaymentContextLoading(false);
     replaceForm(newForm);
     initialFormRef.current = JSON.parse(JSON.stringify(newForm));
     setExpenseDirty(false);
@@ -401,6 +587,11 @@ export function CarsTab({
 
   const closePanel = () => {
     setSelectedId(null);
+    setInitialFormPage(0);
+    setReceivedInstallmentsTotal(0);
+    setReceivedInstallmentsCount(0);
+    setSaleFieldsLocked(false);
+    setSalePaymentContextLoading(false);
     replaceForm(emptyForm());
     initialFormRef.current = null;
     setExpenseDirty(false);
@@ -455,19 +646,19 @@ export function CarsTab({
     if (carFormTrigger.mode === "new") {
       startNewCar();
     } else if (carFormTrigger.mode === "edit" && carFormTrigger.car) {
-      handleSingleClick(carFormTrigger.car);
+      handleSingleClick(carFormTrigger.car, carFormTrigger.initialPage ?? 0);
     }
     onClearCarFormTrigger();
   }, [carFormTrigger]);
 
   useEffect(() => {
-    onAddCarChange?.({ action: startNewCar });
-    onAddBatchCarChange?.({ action: openBatchCountModal });
+    onAddCarChangeRef.current?.({ action: startNewCar });
+    onAddBatchCarChangeRef.current?.({ action: openBatchCountModal });
     return () => {
-      onAddCarChange?.(null);
-      onAddBatchCarChange?.(null);
+      onAddCarChangeRef.current?.(null);
+      onAddBatchCarChangeRef.current?.(null);
     };
-  }, [onAddCarChange, onAddBatchCarChange]);
+  }, []);
 
   useEffect(() => {
     if (panelMode !== null) {
@@ -488,6 +679,7 @@ export function CarsTab({
         onCancel: () => {
           handleClosePanel();
         },
+        disabled: panelMode === "batch" ? !isBatchFormValid : !isCarFormValid || salePaymentContextLoading,
       });
     } else {
       onCarFormActionsChange?.(null);
@@ -495,7 +687,7 @@ export function CarsTab({
     return () => {
       onCarFormActionsChange?.(null);
     };
-  }, [panelMode, onCarFormActionsChange]);
+  }, [panelMode, onCarFormActionsChange, isCarFormValid, isBatchFormValid]);
 
   const patchForm = (patch: Partial<CarFormState>) => {
     const normalized: Record<string, unknown> = {};
@@ -512,7 +704,10 @@ export function CarsTab({
       next.installmentMonths = "1";
     } else {
       if ("selling" in patch || "amountPaid" in patch || "paymentType" in patch) {
-        next.amountRemaining = String(Math.max(0, Number(next.selling) - Number(next.amountPaid)));
+        const received = next.paymentType === "اقساط" || next.paymentType === "موعد"
+          ? receivedInstallmentsTotal
+          : 0;
+        next.amountRemaining = String(Math.max(0, Number(next.selling) - Number(next.amountPaid) - received));
       }
     }
     formRef.current = next;
@@ -533,6 +728,9 @@ export function CarsTab({
     </button>
   );
 
+  const getUnpaidInstallmentMonths = (formData: CarFormState) =>
+    Math.max(1, (Number(formData.installmentMonths) || 1) - receivedInstallmentsCount);
+
 
   /** Check if sold-car sale fields changed — triggers update_sold_car_with_accounting */
   function hasSoldCarSaleAccountingChange(originalCar: Car | undefined, formData: CarFormState): boolean {
@@ -545,9 +743,9 @@ export function CarsTab({
       || Math.abs(Number(originalCar.amount_paid ?? 0) - Number(formData.amountPaid ?? 0)) > 0.001
       || Math.abs(Number(originalCar.amount_remaining ?? 0) - Number(formData.amountRemaining ?? 0)) > 0.001
       || Number(originalCar.installment_months ?? 1) !== Number(formData.installmentMonths ?? 1) + 0
-      || Math.abs(Number(originalCar.monthly_payment ?? 0) - (Number(formData.amountRemaining ?? 0) / Math.max(1, Number(formData.installmentMonths ?? 1)))) > 0.001
+      || Math.abs(Number(originalCar.monthly_payment ?? 0) - (Number(formData.amountRemaining ?? 0) / getUnpaidInstallmentMonths(formData))) > 0.001
       || (originalCar.buyer_name ?? "") !== formData.buyerName.trim()
-      || (originalCar.buyer_phone ?? "") !== formData.phone.trim()
+      || normalizePhoneNumber(originalCar.buyer_phone ?? "") !== normalizePhoneNumber(formData.phone)
       || (originalCar.sale_date ?? "") !== (formData.saleDate ?? "")
       || (originalCar.delivery_date ?? "") !== (formData.deliveryDate ?? "")
       || (originalCar.first_payment_date ?? "") !== (formData.firstPaymentDate ?? "")
@@ -605,9 +803,9 @@ export function CarsTab({
           amountPaid: Number(data.amountPaid) || 0,
           amountRemaining: Number(data.amountRemaining) || 0,
           installmentMonths: data.paymentType === "اقساط" ? Number(data.installmentMonths) || 1 : null,
-          monthlyPayment: data.paymentType === "اقساط" ? (Number(data.amountRemaining) || 0) / Math.max(1, Number(data.installmentMonths) || 1) : null,
+          monthlyPayment: data.paymentType === "اقساط" ? (Number(data.amountRemaining) || 0) / getUnpaidInstallmentMonths(data) : null,
           buyerName: data.buyerName.trim(),
-          buyerPhone: data.phone.trim(),
+          buyerPhone: normalizePhoneNumber(data.phone),
           purchaseDate: data.purchaseDate || null,
           saleDate: data.saleDate || null,
           deliveryDate: data.deliveryDate || null,
@@ -623,7 +821,7 @@ export function CarsTab({
         await callTauri("update_sold_car_with_accounting", {
           carNumber: data.num,
           buyerName: data.buyerName.trim(),
-          buyerPhone: data.phone.trim(),
+          buyerPhone: normalizePhoneNumber(data.phone),
           sellingPrice: Number(data.selling) || 0,
           saleCurrency: data.saleCurrency || "IQD",
           saleDate: data.saleDate || todayIsoDate(),
@@ -633,7 +831,7 @@ export function CarsTab({
           installmentMonths: data.paymentType === "اقساط" ? Number(data.installmentMonths) || 1 : null,
           firstPaymentDate: data.firstPaymentDate || null,
           deliveryDate: data.deliveryDate || null,
-          monthlyPayment: data.paymentType === "اقساط" ? (Number(data.amountRemaining) || 0) / Math.max(1, Number(data.installmentMonths) || 1) : null,
+          monthlyPayment: data.paymentType === "اقساط" ? (Number(data.amountRemaining) || 0) / getUnpaidInstallmentMonths(data) : null,
         });
       } else if (isCostOrIdentityEdit) {
         // Cost or identity change: go through add_car which supports all purchase fields + oldNum
@@ -648,7 +846,7 @@ export function CarsTab({
         await callTauri("sell_car_with_accounting", {
           carNumber: data.num,
           buyerName: data.buyerName.trim(),
-          buyerPhone: data.phone.trim(),
+          buyerPhone: normalizePhoneNumber(data.phone),
           sellingPrice: Number(data.selling) || 0,
           saleCurrency: data.saleCurrency || "IQD",
           saleDate: data.saleDate || todayIsoDate(),
@@ -689,7 +887,7 @@ export function CarsTab({
   const executeSaleAutomation = async (formData: CarFormState) => {
     // 1. تنظيف البيانات والأسماء تماماً من المسافات الخفية في حقل البيع والمعرض
     const buyerName = formData.buyerName.trim();
-    const phone = formData.phone.trim();
+    const phone = normalizePhoneNumber(formData.phone);
 
     if (!buyerName) return;
 
@@ -1070,7 +1268,7 @@ export function CarsTab({
   };
 
   return (
-    <div className="cars-page" style={{ position: "relative", display: "flex", flexDirection: "column", gap: 0, flex: 1, minHeight: 0, height: "100%", overflow: "hidden" }}>
+    <div className="cars-page" data-active-tab={carsTab} style={{ position: "relative", display: "flex", flexDirection: "column", gap: 0, flex: 1, minHeight: 0, height: "100%", overflow: "hidden" }}>
       {toast && <div className="toast" role="status">{toast}</div>}
 
       {/* ── نافذة البحث المنبثقة ── */}
@@ -1108,7 +1306,7 @@ export function CarsTab({
                 ref={searchInputRef}
                 type="search"
                 className="search-popup__input"
-                placeholder="ابحث بالموديل أو رقم اللوحة أو الشاصي أو اللون..."
+                placeholder="ابحث بالموديل، اللوحة، الشاصي، اللون، اسم المشتري أو رقم الهاتف..."
                 value={search}
                 onChange={(e) => {
                   setSearch(e.target.value);
@@ -1157,7 +1355,7 @@ export function CarsTab({
                     {filteredCars.slice(0, 8).map((car, resultIdx) => {
                       const isSold = car.status === "مبيوعة";
                       const isHighlighted = resultIdx === searchHighlightIdx;
-                      const q = search.trim();
+                      const q = toEnglishDigits(search.trim());
                       const highlight = (text: string) => {
                         if (!q) return text;
                         const idx = text.toLowerCase().indexOf(q.toLowerCase());
@@ -1207,6 +1405,18 @@ export function CarsTab({
                               <span className="search-popup__item-chassis">
                                 <span className="search-popup__item-dot" aria-hidden>•</span>
                                 {highlight(car.chassis_number)}
+                              </span>
+                            )}
+                            {isSold && car.buyer_name && (
+                              <span className="search-popup__item-buyer">
+                                <span className="search-popup__item-dot" aria-hidden>•</span>
+                                👤 {highlight(car.buyer_name)}
+                              </span>
+                            )}
+                            {isSold && car.buyer_phone && (
+                              <span className="search-popup__item-phone">
+                                <span className="search-popup__item-dot" aria-hidden>•</span>
+                                📞 {highlight(car.buyer_phone)}
                               </span>
                             )}
                           </div>
@@ -1343,18 +1553,28 @@ export function CarsTab({
                 <table className="data-table cars-data-table">
                   <thead>
                     <tr>
-                      <th className="cell-num" style={{ width: "40px" }}>ت</th>
+                      <th className="cell-num" style={{ width: "24px" }}>ت</th>
                       <th className={`ct-model ${sortConfig?.key === "model" ? "th--sorted" : ""}`}>{renderSortHeader("model")}</th>
-                      <th className={`ct-year ${sortConfig?.key === "year" ? "th--sorted" : ""}`}>{renderSortHeader("year")}</th>
-                      <th className={`ct-color ${sortConfig?.key === "color" ? "th--sorted" : ""}`}>{renderSortHeader("color")}</th>
+                      {carsTab !== "sold" && (
+                        <>
+                          <th className={`ct-year ${sortConfig?.key === "year" ? "th--sorted" : ""}`}>{renderSortHeader("year")}</th>
+                          <th className={`ct-color ${sortConfig?.key === "color" ? "th--sorted" : ""}`}>{renderSortHeader("color")}</th>
+                        </>
+                      )}
                       <th className={`ct-num ${sortConfig?.key === "number" ? "th--sorted" : ""}`}>{renderSortHeader("number")}</th>
                       <th className={`ct-chassis ${sortConfig?.key === "chassis" ? "th--sorted" : ""}`}>{renderSortHeader("chassis")}</th>
                       <th className={`ct-price ${sortConfig?.key === "purchase" ? "th--sorted" : ""}`}>{renderSortHeader("purchase")}</th>
-                      <th className={`ct-price ${sortConfig?.key === "selling" ? "th--sorted" : ""}`}>{renderSortHeader("selling")}</th>
-                      <th className={`ct-profit ${sortConfig?.key === "profit" ? "th--sorted" : ""}`}>
-                        {renderSortHeader("profit")}
-                      </th>
-                      <th className="ct-delete">حذف</th>
+                      {carsTab !== "available" && (
+                        <>
+                          <th className={`ct-price ${sortConfig?.key === "selling" ? "th--sorted" : ""}`}>{renderSortHeader("selling")}</th>
+                          <th className={`ct-profit ${sortConfig?.key === "profit" ? "th--sorted" : ""}`}>
+                            {renderSortHeader("profit")}
+                          </th>
+                        </>
+                      )}
+                      {carsTab === "sold" && (
+                        <th className="ct-buyer">اسم المشتري</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -1374,8 +1594,12 @@ export function CarsTab({
                           <td className="ct-model cell-bold">
                             {car.car_model || car.car_name || "—"}
                           </td>
-                          <td className="ct-year">{car.car_year || "—"}</td>
-                          <td className="ct-color">{car.color || "—"}</td>
+                          {carsTab !== "sold" && (
+                            <>
+                              <td className="ct-year">{car.car_year || "—"}</td>
+                              <td className="ct-color">{car.color || "—"}</td>
+                            </>
+                          )}
                           <td className="ct-num cell-bold">
                             <span className="ct-plate">{car.car_plate_num ?? car.car_number}</span>
                           </td>
@@ -1383,28 +1607,25 @@ export function CarsTab({
                           <td className="ct-price">
                             <PriceDisplay amount={moneyAdd(car.purchase_price, car.expenses_sum || 0)} currency={car.currency} noColor />
                           </td>
-                          <td className="ct-price">
-                            {isSold ? (
-                              <div><PriceDisplay amount={car.selling_price} currency={car.sale_currency} noColor /></div>
-                            ) : (
-                              <span className="text-muted">—</span>
-                            )}
-                          </td>
-                          <td className="ct-profit-pct">
-                            {isSold ? <span className="text-green">({carProfitPercentage(car)}%)</span> : <span className="text-muted">—</span>}
-                          </td>
-                          <td className="ct-delete" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              className="partner-inline-delete-btn"
-                              title="حذف السيارة"
-                              onClick={() => {
-                                setCarToDelete(car);
-                                setShowDeleteModal(true);
-                              }}
-                            >
-                              ✕
-                            </button>
-                          </td>
+                          {carsTab !== "available" && (
+                            <>
+                              <td className="ct-price">
+                                {isSold ? (
+                                  <div><PriceDisplay amount={car.selling_price} currency={car.sale_currency} noColor /></div>
+                                ) : (
+                                  <span className="text-muted">—</span>
+                                )}
+                              </td>
+                              <td className="ct-profit-pct">
+                                {isSold ? <span className="text-green">({carProfitPercentage(car)}%)</span> : <span className="text-muted">—</span>}
+                              </td>
+                            </>
+                          )}
+                          {carsTab === "sold" && (
+                            <td className="ct-buyer" onClick={(e) => e.stopPropagation()}>
+                              <span className="text-white font-bold">{car.buyer_name || "—"}</span>
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
@@ -1412,14 +1633,24 @@ export function CarsTab({
                       <tr key={`empty-${i}`} style={{ pointerEvents: "none" }} className="cars-tr opacity-25">
                         <td className="cell-num">&nbsp;</td>
                         <td className="ct-model">&nbsp;</td>
-                        <td className="ct-year">&nbsp;</td>
-                        <td className="ct-color">&nbsp;</td>
+                        {carsTab !== "sold" && (
+                          <>
+                            <td className="ct-year">&nbsp;</td>
+                            <td className="ct-color">&nbsp;</td>
+                          </>
+                        )}
                         <td className="ct-num">&nbsp;</td>
                         <td className="ct-chassis">&nbsp;</td>
                         <td className="ct-price">&nbsp;</td>
-                        <td className="ct-price">&nbsp;</td>
-                        <td className="ct-profit-pct">&nbsp;</td>
-                        <td className="ct-delete">&nbsp;</td>
+                        {carsTab !== "available" && (
+                          <>
+                            <td className="ct-price">&nbsp;</td>
+                            <td className="ct-profit-pct">&nbsp;</td>
+                          </>
+                        )}
+                        {carsTab === "sold" && (
+                          <td className="ct-buyer">&nbsp;</td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -1603,7 +1834,7 @@ export function CarsTab({
                                           flexShrink: 0,
                                           width: "30px",
                                           height: "30px",
-                                          borderRadius: "8px",
+                                          borderRadius: "var(--all-radius)",
                                           border: "1px solid rgba(59,130,246,0.4)",
                                           background: "rgba(59,130,246,0.12)",
                                           color: "#93c5fd",
@@ -1637,7 +1868,7 @@ export function CarsTab({
                                           flexShrink: 0,
                                           width: "30px",
                                           height: "30px",
-                                          borderRadius: "8px",
+                                          borderRadius: "var(--all-radius)",
                                           border: "1px solid rgba(251,146,60,0.4)",
                                           background: "rgba(251,146,60,0.12)",
                                           color: "#fdba74",
@@ -1681,6 +1912,7 @@ export function CarsTab({
                             placeholder="رقم اللوحة"
                             dir="ltr"
                             required
+                            containerClassName={duplicateNumIndexes.has(idx) ? "input-has-error" : ""}
                           />
                         </td>
 
@@ -1702,6 +1934,7 @@ export function CarsTab({
                             placeholder="رقم الشاصي"
                             dir="ltr"
                             required
+                            containerClassName={duplicateChassisIndexes.has(idx) ? "input-has-error" : ""}
                           />
                         </td>
                       </tr>
@@ -1750,6 +1983,11 @@ export function CarsTab({
             onSubmit={handleSubmit}
             onClose={handleClosePanel}
             onExpenseDirtyChange={setExpenseDirty}
+            onFormValidityChange={setIsCarFormValid}
+            onNavigateToPartner={onNavigateToPartner}
+            initialPage={initialFormPage}
+            saleFieldsLocked={saleFieldsLocked}
+            receivedInstallmentsTotal={receivedInstallmentsTotal}
             onSwitchToSpecs={() => {
               // العودة إلى تبويب مواصفات السيارة
               const formEl = document.getElementById("car-form");
@@ -1845,7 +2083,7 @@ export function CarsTab({
             <div style={{
               background: "rgba(239,68,68,0.08)",
               border: "1px solid rgba(239,68,68,0.25)",
-              borderRadius: "10px",
+              borderRadius: "var(--all-radius)",
               padding: "10px 12px",
               marginBottom: "16px",
               maxHeight: "240px",
@@ -1861,7 +2099,7 @@ export function CarsTab({
                   gap: "8px",
                   padding: "6px 8px",
                   background: "rgba(239,68,68,0.10)",
-                  borderRadius: "8px",
+                  borderRadius: "var(--all-radius)",
                   fontSize: "0.85rem",
                   direction: "rtl"
                 }}>
@@ -1991,7 +2229,7 @@ export function CarsTab({
       {/* نافذة تأكيد إنشاء حساب زبون */}
       {showSaleConfirm && pendingSaleData && (() => {
         const buyerName = pendingSaleData.buyerName.trim();
-        const phone = pendingSaleData.phone.trim();
+        const phone = normalizePhoneNumber(pendingSaleData.phone);
         const existingBuyer = partners.some(
           (p) => p.partner_name.trim() === buyerName && p.kind === "زبون"
         );

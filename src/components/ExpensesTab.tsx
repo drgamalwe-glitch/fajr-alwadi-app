@@ -10,15 +10,45 @@ import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/paginat
 import { formatNotesText } from "../utils/notesDisplay";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { GoldFxButton } from "./ui/GoldFxButton";
-import { moneySum } from "../utils/money";
+import { moneySum, type MoneyValue } from "../utils/money";
+import { ProfitDistributionTab } from "./ProfitDistributionTab";
 
 interface ExpensesTabProps {
   onAddExpenseChange?: (onAddExpense: { action: () => void } | null) => void;
   onDirtyChange?: (dirty: boolean) => void;
   requestCloseRef?: React.MutableRefObject<{ request: (afterClose?: () => void) => void } | null>;
+  onRefreshAllData?: () => Promise<void>;
+  onDistributeChange?: (onDistribute: { action: () => void } | null) => void;
+  fromDate?: string;
+  toDate?: string;
+  initialSubTab?: "expenses" | "profit";
+  onSubTabChange?: (tab: "expenses" | "profit") => void;
 }
 
-export function ExpensesTab({ onAddExpenseChange, onDirtyChange, requestCloseRef }: ExpensesTabProps) {
+export function ExpensesTab({
+  onAddExpenseChange,
+  onDirtyChange,
+  requestCloseRef,
+  onRefreshAllData,
+  onDistributeChange,
+  fromDate,
+  toDate,
+  initialSubTab,
+  onSubTabChange,
+}: ExpensesTabProps) {
+  const [activeSubTab, setActiveSubTab] = useState<"expenses" | "profit">(initialSubTab || "expenses");
+  const [profitTotals, setProfitTotals] = useState<{ usd: MoneyValue; iqd: MoneyValue }>({ usd: 0, iqd: 0 });
+
+  useEffect(() => {
+    if (initialSubTab) {
+      setActiveSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
+
+  useEffect(() => {
+    onSubTabChange?.(activeSubTab);
+  }, [activeSubTab, onSubTabChange]);
+
   const [entries, setEntries] = useState<ExpenseEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
@@ -207,23 +237,27 @@ export function ExpensesTab({ onAddExpenseChange, onDirtyChange, requestCloseRef
   };
 
   useEffect(() => {
-    onAddExpenseChange?.({
-      action: () => {
-        handleCloseModal();
-        initialExpenseRef.current = JSON.stringify({
-          description: "",
-          amount: "",
-          date: todayIsoDate(),
-          notes: "",
-          currency: "IQD",
-        });
-        setShowAddModal(true);
-      },
-    });
+    if (activeSubTab === "expenses") {
+      onAddExpenseChange?.({
+        action: () => {
+          handleCloseModal();
+          initialExpenseRef.current = JSON.stringify({
+            description: "",
+            amount: "",
+            date: todayIsoDate(),
+            notes: "",
+            currency: "IQD",
+          });
+          setShowAddModal(true);
+        },
+      });
+    } else {
+      onAddExpenseChange?.(null);
+    }
     return () => {
       onAddExpenseChange?.(null);
     };
-  }, [onAddExpenseChange]);
+  }, [onAddExpenseChange, activeSubTab]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -304,231 +338,274 @@ export function ExpensesTab({ onAddExpenseChange, onDirtyChange, requestCloseRef
       {/* ── شريط الأدوات الموحد في الأعلى ── */}
       <div className="cars-page__toolbar unified-toolbar">
         <div className="unified-toolbar__right">
+          <div className="cars-tabs financial-tabs">
+            <button
+              type="button"
+              className={`top-btn-one ${activeSubTab === "expenses" ? "top-btn-one--active" : ""}`}
+              onClick={() => setActiveSubTab("expenses")}
+            >
+              المصروفات
+            </button>
+            <button
+              type="button"
+              className={`top-btn-two ${activeSubTab === "profit" ? "top-btn-two--active" : ""}`}
+              onClick={() => setActiveSubTab("profit")}
+            >
+              الأرباح
+            </button>
+          </div>
         </div>
         <div className="unified-toolbar__center"></div>
         <div className="unified-toolbar__left">
-          <div className="currency-card currency-card--usd">
-            <PriceDisplay amount={expenseUsd} currency="USD" />
-          </div>
-          <div className="currency-card currency-card--iqd">
-            <PriceDisplay amount={expenseIqd} />
-          </div>
+          {activeSubTab === "expenses" ? (
+            <>
+              <div className="currency-card currency-card--usd">
+                <PriceDisplay amount={expenseUsd} currency="USD" />
+              </div>
+              <div className="currency-card currency-card--iqd">
+                <PriceDisplay amount={expenseIqd} />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="currency-card currency-card--usd">
+                <PriceDisplay amount={profitTotals.usd} currency="USD" />
+              </div>
+              <div className="currency-card currency-card--iqd">
+                <PriceDisplay amount={profitTotals.iqd} />
+              </div>
+            </>
+          )}
         </div>
       </div>
 
-      {/* ── نافذة إضافة مصروف منبثقة ── */}
-      {showAddModal && (
-        <div className="modal-overlay" role="presentation" onClick={handleCloseModal}>
-          <div
-            className="modal-dialog modal-dialog--has-header"
-            role="dialog"
-            onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: "520px" }}
-          >
-            {/* رأس النافذة */}
-            <div className="modal-dialog__header">
-              <h2 className="modal-dialog__header-title" style={{ color: "var(--labletext)" }}>
-                {editingExpense ? "تعديل المصروف" : "إضافة مصروف جديد"}
-              </h2>
-              <button type="button" className="modal-dialog__close" onClick={handleCloseModal}>×</button>
-            </div>
+      {activeSubTab === "profit" ? (
+        <ProfitDistributionTab
+          onRefreshAllData={onRefreshAllData || (() => Promise.resolve())}
+          onDistributeChange={onDistributeChange}
+          fromDate={fromDate || ""}
+          toDate={toDate || ""}
+          hideToolbar={true}
+          onSummaryLoaded={(usd, iqd) => setProfitTotals({ usd, iqd })}
+        />
+      ) : (
+        <>
 
-            <form
-              className="modal-dialog__body"
-              onSubmit={(e) => {
-                void handleSubmit(e);
-              }}
-            >
-              <div className="agency-fields-row" style={{ alignItems: "flex-start" }}>
-                <div className="agency-field agency-field--lg" style={{ flex: "2 1 220px" }}>
-                  <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>وصف المصروف</label>
-                  <TextInput
-                    id="expense-description"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    required
-                    autoFocus
-                  />
-                </div>
-                <div className="agency-field agency-field--lg" style={{ flex: "1 1 160px" }}>
-                  <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>المبلغ</label>
-                  <PriceInput
-                    id="expense-amount"
-                    value={amount}
-                    onChange={setAmount}
-                    required
-                    currency={currency}
-                    onCurrencyChange={setCurrency}
-                  />
-                </div>
-                <div className="agency-field agency-field--md">
-                  <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>التاريخ</label>
-                  <UnifiedDateField id="expense-date" value={date} onChange={setDate} />
-                </div>
-                <div className="agency-field agency-field--lg">
-                  <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>ملاحظة</label>
-                  <TextInput
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              {/* ── أزرار العمليات ── */}
-              <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
-                <GoldFxButton
-                  type="submit"
-                  variant="green"
-                  style={{ flex: 1, margin: 0 }}
-                  disabled={expenseSaving}
-                >
-
-                  <span className="gold-fx-btn__label">{expenseSaving ? "جاري الحفظ..." : "حفظ"}</span>
-                </GoldFxButton>
-                <GoldFxButton
-                  type="button"
-                  variant="gray"
-                  style={{ flex: 1, margin: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.7)" }}
-                  onClick={handleCloseModal}
-                >
-                  <span className="gold-fx-btn__label">إلغاء الأمر</span>
-                </GoldFxButton>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ── نافذة تأكيد حفظ التعديلات في المصروف ── */}
-      {showExpenseSaveConfirm && (
-        <div className="fx-confirm-overlay" role="presentation" onClick={() => setShowExpenseSaveConfirm(false)}>
-          <div
-            className="fx-confirm-dialog"
-            role="alertdialog"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="fx-confirm-title">هل تريد حفظ التعديلات؟</h3>
-            <p className="fx-confirm-message">
-              لديك تعديلات غير محفوظة. هل تريد حفظها قبل المغادرة؟
-            </p>
-            <div className="fx-confirm-actions">
-              <ActionButton
-                type="button"
-                variant="success"
-                onClick={() => void handleExpenseSaveConfirmSave()}
-                disabled={deleting}
+          {/* ── نافذة إضافة مصروف منبثقة ── */}
+          {showAddModal && (
+            <div className="modal-overlay" role="presentation" onClick={handleCloseModal}>
+              <div
+                className="modal-dialog modal-dialog--has-header"
+                role="dialog"
+                onClick={(e) => e.stopPropagation()}
+                style={{ maxWidth: "520px" }}
               >
-                {deleting ? "جاري الحفظ..." : "حفظ"}
-              </ActionButton>
-              <ActionButton
-                type="button"
-                variant="ghost"
-                onClick={handleExpenseSaveConfirmDiscard}
-                disabled={deleting}
-              >
-                تجاهل التغييرات
-              </ActionButton>
+                {/* رأس النافذة */}
+                <div className="modal-dialog__header">
+                  <h2 className="modal-dialog__header-title" style={{ color: "var(--labletext)" }}>
+                    {editingExpense ? "تعديل المصروف" : "إضافة مصروف جديد"}
+                  </h2>
+                  <button type="button" className="modal-dialog__close" onClick={handleCloseModal}>×</button>
+                </div>
+
+                <form
+                  className="modal-dialog__body"
+                  onSubmit={(e) => {
+                    void handleSubmit(e);
+                  }}
+                >
+                  <div className="agency-fields-row" style={{ alignItems: "flex-start" }}>
+                    <div className="agency-field agency-field--lg" style={{ flex: "2 1 220px" }}>
+                      <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>وصف المصروف</label>
+                      <TextInput
+                        id="expense-description"
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        required
+                        autoFocus
+                      />
+                    </div>
+                    <div className="agency-field agency-field--lg" style={{ flex: "1 1 160px" }}>
+                      <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>المبلغ</label>
+                      <PriceInput
+                        id="expense-amount"
+                        value={amount}
+                        onChange={setAmount}
+                        required
+                        currency={currency}
+                        onCurrencyChange={setCurrency}
+                      />
+                    </div>
+                    <div className="agency-field agency-field--md">
+                      <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>التاريخ</label>
+                      <UnifiedDateField id="expense-date" value={date} onChange={setDate} />
+                    </div>
+                    <div className="agency-field agency-field--lg">
+                      <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>ملاحظة</label>
+                      <TextInput
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  {/* ── أزرار العمليات ── */}
+                  <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
+                    <GoldFxButton
+                      type="submit"
+                      variant="green"
+                      style={{ flex: 1, margin: 0 }}
+                      disabled={expenseSaving}
+                    >
+
+                      <span className="gold-fx-btn__label">{expenseSaving ? "جاري الحفظ..." : "حفظ"}</span>
+                    </GoldFxButton>
+                    <GoldFxButton
+                      type="button"
+                      variant="gray"
+                      style={{ flex: 1, margin: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.2)", color: "rgba(255,255,255,0.7)" }}
+                      onClick={handleCloseModal}
+                    >
+                      <span className="gold-fx-btn__label">إلغاء الأمر</span>
+                    </GoldFxButton>
+                  </div>
+                </form>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {totalPages >= 1 && (
-        <div className="table-page-dots" aria-label="تنقل بين الصفحات">
-          {Array.from({ length: totalPages }, (_, idx) => (
-            <button
-              key={idx}
-              type="button"
-              className={`table-page-dot ${idx === currentPage ? "is-active" : ""}`}
-              onClick={() => setPage(idx)}
-              aria-label={`الصفحة ${idx + 1}`}
-            />
-          ))}
-        </div>
-      )}
-
-      <section
-        className="table-card-container"
-        onWheel={(e) => handlePaginationWheel(e, currentPage, totalPages, setPage)}
-        onKeyDown={(e) => handlePaginationKeyDown(e, currentPage, totalPages, setPage)}
-        tabIndex={0}
-      >
-        <div className="table-wrapper" style={{ flex: 1, minHeight: 0 }}>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th className={`cell-num ${sortConfig?.key === "id" ? "th--sorted" : ""}`} onClick={() => handleSort("id")} style={{ width: "40px", cursor: "pointer" }}>ت</th>
-                <th className={sortConfig?.key === "date" ? "th--sorted" : ""} onClick={() => handleSort("date")} style={{ width: "110px", cursor: "pointer" }}>التاريخ</th>
-                <th className={sortConfig?.key === "time" ? "th--sorted" : ""} onClick={() => handleSort("time")} style={{ width: "60px", cursor: "pointer" }}>الساعة</th>
-                <th className={sortConfig?.key === "description" ? "th--sorted" : ""} onClick={() => handleSort("description")} style={{ cursor: "pointer" }}>البيان</th>
-                <th className={`col-money ${sortConfig?.key === "amount" ? "th--sorted" : ""}`} onClick={() => handleSort("amount")} style={{ width: 200, cursor: "pointer" }}>المبلغ</th>
-                <th className={sortConfig?.key === "notes" ? "th--sorted" : ""} onClick={() => handleSort("notes")} style={{ cursor: "pointer" }}>ملاحظات</th>
-                <th style={{ width: "50px" }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={7} className="empty-cell">جاري التحميل...</td></tr>
-              ) : entries.length === 0 ? (
-                <tr><td colSpan={7} className="empty-cell">لا توجد مصروفات بعد</td></tr>
-              ) : (
-                pageEntries.map((entry) => (
-                  <tr
-                    key={entry.id}
-                    onClick={() => handleRowClick(entry)}
-                    style={{ cursor: "pointer" }}
-                    className="clickable-row"
+          {/* ── نافذة تأكيد حفظ التعديلات في المصروف ── */}
+          {showExpenseSaveConfirm && (
+            <div className="fx-confirm-overlay" role="presentation" onClick={() => setShowExpenseSaveConfirm(false)}>
+              <div
+                className="fx-confirm-dialog"
+                role="alertdialog"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h3 className="fx-confirm-title">هل تريد حفظ التعديلات؟</h3>
+                <p className="fx-confirm-message">
+                  لديك تعديلات غير محفوظة. هل تريد حفظها قبل المغادرة؟
+                </p>
+                <div className="fx-confirm-actions">
+                  <ActionButton
+                    type="button"
+                    variant="success"
+                    onClick={() => void handleExpenseSaveConfirmSave()}
+                    disabled={deleting}
                   >
-                    <td className="cell-num">{entry.id}</td>
-                    <td style={{ whiteSpace: "nowrap" }}>{entry.date}</td>
-                    <td style={{ whiteSpace: "nowrap", fontSize: "var(--fs-sm)", textAlign: "center" }}>{entry.time}</td>
-                    <td>{entry.description}</td>
-                    <td className="col-money"><PriceDisplay amount={entry.amount} currency={entry.currency} /></td>
-                    <td className="cell-notes-text" title={formatNotesText(entry.notes) || undefined}>{formatNotesText(entry.notes) || "—"}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="partner-inline-delete-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteClick(entry);
-                        }}
-                        title="حذف"
-                        aria-label="حذف المصروف"
-                      >
-                        ✕
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-              {Array.from({ length: Math.max(0, PAGE_SIZE - pageEntries.length) }).map((_, i) => (
-                <tr key={`empty-${i}`} style={{ pointerEvents: "none" }} className="opacity-25">
-                  <td className="cell-num">&nbsp;</td>
-                  <td>&nbsp;</td>
-                  <td>&nbsp;</td>
-                  <td>&nbsp;</td>
-                  <td className="col-money">&nbsp;</td>
-                  <td>&nbsp;</td>
-                  <td>&nbsp;</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                    {deleting ? "جاري الحفظ..." : "حفظ"}
+                  </ActionButton>
+                  <ActionButton
+                    type="button"
+                    variant="ghost"
+                    onClick={handleExpenseSaveConfirmDiscard}
+                    disabled={deleting}
+                  >
+                    تجاهل التغييرات
+                  </ActionButton>
+                </div>
+              </div>
+            </div>
+          )}
 
-      <ConfirmDialog
-        open={!!deleteExpenseConfirm}
-        title="تأكيد حذف المصروف"
-        message={`هل أنت متأكد من حذف المصروف «${deleteExpenseConfirm?.description || ""}» بقيمة (${deleteExpenseConfirm ? `${deleteExpenseConfirm.amount.toLocaleString()} ${deleteExpenseConfirm.currency}` : ""}) نهائياً؟ لا يمكن التراجع عن هذا الإجراء.`}
-        confirmLabel="نعم، احذف"
-        cancelLabel="إلغاء"
-        danger
-        loading={deleting}
-        onConfirm={() => void executeDelete()}
-        onCancel={() => setDeleteExpenseConfirm(null)}
-      />
+          {totalPages >= 1 && (
+            <div className="table-page-dots" aria-label="تنقل بين الصفحات">
+              {Array.from({ length: totalPages }, (_, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  className={`table-page-dot ${idx === currentPage ? "is-active" : ""}`}
+                  onClick={() => setPage(idx)}
+                  aria-label={`الصفحة ${idx + 1}`}
+                />
+              ))}
+            </div>
+          )}
+
+          <section
+            className="table-card-container"
+            onWheel={(e) => handlePaginationWheel(e, currentPage, totalPages, setPage)}
+            onKeyDown={(e) => handlePaginationKeyDown(e, currentPage, totalPages, setPage)}
+            tabIndex={0}
+          >
+            <div className="table-wrapper" style={{ flex: 1, minHeight: 0 }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th className={`cell-num ${sortConfig?.key === "id" ? "th--sorted" : ""}`} onClick={() => handleSort("id")} style={{ width: "40px", cursor: "pointer" }}>ت</th>
+                    <th className={sortConfig?.key === "date" ? "th--sorted" : ""} onClick={() => handleSort("date")} style={{ width: "110px", cursor: "pointer" }}>التاريخ</th>
+                    <th className={sortConfig?.key === "time" ? "th--sorted" : ""} onClick={() => handleSort("time")} style={{ width: "60px", cursor: "pointer" }}>الساعة</th>
+                    <th className={sortConfig?.key === "description" ? "th--sorted" : ""} onClick={() => handleSort("description")} style={{ cursor: "pointer" }}>البيان</th>
+                    <th className={`col-money ${sortConfig?.key === "amount" ? "th--sorted" : ""}`} onClick={() => handleSort("amount")} style={{ width: 200, cursor: "pointer" }}>المبلغ</th>
+                    <th className={sortConfig?.key === "notes" ? "th--sorted" : ""} onClick={() => handleSort("notes")} style={{ cursor: "pointer" }}>ملاحظات</th>
+                    <th style={{ width: "50px" }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr><td colSpan={7} className="empty-cell">جاري التحميل...</td></tr>
+                  ) : entries.length === 0 ? (
+                    <tr><td colSpan={7} className="empty-cell">لا توجد مصروفات بعد</td></tr>
+                  ) : (
+                    pageEntries.map((entry) => (
+                      <tr
+                        key={entry.id}
+                        onClick={() => handleRowClick(entry)}
+                        style={{ cursor: "pointer" }}
+                        className="clickable-row"
+                      >
+                        <td className="cell-num">{entry.id}</td>
+                        <td style={{ whiteSpace: "nowrap" }}>{entry.date}</td>
+                        <td style={{ whiteSpace: "nowrap", fontSize: "var(--fs-sm)", textAlign: "center" }}>{entry.time}</td>
+                        <td>{entry.description}</td>
+                        <td className="col-money"><PriceDisplay amount={entry.amount} currency={entry.currency} /></td>
+                        <td className="cell-notes-text" title={formatNotesText(entry.notes) || undefined}>{formatNotesText(entry.notes) || "—"}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="partner-inline-delete-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteClick(entry);
+                            }}
+                            title="حذف"
+                            aria-label="حذف المصروف"
+                          >
+                            ✕
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                  {Array.from({ length: Math.max(0, PAGE_SIZE - pageEntries.length) }).map((_, i) => (
+                    <tr key={`empty-${i}`} style={{ pointerEvents: "none" }} className="opacity-25">
+                      <td className="cell-num">&nbsp;</td>
+                      <td>&nbsp;</td>
+                      <td>&nbsp;</td>
+                      <td>&nbsp;</td>
+                      <td className="col-money">&nbsp;</td>
+                      <td>&nbsp;</td>
+                      <td>&nbsp;</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <ConfirmDialog
+            open={!!deleteExpenseConfirm}
+            title="تأكيد حذف المصروف"
+            message={`هل أنت متأكد من حذف المصروف «${deleteExpenseConfirm?.description || ""}» بقيمة (${deleteExpenseConfirm ? `${deleteExpenseConfirm.amount.toLocaleString()} ${deleteExpenseConfirm.currency}` : ""}) نهائياً؟ لا يمكن التراجع عن هذا الإجراء.`}
+            confirmLabel="نعم، احذف"
+            cancelLabel="إلغاء"
+            danger
+            loading={deleting}
+            onConfirm={() => void executeDelete()}
+            onCancel={() => setDeleteExpenseConfirm(null)}
+          />
+        </>
+      )}
     </div>
   );
 }
