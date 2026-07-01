@@ -67,6 +67,10 @@ export function UsersTab({ onLogout }: UsersTabProps) {
       setFormError("اسم المستخدم مطلوب");
       return;
     }
+    if (formPassword.trim() && formPassword.trim().length < 3) {
+      setFormError("كلمة المرور يجب أن تكون 3 أحرف على الأقل");
+      return;
+    }
 
     try {
       if (editingUser) {
@@ -156,7 +160,7 @@ export function UsersTab({ onLogout }: UsersTabProps) {
                   <button
                     className="btn btn--small btn--danger"
                     onClick={() => handleDelete(user)}
-                    disabled={user.username === "admin"}
+                    disabled={user.id === 1}
                   >
                     حذف
                   </button>

@@ -262,6 +262,24 @@ Cash Car Sale Profits
 * Only general expenses from the Expenses section reduce net profit.
 * Car expenses do not reduce general net profit directly.
 * Car expenses are part of the car cost and reduce the car profit.
+* **Losses must reduce net profit.** If a car is sold below its cost (selling < purchase + car expenses), the negative profit (loss) must be subtracted from net profit. A loss is not silently ignored.
+
+---
+
+# 5.1 Car Expenses Source of Truth for Cash Sales
+
+For cash car sales, `calculate_analytical_profit` uses the `car_expenses` table as the authoritative source for car expenses, not the legacy `expenses_at_sale` snapshot on the cars row.
+
+```text
+Car Profit = Selling Price - Purchase Price - SUM(car_expenses.amount WHERE car_number = ?)
+```
+
+If no rows exist in `car_expenses` for the car, it falls back to `COALESCE(expenses_at_sale, 0)` for backward compatibility with cars sold before the `car_expenses` table existed.
+
+This ensures that:
+- Cash car profits and installment payment profits use the same car cost basis.
+- A car expense added after sale (e.g. repair cost) is reflected in both paths.
+- The `expenses_at_sale` snapshot is never used when actual `car_expenses` rows exist.
 
 ---
 
@@ -1018,6 +1036,34 @@ This expense is not part of any car cost.
 
 ---
 
+# 24.1 Required Test Scenario: Cash Car Loss
+
+A car is sold for cash below its cost:
+
+```text
+Purchase Price = 10,000,000
+Car Expenses = 1,000,000
+Selling Price = 8,000,000
+Sale Type = Cash
+```
+
+Expected:
+
+```text
+Car Cost = 11,000,000
+Car Profit (Loss) = 8,000,000 - 11,000,000 = -3,000,000
+Qasa/Cash increases by 8,000,000 (the actual selling price)
+Net Profit decreases by 3,000,000 (the loss)
+```
+
+Forbidden result:
+
+```text
+Loss is ignored and net profit is not reduced.
+```
+
+---
+
 # 25. Required Test Scenario: Investor
 
 Investor deposit:
@@ -1127,3 +1173,44 @@ When modifying the code, always ask:
 If the answer is unclear, do not guess by transaction name only.
 
 Use explicit fields and clear source references.
+
+---
+
+# 30. Confirmed Architecture Behaviors (Not Bugs)
+
+The following behaviors have been reviewed and confirmed as correct. They must not be flagged as bugs by future audits or AI reviews.
+
+## 30.1 Cash Sale — Single Cash Movement to Partners
+
+When a car is sold for cash, the system deposits the full selling price to partners in a single `cash_movement` row. There is no separate `profit_recognition` partner row at the database level. Profit for cash car sales is calculated analytically in `calculate_analytical_profit` by reading the `cars` table directly (`selling - purchase - car_expenses`). This is by design and is correct.
+
+## 30.2 Down Payment — Full Two-Effect Treatment
+
+The installment down payment (`sale_down_payment`) is handled by `apply_partner_transaction_splits`, which detects the type prefix "مقدمة" and calls `create_customer_payment_accounting_effects`. This creates the same two effects as any installment payment (cash_movement + profit_recognition). The down payment is NOT missing its effects.
+
+## 30.3 Partner Balance Already Contains Cash Share
+
+Partner `iqd_balance` / `usd_balance` already includes each partner's 50% share of cash (because cash deposits increase the partner's balance). In the Company Status page, `sharedIqd` must NOT include cash again, otherwise cash would be double-counted: once in the partner's direct balance and once in the shared calculation. The formula `sharedIqd = (inventory + receivables - liabilities) / 2` is correct.
+
+## 30.4 Fixed Two Partners
+
+The system has exactly two partners, hardcoded in business logic (50/50 split). Reading partner names from the database is for name resolution only, not for determining the split ratio. Dividing by 2 in read paths (e.g. `get_profit_distribution_summary`) is correct and intentional.
+
+## 30.5 Agency Profit Sources Are Distinct
+
+Agency profits come from two separate, non-overlapping sources: the `agencies.amount_iqd/amount_usd` (initial amounts at agency creation) and `agency_transactions.amount` (subsequent transactions against that agency). These are added together in `calculate_analytical_profit`. This is not double-counting — they represent different events.
+
+## 30.6 Qasa vs Cash — Correct Kind Filtering
+
+- Qasa tab (`قاصه/قاصة`): `affects_qasa = 1 AND kind IN ('شريك', 'مستثمر')` — includes partners and investors.
+- Cash tab (`الكاش`): `affects_partner_cash = 1 AND kind = 'شريك'` — partners only, not investors.
+
+This is correct per sections 2.1 and 2.2.
+
+## 30.7 Profit Rebuild — Must Skip Reversed Rows
+
+When rebuilding profit recognitions (`rebuild_customer_payment_profit_recognitions`), the delete query must filter `COALESCE(is_reversed, 0) = 0`. This prevents resurrecting profit rows that were correctly marked as reversed during a payment reversal.
+
+## 30.8 Down Payment Cap — Must Include Existing Down Payments
+
+When validating a down payment update, the cap check must include all existing down payments for the same sale (not just installment events). The formula is: `new_amount + paid_installments + existing_down_payments <= selling_price`.

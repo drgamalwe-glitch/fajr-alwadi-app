@@ -829,23 +829,23 @@ fn ensure_installment_event_schema(conn: &Connection) -> SqlResult<()> {
     Ok(())
 }
 
+const PRIMARY_ADMIN_USER_ID: i64 = 1;
+const DEFAULT_ADMIN_USERNAME: &str = "admin";
+
 fn require_admin_session(conn: &Connection) -> Result<(), String> {
-    let row: Result<(bool, bool), rusqlite::Error> = conn.query_row(
-        "SELECT COUNT(*) > 0, COALESCE(must_change_password, 0) FROM users WHERE username = 'admin'",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
+    let must_change: Result<bool, rusqlite::Error> = conn.query_row(
+        "SELECT COALESCE(must_change_password, 0) FROM users WHERE id = ?1",
+        [PRIMARY_ADMIN_USER_ID],
+        |row| row.get(0),
     );
-    match row {
-        Ok((exists, must_change)) => {
-            if !exists {
-                return Err("Session invalid: admin account not found".to_string());
-            }
-            if must_change {
-                return Err("يجب تغيير كلمة المرور الافتراضية قبل استخدام النظام".to_string());
-            }
-            Ok(())
+
+    match must_change {
+        Ok(true) => Err("يجب تغيير كلمة المرور الافتراضية قبل استخدام النظام".to_string()),
+        Ok(false) => Ok(()),
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            Err("Session invalid: primary admin account not found".to_string())
         }
-        Err(_) => Err("Session invalid: admin account not found".to_string()),
+        Err(_) => Err("Session invalid: primary admin account not found".to_string()),
     }
 }
 
@@ -1856,24 +1856,24 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         );
         let _ = conn.execute("ALTER TABLE users ADD COLUMN last_login TEXT", []);
 
-        // إنشاء المستخدم الافتراضي admin/admin إذا لم يكن موجوداً
+        // إنشاء المستخدم الافتراضي admin/admin إذا لم يكن حساب المدير الرئيسي موجوداً
         if let Ok(count) = conn.query_row::<i64, _, _>(
-            "SELECT COUNT(*) FROM users WHERE username = 'admin'",
-            [],
+            "SELECT COUNT(*) FROM users WHERE id = ?1",
+            [PRIMARY_ADMIN_USER_ID],
             |row| row.get(0),
         ) {
             if count == 0 {
                 let hash = hash_password("admin").unwrap_or_default();
                 conn.execute(
-                "INSERT INTO users (username, password_hash, display_name, profile_image, must_change_password) VALUES (?1, ?2, 'مدير النظام', NULL, 0)",
-                params!["admin", hash],
+                "INSERT INTO users (id, username, password_hash, display_name, profile_image, must_change_password) VALUES (?1, ?2, ?3, 'مدير النظام', NULL, 0)",
+                params![PRIMARY_ADMIN_USER_ID, DEFAULT_ADMIN_USERNAME, hash],
             )?;
             }
         }
-        // تعطيل شرط تغيير كلمة المرور الافتراضية للمستخدم admin
+        // تعطيل شرط تغيير كلمة المرور الافتراضية لحساب المدير الرئيسي
         let _ = conn.execute(
-            "UPDATE users SET must_change_password = 0 WHERE username = 'admin'",
-            [],
+            "UPDATE users SET must_change_password = 0 WHERE id = ?1",
+            [PRIMARY_ADMIN_USER_ID],
         );
 
         // إنشاء حسابات الشركاء الافتراضية
@@ -2226,8 +2226,7 @@ fn normalize_phone_digits(value: &str) -> String {
             '\u{0660}'..='\u{0669}' => char::from_digit(ch as u32 - 0x0660, 10),
             '\u{06f0}'..='\u{06f9}' => char::from_digit(ch as u32 - 0x06f0, 10),
             '\u{200e}' | '\u{200f}' | '\u{202a}' | '\u{202b}' | '\u{202c}' | '\u{202d}'
-            | '\u{202e}' | '\u{2066}' | '\u{2067}' | '\u{2068}' | '\u{2069}'
-            | '\u{feff}' => None,
+            | '\u{202e}' | '\u{2066}' | '\u{2067}' | '\u{2068}' | '\u{2069}' | '\u{feff}' => None,
             _ => Some(ch),
         })
         .collect()
@@ -6189,7 +6188,7 @@ fn update_sold_car_with_accounting(
                AND source_type = 'customer_sale_payment'
                AND source_role = 'sale_down_payment'",
             [&car_number],
-            |row| row.get(0)
+            |row| row.get(0),
         ) {
             Ok(id) => Some(id),
             Err(rusqlite::Error::QueryReturnedNoRows) => None,
@@ -8025,8 +8024,10 @@ fn build_installment_templates(
     } else {
         let months = installment_months.unwrap_or(1).max(1) as usize;
         let (monthly_amount, last_amount) = split_remaining_evenly(initial_remaining, months);
-        let base_date =
-            first_non_empty_date(&[first_payment_date.as_deref().unwrap_or(""), sale_date.as_str()]);
+        let base_date = first_non_empty_date(&[
+            first_payment_date.as_deref().unwrap_or(""),
+            sale_date.as_str(),
+        ]);
         for i in 0..months {
             let inst_amount = if i == months - 1 {
                 last_amount
@@ -8251,21 +8252,25 @@ fn ensure_original_installment_rows(db: &Connection, car_number: &str) -> Result
             actual_paid_amount: Money,
             _currency: String,
         }
-        let mut stmt = db.prepare(
-            "SELECT id, actual_paid_amount, currency
+        let mut stmt = db
+            .prepare(
+                "SELECT id, actual_paid_amount, currency
              FROM customer_installment_payment_events
              WHERE sale_id = ?1 AND status = 'active'
-             ORDER BY created_at ASC, id ASC"
-        ).map_err(|e| e.to_string())?;
-        let active_events_list = stmt.query_map([car_number], |row| {
-            Ok(ActiveEvent {
-                id: row.get(0)?,
-                actual_paid_amount: row.get(1)?,
-                _currency: row.get(2)?,
+             ORDER BY created_at ASC, id ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let active_events_list = stmt
+            .query_map([car_number], |row| {
+                Ok(ActiveEvent {
+                    id: row.get(0)?,
+                    actual_paid_amount: row.get(1)?,
+                    _currency: row.get(2)?,
+                })
             })
-        }).map_err(|e| e.to_string())?
-          .collect::<Result<Vec<_>, _>>()
-          .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
         drop(stmt);
 
         let p_count = active_events_list.len();
@@ -8274,7 +8279,10 @@ fn ensure_original_installment_rows(db: &Connection, car_number: &str) -> Result
             m_months = p_count;
         }
         let r_months = m_months - p_count;
-        let total_paid_installments = active_events_list.iter().map(|e| e.actual_paid_amount).sum::<Money>();
+        let total_paid_installments = active_events_list
+            .iter()
+            .map(|e| e.actual_paid_amount)
+            .sum::<Money>();
         let down_payment_sum: Money = db
             .query_row(
                 "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
@@ -8287,7 +8295,8 @@ fn ensure_original_installment_rows(db: &Connection, car_number: &str) -> Result
                 |row| row.get(0),
             )
             .unwrap_or(Money::zero());
-        let remaining_balance = (selling_price - down_payment_sum - total_paid_installments).max(Money::zero());
+        let remaining_balance =
+            (selling_price - down_payment_sum - total_paid_installments).max(Money::zero());
 
         let (monthly_amount, last_amount) = if r_months > 0 {
             split_remaining_evenly(remaining_balance, r_months)
@@ -8310,7 +8319,7 @@ fn ensure_original_installment_rows(db: &Connection, car_number: &str) -> Result
 
         let base_date = first_non_empty_date(&[
             first_payment_date.as_deref().unwrap_or(""),
-            sale_date.as_str()
+            sale_date.as_str(),
         ]);
 
         for i in 1..=m_months {
@@ -8326,7 +8335,9 @@ fn ensure_original_installment_rows(db: &Connection, car_number: &str) -> Result
                 )
             } else {
                 format!("باقي قسط {} {}", car_name.trim(), clean_chassis)
-            }.trim().replace("  ", " ");
+            }
+            .trim()
+            .replace("  ", " ");
 
             if i - 1 < existing.len() {
                 let row_id = existing[i - 1].0;
@@ -8361,17 +8372,23 @@ fn ensure_original_installment_rows(db: &Connection, car_number: &str) -> Result
                             event.id.to_string(),
                             desired_source_id,
                             row_id,
-                        ]
-                    ).map_err(|e| e.to_string())?;
+                        ],
+                    )
+                    .map_err(|e| e.to_string())?;
 
                     db.execute(
                         "UPDATE customer_installment_payment_events
                          SET installment_id = ?1
                          WHERE id = ?2",
-                        params![row_id, event.id]
-                    ).map_err(|e| e.to_string())?;
+                        params![row_id, event.id],
+                    )
+                    .map_err(|e| e.to_string())?;
                 } else {
-                    let inst_amount = if i == m_months { last_amount } else { monthly_amount };
+                    let inst_amount = if i == m_months {
+                        last_amount
+                    } else {
+                        monthly_amount
+                    };
                     db.execute(
                         "UPDATE partner_transactions
                          SET amount = ?1,
@@ -8399,11 +8416,16 @@ fn ensure_original_installment_rows(db: &Connection, car_number: &str) -> Result
                             car_number,
                             desired_source_id,
                             row_id,
-                        ]
-                    ).map_err(|e| e.to_string())?;
+                        ],
+                    )
+                    .map_err(|e| e.to_string())?;
                 }
             } else {
-                let inst_amount = if i == m_months { last_amount } else { monthly_amount };
+                let inst_amount = if i == m_months {
+                    last_amount
+                } else {
+                    monthly_amount
+                };
                 db.execute(
                     "INSERT INTO partner_transactions (
                         partner_name, kind, type, amount, original_amount, current_amount,
@@ -9390,6 +9412,10 @@ fn update_customer_sale_down_payment(
         return Err("تعديل المقدمة من حساب الزبون متاح لبيع التقسيط أو الموعد فقط".to_string());
     }
 
+    // Cap check: the new down payment plus everything already received for this sale
+    // (other down payments + active installment payments) must not exceed the selling
+    // price. Previously the existing down payment(s) were ignored, which let the total
+    // receipts bypass the selling-price cap.
     let paid_installments_sum: Money = db
         .query_row(
             "SELECT COALESCE(SUM(actual_paid_amount), 0.0)
@@ -9399,7 +9425,22 @@ fn update_customer_sale_down_payment(
             |row| row.get(0),
         )
         .unwrap_or(Money::zero());
-    if amount + paid_installments_sum > selling_price {
+    let existing_down_payments_sum: Money = db
+        .query_row(
+            "SELECT COALESCE(SUM(amount), 0.0)
+             FROM partner_transactions
+             WHERE kind = 'زبون'
+               AND source_type = 'customer_sale_payment'
+               AND source_role = 'sale_down_payment'
+               AND related_source_type = 'car'
+               AND related_source_id = ?1
+               AND id != ?2
+               AND COALESCE(is_reversed, 0) = 0",
+            params![&car_number, transaction_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(Money::zero());
+    if amount + paid_installments_sum + existing_down_payments_sum > selling_price {
         return Err("المقدمة مع الأقساط المسددة أكبر من سعر البيع".to_string());
     }
 
@@ -9482,6 +9523,11 @@ fn update_customer_sale_down_payment(
 }
 
 fn car_expenses_for_profit(db: &Connection, car_number: &str) -> Money {
+    // Car Cost = Purchase Price + Car Expenses (AGENTS.md section 6.1, 12).
+    // The authoritative source of car expenses is the car_expenses table.
+    // expenses_at_sale is only a legacy snapshot kept on the cars row; it must not
+    // override or hide real car_expenses rows, and the two must never be treated as
+    // mutually exclusive (that would understate car cost and inflate profit).
     let recorded_expenses: Money = db
         .query_row(
             "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
@@ -9492,6 +9538,8 @@ fn car_expenses_for_profit(db: &Connection, car_number: &str) -> Money {
     if recorded_expenses > Money::zero() {
         return recorded_expenses;
     }
+    // Legacy fallback: a car sold before car_expenses rows existed keeps its
+    // at-sale snapshot so its cost is not understated.
     db.query_row(
         "SELECT COALESCE(expenses_at_sale, 0.0) FROM cars WHERE car_number = ?1",
         [car_number],
@@ -9705,7 +9753,8 @@ fn rebuild_customer_payment_profit_recognitions(db: &Connection) -> Result<(), S
                 "SELECT id FROM partner_transactions
                  WHERE kind = 'شريك'
                    AND source_type = 'customer_payment'
-                   AND source_role = 'profit_recognition'",
+                   AND source_role = 'profit_recognition'
+                   AND COALESCE(is_reversed, 0) = 0",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
@@ -9797,7 +9846,8 @@ fn rebuild_customer_payment_profit_recognitions_for_car(
                    AND source_type = 'customer_payment'
                    AND source_role = 'profit_recognition'
                    AND related_source_type = 'car'
-                   AND related_source_id = ?1",
+                   AND related_source_id = ?1
+                   AND COALESCE(is_reversed, 0) = 0",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
@@ -9992,13 +10042,18 @@ fn parse_financier_commission(amount: Money, notes: Option<&str>) -> Result<Mone
     };
     let raw_commission = raw_commission.trim();
     if raw_commission.contains('%') {
-        let percent_str = raw_commission
-            .split('%')
-            .next()
-            .unwrap_or("")
-            .trim();
-        let clean: String = percent_str.chars().filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-' || *c == '+' ).collect();
-        if clean.is_empty() || clean == "." || clean == "-" || clean == "+" || clean == "-." || clean == "+." {
+        let percent_str = raw_commission.split('%').next().unwrap_or("").trim();
+        let clean: String = percent_str
+            .chars()
+            .filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-' || *c == '+')
+            .collect();
+        if clean.is_empty()
+            || clean == "."
+            || clean == "-"
+            || clean == "+"
+            || clean == "-."
+            || clean == "+."
+        {
             return Err("صيغة عمولة الممول غير صحيحة".to_string());
         }
         let percent = clean
@@ -10006,8 +10061,17 @@ fn parse_financier_commission(amount: Money, notes: Option<&str>) -> Result<Mone
             .map_err(|_| "صيغة عمولة الممول غير صحيحة".to_string())?;
         return Ok((amount * percent) / Money(dec!(100)));
     }
-    let clean: String = raw_commission.chars().filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-' || *c == '+' ).collect();
-    if clean.is_empty() || clean == "." || clean == "-" || clean == "+" || clean == "-." || clean == "+." {
+    let clean: String = raw_commission
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-' || *c == '+')
+        .collect();
+    if clean.is_empty()
+        || clean == "."
+        || clean == "-"
+        || clean == "+"
+        || clean == "-."
+        || clean == "+."
+    {
         return Err("صيغة عمولة الممول غير صحيحة".to_string());
     }
     clean
@@ -12196,7 +12260,9 @@ fn get_financial_summary(
 ) -> Result<FinancialSummary, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     // NOTE: Read-only function — must NOT call recalculate_all_partners or any write operation
-    let payment_type = payment_type.map(|pt| pt.trim().to_string());
+    // payment_type is accepted from the frontend but unused: Qasa vs Cash are distinguished
+    // internally by the affects_qasa / affects_partner_cash flags, not by a payment-type filter.
+    let _payment_type = payment_type;
 
     // Phase 4: Calculate qasa (partners + investors) and cash (partners only) using affects_* flags
     let qasa_iqd: Money = db.query_row(
@@ -12599,19 +12665,29 @@ fn calculate_analytical_profit(
     };
 
     // 1. Cash car profits
+    // Car cost = purchase_price + actual car_expenses (from the car_expenses table).
+    // Both profits AND losses are counted: a car sold below its cost reduces net profit.
+    // This matches the per-payment installment path which uses car_expenses_for_profit().
     let cash_sql = format!(
-        "SELECT purchase_price, selling_price, COALESCE(expenses_at_sale, 0),
-                COALESCE(sale_currency, 'IQD')
-         FROM cars
-         WHERE status = 'مبيوعة'
-           AND COALESCE(payment_type, 'كاش') = 'كاش'
+        "SELECT c.car_number, c.purchase_price, c.selling_price,
+                COALESCE((SELECT SUM(ce.amount) FROM car_expenses ce WHERE ce.car_number = c.car_number), 0),
+                COALESCE(c.sale_currency, 'IQD')
+         FROM cars c
+         WHERE c.status = 'مبيوعة'
+           AND COALESCE(c.payment_type, 'كاش') = 'كاش'
            AND {}",
         date_filter
     );
     let mut cash_stmt = db.prepare(&cash_sql).map_err(|e| e.to_string())?;
-    let cash_rows: Vec<(Money, Money, Money, String)> = cash_stmt
+    let cash_rows: Vec<(String, Money, Money, Money, String)> = cash_stmt
         .query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
@@ -12620,14 +12696,16 @@ fn calculate_analytical_profit(
 
     let mut profit_iqd = Money::zero();
     let mut profit_usd = Money::zero();
-    for (purchase_price, selling_price, expenses, sale_currency) in cash_rows {
+    for (_car_number, purchase_price, selling_price, expenses, sale_currency) in cash_rows {
+        // Car Cost = Purchase Price + Car Expenses (AGENTS.md section 6.1, 12).
+        // Full Car Profit = Selling Price - Car Cost.
         let car_profit = selling_price - purchase_price - expenses;
-        if car_profit > Money::zero() {
-            if sale_currency == "IQD" {
-                profit_iqd += car_profit;
-            } else {
-                profit_usd += car_profit;
-            }
+        // Count both positive and negative results. A loss must reduce net profit
+        // (AGENTS.md section 5: "Cash Car Sale Profits" is the net contribution).
+        if sale_currency == "IQD" {
+            profit_iqd += car_profit;
+        } else {
+            profit_usd += car_profit;
         }
     }
 
@@ -13739,12 +13817,22 @@ fn update_user(
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     require_admin_session(&db)?;
+    let username = username.trim();
+    let display_name = display_name.trim();
 
-    db.execute(
+    if username.is_empty() {
+        return Err("اسم المستخدم مطلوب".to_string());
+    }
+
+    let affected = db.execute(
         "UPDATE users SET username = ?1, display_name = ?2, profile_image = ?3, updated_at = strftime('%Y-%m-%d %H:%M', 'now', 'localtime') WHERE id = ?4",
-        params![username.trim(), display_name.trim(), profile_image, id],
+        params![username, display_name, profile_image, id],
     )
     .map_err(|e| format!("فشل تحديث المستخدم: {}", e))?;
+
+    if affected == 0 {
+        return Err("المستخدم غير موجود".to_string());
+    }
 
     Ok(())
 }
@@ -13760,11 +13848,15 @@ fn change_password(state: State<AppState>, id: i64, new_password: String) -> Res
 
     let hash =
         hash_password(new_password.trim()).map_err(|e| format!("فشل تشفير كلمة المرور: {}", e))?;
-    db.execute(
+    let affected = db.execute(
         "UPDATE users SET password_hash = ?1, must_change_password = 0, updated_at = strftime('%Y-%m-%d %H:%M', 'now', 'localtime') WHERE id = ?2",
         params![hash, id],
     )
     .map_err(|e| format!("فشل تغيير كلمة المرور: {}", e))?;
+
+    if affected == 0 {
+        return Err("المستخدم غير موجود".to_string());
+    }
 
     Ok(())
 }
@@ -13774,9 +13866,9 @@ fn delete_user(state: State<AppState>, id: i64) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     require_admin_session(&db)?;
 
-    // Prevent deleting the default admin user (id == 1)
-    if id == 1 {
-        return Err("لا يمكن حذف مستخدم admin الافتراضي".to_string());
+    // Prevent deleting the protected primary admin user, even after username changes.
+    if id == PRIMARY_ADMIN_USER_ID {
+        return Err("لا يمكن حذف مستخدم المدير الرئيسي".to_string());
     }
 
     db.execute("DELETE FROM users WHERE id = ?1", [id])
@@ -14413,6 +14505,55 @@ mod strict_accounting_invariants {
             float_result.is_err(),
             "JSON floats must not be accepted for monetary values"
         );
+    }
+
+    #[test]
+    fn test_admin_session_survives_primary_admin_username_change() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        conn.execute(
+            "UPDATE users SET username = '8686' WHERE id = ?1",
+            [PRIMARY_ADMIN_USER_ID],
+        )
+        .unwrap();
+
+        assert!(require_admin_session(&conn).is_ok());
+    }
+
+    #[test]
+    fn test_init_db_does_not_recreate_default_admin_after_username_change() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        conn.execute(
+            "UPDATE users SET username = '8686' WHERE id = ?1",
+            [PRIMARY_ADMIN_USER_ID],
+        )
+        .unwrap();
+        init_db(&conn).unwrap();
+
+        let primary_username: String = conn
+            .query_row(
+                "SELECT username FROM users WHERE id = ?1",
+                [PRIMARY_ADMIN_USER_ID],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let default_admin_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM users WHERE username = ?1",
+                [DEFAULT_ADMIN_USERNAME],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let users_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(primary_username, "8686");
+        assert_eq!(default_admin_count, 0);
+        assert_eq!(users_count, 1);
     }
 
     #[test]
@@ -15267,7 +15408,8 @@ mod strict_accounting_invariants {
         init_db(&conn).unwrap();
 
         // Check initial profit is 0
-        let (profit_iqd, profit_usd) = calculate_analytical_profit(&conn, "2025-01-01", None, "").unwrap();
+        let (profit_iqd, profit_usd) =
+            calculate_analytical_profit(&conn, "2025-01-01", None, "").unwrap();
         assert_eq!(profit_iqd, Money::zero());
         assert_eq!(profit_usd, Money::zero());
 
@@ -15284,7 +15426,8 @@ mod strict_accounting_invariants {
         rebuild_agency_partner_entries(&conn, new_id).unwrap();
 
         // Calculate profit again
-        let (profit_iqd_after, profit_usd_after) = calculate_analytical_profit(&conn, "2025-01-01", None, "").unwrap();
+        let (profit_iqd_after, profit_usd_after) =
+            calculate_analytical_profit(&conn, "2025-01-01", None, "").unwrap();
         assert_eq!(profit_iqd_after, Money(dec!(1000000.0)));
         assert_eq!(profit_usd_after, Money(dec!(500.0)));
     }
