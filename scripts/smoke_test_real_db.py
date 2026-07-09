@@ -9,11 +9,20 @@ and cleans up test data afterward.
 import sqlite3
 import sys
 import os
+import shutil
+import tempfile
 from datetime import datetime, timedelta
 
 TD = datetime.now().strftime("%Y-%m-%d")
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                       "src-tauri", "fjr_alwadi_data.db")
+ORIGINAL_DB = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                          "src-tauri", "fjr_alwadi_data.db")
+# Always run smoke tests against a TEMP COPY of the DB — never write to the real
+# app DB. (Bug P2: previously this script connected directly to fjr_alwadi_data.db.)
+DB_PATH = os.path.join(tempfile.gettempdir(), "fajr_smoke_test.db")
+
+# Safety check: refuse to run if DB_PATH somehow points at the real app DB.
+if os.path.basename(ORIGINAL_DB) in (os.path.basename(DB_PATH),) and not os.environ.get("FORCE_SMOKE_TEST"):
+    sys.exit("ERROR: Refusing to run against real app DB. Set FORCE_SMOKE_TEST=1 to override.")
 
 pass_count = 0
 fail_count = 0
@@ -430,29 +439,38 @@ def workflow_I_delete_protection(cur):
 # ─── Clean up all test data ────────────────────────────────────────
 
 def clean_test_data(cur):
-    # Delete all test-related data by known patterns
-    test_cars = ["SMK_B", "SMK_D", "SMK_D_NEW", "SMK_H"]
+    # Delete ONLY test data — never wipe entire tables.
+    # Test cars are identified by the "SMK_" prefix on car_number. (Bug P1.)
+    # financial_ledger rows for cars reference the car via reference_id (car_number).
+    cur.execute(
+        "DELETE FROM financial_ledger "
+        "WHERE reference_id IN (SELECT car_number FROM cars WHERE car_number LIKE 'SMK_%') "
+        "OR reference_id LIKE 'SMK_%:%'"
+    )
+    # partner_transactions rows reference cars via source_id (e.g. 'SMK_D', 'SMK_D:down_payment')
+    # and related_source_id (car_number).
+    cur.execute(
+        "DELETE FROM partner_transactions "
+        "WHERE source_id IN (SELECT car_number FROM cars WHERE car_number LIKE 'SMK_%') "
+        "OR source_id LIKE 'SMK_%:%' "
+        "OR related_source_id LIKE 'SMK_%'"
+    )
+    cur.execute(
+        "DELETE FROM car_expenses WHERE car_number IN (SELECT car_number FROM cars WHERE car_number LIKE 'SMK_%')"
+    )
+    cur.execute(
+        "DELETE FROM car_partners WHERE car_number IN (SELECT car_number FROM cars WHERE car_number LIKE 'SMK_%')"
+    )
+    # Finally remove the test cars themselves.
+    cur.execute("DELETE FROM cars WHERE car_number LIKE 'SMK_%'")
+
+    # Test buyers inserted by smoke tests.
     test_buyers = ["مشتري_نقدي", "مشتري_قسط", "مشتري_مصروف"]
-
-    # Delete all financial_ledger entries created by tests
-    cur.execute("DELETE FROM financial_ledger")
-
-    # Delete all partner_transactions entries created by tests
-    cur.execute("DELETE FROM partner_transactions")
-
-    # Delete car expenses and car partners
-    cur.execute("DELETE FROM car_expenses")
-    cur.execute("DELETE FROM car_partners")
-
-    # Delete test cars
-    cur.execute("DELETE FROM cars WHERE car_number IN ({})".format(
-        ','.join('?' for _ in test_cars)), test_cars)
-
-    # Delete test buyers from partners and partner_transactions
     for buyer in test_buyers:
         cur.execute("DELETE FROM partners WHERE partner_name=?", (buyer,))
 
-    # Delete SMK_I test data
+    # SMK_I test receivable account.
+    cur.execute("DELETE FROM financial_ledger WHERE account_type='receivable' AND account_id='مديون_سمك'")
     cur.execute("DELETE FROM partners WHERE partner_name='مديون_سمك'")
 
 # ══════════════════════════════════════════════════════════════════════
@@ -464,20 +482,23 @@ def main():
     print("=" * 60)
     print("FAJR ALWADI — REAL FRESH DB SMOKE TESTS")
     print("=" * 60)
-    print(f"DB: {DB_PATH}")
+    print(f"Source DB: {ORIGINAL_DB}")
+    print(f"Using temp DB copy: {DB_PATH}")
     print(f"Date: {TD}")
     print()
 
-    if not os.path.exists(DB_PATH):
-        print(f"ERROR: DB not found at {DB_PATH}")
+    if not os.path.exists(ORIGINAL_DB):
+        print(f"ERROR: Source DB not found at {ORIGINAL_DB}")
         sys.exit(1)
+
+    # Copy the real DB to a temp location so we never mutate production data.
+    shutil.copy(ORIGINAL_DB, DB_PATH)
+    print(f"  ✓ Copied {ORIGINAL_DB} → {DB_PATH}")
+    print()
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-
-    # Backup existing data state (just the partner seed)
-    partners_before = cur.execute("SELECT COUNT(*) FROM partners").fetchone()[0]
 
     workflows = [
         ("A. Empty-state check", workflow_A_empty_state),
@@ -513,21 +534,28 @@ def main():
     print(f"\n  Assertions: {pass_count} passed, {fail_count} failed")
 
     # Clean up
-    print("\n  Cleaning up test data...")
+    print("\n  Cleaning up test data (scoped to SMK_% test cars)...")
     clean_test_data(cur)
     conn.commit()
 
-    # Verify cleanup returned to original state
+    # Verify cleanup removed all SMK_% test rows.
     partners_after = cur.execute("SELECT COUNT(*) FROM partners").fetchone()[0]
-    cars_after = cur.execute("SELECT COUNT(*) FROM cars").fetchone()[0]
-    ledger_after = cur.execute("SELECT COUNT(*) FROM financial_ledger").fetchone()[0]
-    pt_after = cur.execute("SELECT COUNT(*) FROM partner_transactions").fetchone()[0]
-    print(f"  Partners: {partners_before} → {partners_after} (should be same)")
-    print(f"  Cars: {cars_after} (should be 0)")
-    print(f"  Ledger: {ledger_after} (should be 0)")
-    print(f"  Partner_tx: {pt_after} (should be 0)")
+    cars_after = cur.execute("SELECT COUNT(*) FROM cars WHERE car_number LIKE 'SMK_%'").fetchone()[0]
+    ledger_after = cur.execute("SELECT COUNT(*) FROM financial_ledger WHERE reference_id LIKE 'SMK_%'").fetchone()[0]
+    pt_after = cur.execute("SELECT COUNT(*) FROM partner_transactions WHERE source_id LIKE 'SMK_%' OR related_source_id LIKE 'SMK_%'").fetchone()[0]
+    print(f"  Partners (non-test remaining): {partners_after}")
+    print(f"  Test cars remaining: {cars_after} (should be 0)")
+    print(f"  Test ledger remaining: {ledger_after} (should be 0)")
+    print(f"  Test partner_tx remaining: {pt_after} (should be 0)")
 
     conn.close()
+
+    # Remove the temp DB copy now that the test run is finished.
+    try:
+        os.remove(DB_PATH)
+        print(f"\n  ✓ Removed temp DB copy: {DB_PATH}")
+    except OSError:
+        pass
 
     if fail_count > 0:
         print("\n❌ SMOKE TESTS FAILED")

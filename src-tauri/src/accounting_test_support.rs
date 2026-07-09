@@ -106,7 +106,7 @@ impl TestHarness {
     pub fn new() -> Self {
         let conn = Connection::open_in_memory().expect("open in-memory db");
         init_db(&conn).expect("init_db");
-        // Clear must_change_password for tests since we use the default admin
+        // Test-only: bypass must_change_password for test admin. NEVER do this in production code.
         let _ = conn.execute(
             "UPDATE users SET must_change_password = 0 WHERE username = 'admin'",
             [],
@@ -587,6 +587,8 @@ impl TestHarness {
             Money::zero(),
             amount,
             String::new(),
+            None,
+            None,
         )
     }
 
@@ -794,6 +796,8 @@ impl TestHarness {
             amount,
             Money::zero(),
             String::new(),
+            None,
+            None,
         )
     }
 
@@ -843,7 +847,9 @@ impl TestHarness {
     }
 
     pub fn export_database(&self) -> Result<String, String> {
-        export_database_to_excel(self.st())
+        // Bug 3 (AU3): Pass None for the new optional session_token argument
+        // (the test harness doesn't establish a session).
+        export_database_to_excel(self.st(), None)
     }
 
     pub fn read_only_roundtrip(&self) -> Result<(), String> {
@@ -952,13 +958,18 @@ pub fn record_result(result: RealVerificationResult) {
 }
 
 pub fn results_json_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../test/accounting/state/TAURI_REAL_VERIFICATION_RESULTS.json")
+    // Prefer CARGO_TARGET_TMPDIR (a per-crate temp dir provided by cargo to
+    // integration tests) so test runs don't write into the source tree. Fall
+    // back to CARGO_MANIFEST_DIR for older toolchains / non-cargo invocations.
+    let base = std::env::var("CARGO_TARGET_TMPDIR")
+        .unwrap_or_else(|_| env!("CARGO_MANIFEST_DIR").to_string());
+    PathBuf::from(base).join("../test/accounting/state/TAURI_REAL_VERIFICATION_RESULTS.json")
 }
 
 pub fn full_71_results_json_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../test/accounting/state/TAURI_REAL_FULL_71_RESULTS.json")
+    let base = std::env::var("CARGO_TARGET_TMPDIR")
+        .unwrap_or_else(|_| env!("CARGO_MANIFEST_DIR").to_string());
+    PathBuf::from(base).join("../test/accounting/state/TAURI_REAL_FULL_71_RESULTS.json")
 }
 
 pub fn clear_full_71_results() {

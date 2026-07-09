@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { callTauri } from "../api/tauri";
 import { todayIsoDate } from "../utils/dateSegments";
 import { UnifiedDateField } from "./UnifiedDateField";
@@ -10,14 +10,13 @@ import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/paginat
 import { formatNotesText } from "../utils/notesDisplay";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { GoldFxButton } from "./ui/GoldFxButton";
-import { moneySum, type MoneyValue } from "../utils/money";
+import { compareMoney, moneySum, type MoneyValue } from "../utils/money";
 import { ProfitDistributionTab } from "./ProfitDistributionTab";
 
 interface ExpensesTabProps {
   onAddExpenseChange?: (onAddExpense: { action: () => void } | null) => void;
   onDirtyChange?: (dirty: boolean) => void;
   requestCloseRef?: React.MutableRefObject<{ request: (afterClose?: () => void) => void } | null>;
-  onRefreshAllData?: () => Promise<void>;
   onDistributeChange?: (onDistribute: { action: () => void } | null) => void;
   fromDate?: string;
   toDate?: string;
@@ -29,7 +28,6 @@ export function ExpensesTab({
   onAddExpenseChange,
   onDirtyChange,
   requestCloseRef,
-  onRefreshAllData,
   onDistributeChange,
   fromDate,
   toDate,
@@ -38,6 +36,15 @@ export function ExpensesTab({
 }: ExpensesTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<"expenses" | "profit">(initialSubTab || "expenses");
   const [profitTotals, setProfitTotals] = useState<{ usd: MoneyValue; iqd: MoneyValue }>({ usd: 0, iqd: 0 });
+
+  const handleProfitSummaryLoaded = useCallback((usd: MoneyValue, iqd: MoneyValue) => {
+    setProfitTotals((previous) => {
+      if (compareMoney(previous.usd, usd) === 0 && compareMoney(previous.iqd, iqd) === 0) {
+        return previous;
+      }
+      return { usd, iqd };
+    });
+  }, []);
 
   useEffect(() => {
     if (initialSubTab) {
@@ -64,6 +71,7 @@ export function ExpensesTab({
   const [deleting, setDeleting] = useState(false);
   const [showExpenseSaveConfirm, setShowExpenseSaveConfirm] = useState(false);
   const [expenseSaving, setExpenseSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const initialExpenseRef = useRef("");
   const pendingExpenseCloseRef = useRef<(() => void) | null>(null);
   const expenseFormDirty = useMemo(() => {
@@ -91,7 +99,7 @@ export function ExpensesTab({
       },
     };
     return () => { requestCloseRef.current = null; };
-  });
+  }, []);
 
   useEffect(() => {
     const lastPage = Math.max(0, Math.ceil(entries.length / PAGE_SIZE) - 1);
@@ -141,6 +149,7 @@ export function ExpensesTab({
     setCurrency("IQD");
     setEditingExpense(null);
     setShowAddModal(false);
+    setFormError(null);
     initialExpenseRef.current = "";
   };
 
@@ -203,13 +212,14 @@ export function ExpensesTab({
     if (!validateExpenseForm()) return;
     try {
       await saveExpense();
+      forceCloseModal();
+      void load();
+      pendingExpenseCloseRef.current?.();
+      pendingExpenseCloseRef.current = null;
     } catch (err) {
       console.error(err);
+      setFormError(err instanceof Error ? err.message : "فشل حفظ المصروف");
     }
-    forceCloseModal();
-    void load();
-    pendingExpenseCloseRef.current?.();
-    pendingExpenseCloseRef.current = null;
   };
 
   const handleExpenseSaveConfirmDiscard = () => {
@@ -267,14 +277,14 @@ export function ExpensesTab({
     setExpenseSaving(true);
     try {
       await saveExpense();
+      forceCloseModal();
+      void load();
     } catch (err) {
       console.error(err);
+      setFormError(err instanceof Error ? err.message : "فشل حفظ المصروف");
     } finally {
       setExpenseSaving(false);
     }
-
-    forceCloseModal();
-    void load();
   };
 
   const handleDeleteClick = (expense: ExpenseEntry) => {
@@ -290,6 +300,10 @@ export function ExpensesTab({
       void load();
     } catch (err) {
       console.error("Failed to delete expense:", err);
+      const message = err instanceof Error ? err.message : "فشل حذف المصروف";
+      setFormError(message);
+      alert(message);
+      setDeleteExpenseConfirm(null);
     } finally {
       setDeleting(false);
     }
@@ -381,12 +395,11 @@ export function ExpensesTab({
 
       {activeSubTab === "profit" ? (
         <ProfitDistributionTab
-          onRefreshAllData={onRefreshAllData || (() => Promise.resolve())}
           onDistributeChange={onDistributeChange}
           fromDate={fromDate || ""}
           toDate={toDate || ""}
           hideToolbar={true}
-          onSummaryLoaded={(usd, iqd) => setProfitTotals({ usd, iqd })}
+          onSummaryLoaded={handleProfitSummaryLoaded}
         />
       ) : (
         <>
@@ -414,6 +427,11 @@ export function ExpensesTab({
                     void handleSubmit(e);
                   }}
                 >
+                  {formError && (
+                    <div className="alert alert--error" role="alert" style={{ marginBottom: "12px" }}>
+                      {formError}
+                    </div>
+                  )}
                   <div className="agency-fields-row" style={{ alignItems: "flex-start" }}>
                     <div className="agency-field agency-field--lg" style={{ flex: "2 1 220px" }}>
                       <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>وصف المصروف</label>
@@ -596,7 +614,7 @@ export function ExpensesTab({
           <ConfirmDialog
             open={!!deleteExpenseConfirm}
             title="تأكيد حذف المصروف"
-            message={`هل أنت متأكد من حذف المصروف «${deleteExpenseConfirm?.description || ""}» بقيمة (${deleteExpenseConfirm ? `${deleteExpenseConfirm.amount.toLocaleString()} ${deleteExpenseConfirm.currency}` : ""}) نهائياً؟ لا يمكن التراجع عن هذا الإجراء.`}
+            message={`هل أنت متأكد من حذف المصروف «${deleteExpenseConfirm?.description || ""}» نهائياً؟ لا يمكن التراجع عن هذا الإجراء.`}
             confirmLabel="نعم، احذف"
             cancelLabel="إلغاء"
             danger

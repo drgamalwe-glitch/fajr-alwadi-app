@@ -25,7 +25,7 @@
     "test:accounting:scan-resume": "npm run test:accounting:fast-scan-no-fix",
     "test:accounting:scan-next": "node e2e-bridge/server.mjs & BRIDGE_PID=$!; sleep 1; npx tsx test/accounting/runners/fast-scan-no-fix.ts --one; RESULT=$?; kill $BRIDGE_PID 2>/dev/null; exit $RESULT",
     "test:accounting:scan-scenario": "node e2e-bridge/server.mjs & BRIDGE_PID=$!; sleep 1; npx tsx test/accounting/runners/fast-scan-no-fix.ts --scenario; RESULT=$?; kill $BRIDGE_PID 2>/dev/null; exit $RESULT",
-    "test:accounting:real-tauri": "cd src-tauri && cargo test accounting_real_backend --features accounting-test-support -- --nocapture",
+    "test:accounting:real-tauri": "cd src-tauri && cargo test --features accounting-test-support -- --nocapture",
     "test:accounting:real-report": "npx tsx test/accounting/runners/generate-real-tauri-report.ts",
     "test:accounting:final-verify": "npm run test:accounting:real-tauri && npm run test:accounting:real-report",
     "test:accounting:real-tauri-full-71": "cd src-tauri && cargo test accounting_real_backend_full_71 --features accounting-test-support -- --nocapture",

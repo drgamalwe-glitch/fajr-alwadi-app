@@ -25,6 +25,8 @@ interface HeaderProps {
   toDate: string;
   onFromDateChange: (val: string) => void;
   onToDateChange: (val: string) => void;
+  // Obs-2: sub-tab context so the date filter is only shown on the profit-distribution sub-tab inside expenses.
+  expensesSubTab?: "expenses" | "profit";
 }
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
@@ -58,6 +60,7 @@ export function Header({
   toDate,
   onFromDateChange,
   onToDateChange,
+  expensesSubTab,
 }: HeaderProps) {
   const handleTabClick = (tabId: TabId) => {
     if (onSidebarSectionClick) {
@@ -103,7 +106,7 @@ export function Header({
       </nav>
 
       {/* ── خط فاصل + فلتر التاريخ من / إلى ── */}
-      {activeTab === "profit-distribution" && (
+      {activeTab === "expenses" && expensesSubTab === "profit" && (
         <>
           <div className="sidebar-divider" style={{ backgroundColor: "rgba(255,255,255,0.15)", margin: "8px 0" }} />
           <div className="sidebar-date-filter" style={{ padding: "0 16px 12px", display: "flex", flexDirection: "column", gap: "8px", direction: "rtl" }}>

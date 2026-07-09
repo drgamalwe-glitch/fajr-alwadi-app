@@ -59,7 +59,7 @@ export function PriceInput({
   const [internalCurrency, setInternalCurrency] = useState<Currency>("IQD");
   const inputRef = useRef<HTMLInputElement>(null);
   
-  // مرجع للاحتفاظ بآخر قيمة رقمية مدخلة لمنع مشاكل الـ Async ومشاكل الأسهم
+  // مرجع للاحتفاظ بآخر قيمة رقمية مدخلة لمنع مشاكل الـ Async
   const latestFloatValue = useRef<number | undefined>(parseFloat(value) || 0);
 
   // تحويل الأرقام العربية إلى إنجليزية قبل معالجة NumericFormat
@@ -118,25 +118,22 @@ export function PriceInput({
     onChange(vals.value);
   };
 
-  // معالجة حركة الأسهم الآمنة تماماً بدون تعليق المتصفح
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    const currentVal = latestFloatValue.current || 0;
-
     if (e.key === "ArrowUp") {
       e.preventDefault();
-      if (currentVal === 0) {
-        onChange("1000");
-      } else {
-        onChange(String(currentVal * 1000));
-      }
+      const currentVal = parseFloat(value) || 0;
+      const newVal = currentVal * 1000;
+      latestFloatValue.current = newVal;
+      onChange(String(newVal));
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
-      if (currentVal > 0) {
-        const nextVal = Math.floor(currentVal / 1000);
-        onChange(nextVal <= 0 ? "" : String(nextVal));
-      }
+      const currentVal = parseFloat(value) || 0;
+      const newVal = currency === "IQD" ? Math.floor(currentVal / 1000) : currentVal / 1000;
+      latestFloatValue.current = newVal;
+      onChange(String(newVal));
+    } else {
+      externalOnKeyDown?.(e);
     }
-    externalOnKeyDown?.(e);
   };
 
   const handleInputClick = (e: React.MouseEvent<HTMLInputElement>) => {

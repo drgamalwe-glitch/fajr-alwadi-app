@@ -11,10 +11,11 @@ import {
   SelectMenuValue,
   ActionButton,
   GoldFxButton,
+  PriceDisplay,
 } from "@/components/ui";
 
 import { todayIsoDate } from "../utils/dateSegments";
-import { compareMoney, moneySum, moneySub, formatMoney, type MoneyValue } from "../utils/money";
+import { compareMoney, moneySum, moneySub, formatMoney, moneyToStorage, toMoney, type MoneyValue } from "../utils/money";
 import {
   Car as CarIcon,
   Landmark,
@@ -25,6 +26,7 @@ import {
 } from "lucide-react";
 import { CompanyStatusTab } from "./CompanyStatusTab";
 import { UsersTab } from "./UsersTab";
+import { useAmountPrivacy } from "../utils/amountPrivacy";
 
 // ── نظام الألوان مُستمَد من colors.css ──────────────────
 // --red:   #4d000a   (أحمر داكن — للتحذيرات / المصاريف / الأخطار)
@@ -33,19 +35,23 @@ import { UsersTab } from "./UsersTab";
 // --black: #0e0e0e   (أسود    — الخلفية الرئيسية)
 // --white: #ffffff   (أبيض    — النص الأساسي)
 
+type DashboardSubTab = "dashboard" | "company-status" | "users" | "settings";
+
 interface DashboardProps {
   cars: Car[];
   partners: Partner[];
   onRefresh: () => Promise<void>;
-  initialSubTab?: "dashboard" | "company-status" | "users" | null;
+  initialSubTab?: DashboardSubTab | null;
   onInitialSubTabSet?: () => void;
-  onSubTabChange?: (tab: "dashboard" | "company-status" | "users") => void;
+  onSubTabChange?: (tab: DashboardSubTab) => void;
   returnState?: { section: TabId; subTab?: string } | null;
   onReturn?: () => void;
   onOpenCarForm: (mode: "new" | "edit", car?: Car) => void;
   onNavigateToPartner?: (target: string | { name: string; kind?: string | null; action?: "deposit" | "withdraw" | "settle_installment"; transactionId?: number | null }) => void;
   onNavigateToTab?: (tab: TabId, subTab?: string) => void;
   onLogout?: () => void;
+  /** Bug AU3: Session token for admin command authentication */
+  sessionToken?: string | null;
 }
 
 interface InstallmentAlert {
@@ -141,7 +147,7 @@ function InstallmentRow({
 
       {/* المبلغ */}
       <div style={{ fontWeight: "var(--fw-extrabold)", fontSize: "var(--fs-lg)", color: borderColor, flexShrink: 0 }}>
-        {formatMoney(alert.amount, alert.currency)} {alert.currency === "USD" ? "USD" : "IQ"}
+        <PriceDisplay amount={alert.amount} currency={alert.currency} noColor />
       </div>
 
       {/* الأزرار */}
@@ -244,12 +250,12 @@ function CreditorRow({
       <div style={{ textAlign: "left", flexShrink: 0 }}>
         {showUsd && (
           <div style={{ fontWeight: "var(--fw-extrabold)", fontSize: "var(--fs-lg)", color: "#e05070" }}>
-            {formatMoney(creditor.usd_balance, "USD")} USD
+            <PriceDisplay amount={creditor.usd_balance} currency="USD" noColor />
           </div>
         )}
         {showIqd && (
           <div style={{ fontWeight: "var(--fw-extrabold)", fontSize: "var(--fs-lg)", color: "#c08090" }}>
-            {formatMoney(creditor.iqd_balance, "IQD")} IQ
+            <PriceDisplay amount={creditor.iqd_balance} currency="IQD" noColor />
           </div>
         )}
       </div>
@@ -328,9 +334,11 @@ export function Dashboard({
   onNavigateToPartner,
   onNavigateToTab,
   onLogout,
+  sessionToken,
 }: DashboardProps) {
 
-  const [activeSubTab, setActiveSubTab] = useState<"dashboard" | "company-status" | "users">("dashboard");
+  const [activeSubTab, setActiveSubTab] = useState<DashboardSubTab>("dashboard");
+  const [hideAmounts, setHideAmounts] = useAmountPrivacy();
 
   useEffect(() => {
     onSubTabChange?.(activeSubTab);
@@ -377,20 +385,33 @@ export function Dashboard({
         });
         if (!txs || txs.length === 0) return;
 
-        // للزبون: حساب الأقساط المدفوعة لاستبعادها
+        // Audit fix #18: installment schedule rows are the source of truth for the
+        // paid state — the backend flips paid rows to "واصل قسط", so any remaining
+        // "باقي قسط" schedule row is unpaid by definition. The FIFO heuristic is
+        // applied ONLY to legacy/manual debt rows, per currency, and uses manual
+        // payments only (never generated payment rows, which already settled a
+        // specific schedule row on the backend).
         const paidIds = new Set<number>();
         if (debtor.kind === "زبون") {
-          const paymentTxs = txs.filter((tx) =>
-            tx.type_.startsWith("تسديد") ||
-            tx.type_.startsWith("استلام قسط") ||
-            ((tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع")) && (tx.notes || "").includes("قسط"))
-          );
-          const totalPaid = moneySum(paymentTxs, (t) => t.amount);
+          const isScheduleRow = (tx: PartnerTransaction) =>
+            tx.source_type === "customer_installment_schedule";
+          const isGeneratedPayment = (tx: PartnerTransaction) =>
+            tx.source_type === "customer_payment" ||
+            tx.source_type === "customer_sale_payment" ||
+            tx.related_source_type === "customer_payment_event";
 
-          const installmentTxs = txs
+          const manualPaymentTxs = txs.filter((tx) =>
+            !isGeneratedPayment(tx) &&
+            !isScheduleRow(tx) &&
+            (tx.type_.startsWith("تسديد") ||
+              tx.type_.startsWith("استلام قسط") ||
+              ((tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع")) && (tx.notes || "").includes("قسط")))
+          );
+
+          const manualInstallmentTxs = txs
             .filter((tx) =>
+              !isScheduleRow(tx) &&
               (tx.type_ === "سحب" || tx.type_.startsWith("باقي")) &&
-              ((tx.notes || "").includes("قسط") || tx.type_.startsWith("باقي")) &&
               compareMoney(tx.amount, 0) > 0
             )
             .sort((a, b) => {
@@ -398,13 +419,20 @@ export function Dashboard({
               return dateDiff !== 0 ? dateDiff : a.id - b.id;
             });
 
-          let remaining = totalPaid;
-          for (const inst of installmentTxs) {
-            if (compareMoney(remaining, inst.amount) >= 0) {
-              paidIds.add(inst.id);
-              remaining = moneySub(remaining, inst.amount);
-            } else {
-              break;
+          // Per-currency FIFO matching — never mix IQD with USD amounts.
+          for (const curr of ["IQD", "USD"]) {
+            let remaining = moneySum(
+              manualPaymentTxs.filter((t) => (t.currency || "IQD") === curr),
+              (t) => t.amount,
+            );
+            for (const inst of manualInstallmentTxs) {
+              if ((inst.currency || "IQD") !== curr) continue;
+              if (compareMoney(remaining, inst.amount) >= 0) {
+                paidIds.add(inst.id);
+                remaining = moneySub(remaining, inst.amount);
+              } else {
+                break;
+              }
             }
           }
         }
@@ -413,7 +441,7 @@ export function Dashboard({
           if (tx.type_ !== "سحب" && !tx.type_.startsWith("باقي")) continue;
           if (debtor.kind === "زبون" && paidIds.has(tx.id)) continue;
 
-          const cleanDate = (tx.date || "").replace(/\//g, "-").trim();
+          const cleanDate = (tx.due_date || tx.date || "").replace(/\//g, "-").trim();
           const parts = cleanDate.split("-");
           let due = new Date();
           if (parts.length === 3) {
@@ -434,7 +462,7 @@ export function Dashboard({
               id: tx.id,
               buyerName: debtor.partner_name,
               phone: debtor.phone || "",
-              dueDate: tx.date,
+              dueDate: tx.due_date || tx.date,
               amount: tx.amount,
               currency: tx.currency || "IQD",
               status: diffDays < 0 ? "overdue" : diffDays === 0 ? "due_today" : "upcoming",
@@ -461,8 +489,8 @@ export function Dashboard({
     return () => { cancelled = true; };
   }, [partners, cars]);
 
-  const accountKindsForDashboard = new Set(["مستثمر", "ممول", "شركة"]);
-  const creditorKinds = new Set(["مستثمر", "ممول", "شركة", "زبون"]);
+  const accountKindsForDashboard = new Set(["مستثمر", "ممول", "شركة", "وكالة"]);
+  const creditorKinds = new Set(["مستثمر", "ممول", "شركة", "زبون", "وكالة"]);
 
   const accountReceivableAlerts: InstallmentAlert[] = unifiedAccounts.flatMap((account, index) => {
     if (!accountKindsForDashboard.has(account.kind)) return [];
@@ -537,7 +565,8 @@ export function Dashboard({
     try {
       await callTauri("add_expense", {
         description: expenseDesc.trim(),
-        amount: Number(expenseAmt) || 0,
+        // Audit fix #31: send money as a Decimal-normalized string, never a JS number.
+        amount: moneyToStorage(toMoney(expenseAmt)),
         date: todayIsoDate(),
         notes: expenseCar ? `مصروف مرتبط بالسيارة ${expenseCar}` : null,
         currency: expenseCurrency,
@@ -553,8 +582,6 @@ export function Dashboard({
   // ── تسديد قسط ──
   const [showPayInstallmentModal, setShowPayInstallmentModal] = useState(false);
   const [selectedInstallment, setSelectedInstallment] = useState<InstallmentAlert | null>(null);
-  const [payAmount, setPayAmount] = useState("");
-  const [payMethod, setPayMethod] = useState<"قاصه">("قاصه");
 
   const handleOpenPayInstallment = (alert: InstallmentAlert) => {
     if (!onNavigateToPartner) {
@@ -591,7 +618,6 @@ export function Dashboard({
       });
       setShowPayInstallmentModal(false);
       setSelectedInstallment(null);
-      setPayAmount("");
     } else {
       console.error("لا يمكن تسديد القسط من لوحة التحكم مباشرة — يرجى استخدام صفحة الشريك");
     }
@@ -630,8 +656,9 @@ export function Dashboard({
 
     setLoadingAction(true);
     try {
-      const amountNum = Number(creditorAmount);
-      const commissionNum = Number(creditorCommission) || 0;
+      // Audit fix #31: send money as Decimal-normalized strings, never JS numbers.
+      const amountNum = moneyToStorage(toMoney(creditorAmount));
+      const commissionNum = moneyToStorage(toMoney(creditorCommission));
 
       // العثور على الحساب الفعلي للممول المختار في النظام لمعرفة نوع حسابه الحقيقي بدقة
       const matchingPartner = partners.find(
@@ -713,6 +740,13 @@ export function Dashboard({
             >
               المستخدمين
             </button>
+            <button
+              type="button"
+              className={`top-btn-two ${activeSubTab === "settings" ? "top-btn-two--active" : ""}`}
+              onClick={() => setActiveSubTab("settings")}
+            >
+              الإعدادات
+            </button>
           </div>
         </div>
         <div
@@ -726,7 +760,59 @@ export function Dashboard({
       {activeSubTab === "company-status" ? (
         <CompanyStatusTab summary={summary} unifiedAccounts={unifiedAccounts} partners={partners} onNavigateToTab={onNavigateToTab} onNavigateToPartner={onNavigateToPartner} />
       ) : activeSubTab === "users" ? (
-        <UsersTab onLogout={onLogout || (() => { })} />
+        <UsersTab onLogout={onLogout || (() => { })} sessionToken={sessionToken} />
+      ) : activeSubTab === "settings" ? (
+        <div
+          className="dashboard-panel"
+          style={{
+            maxWidth: 720,
+            width: "100%",
+            margin: "1rem auto 0",
+            padding: "1.25rem",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "1rem",
+          }}
+        >
+          <div>
+            <h3 style={{ margin: 0, color: "var(--labletext)", fontSize: "var(--fs-lg)", fontWeight: 800 }}>
+              إخفاء المبالغ
+            </h3>
+            <p style={{ margin: "0.35rem 0 0", color: "var(--bg2)", fontSize: "var(--fs-sm)" }}>
+              عند التفعيل تظهر المبالغ مشفرة ولا تنكشف إلا عند الضغط على بطاقة المبلغ.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={hideAmounts}
+            onClick={() => setHideAmounts(!hideAmounts)}
+            style={{
+              width: 76,
+              height: 38,
+              borderRadius: 999,
+              border: hideAmounts ? "1px solid rgba(216,168,90,0.75)" : "1px solid rgba(255,255,255,0.18)",
+              background: hideAmounts ? "rgba(216,168,90,0.22)" : "rgba(255,255,255,0.08)",
+              padding: 4,
+              cursor: "pointer",
+              display: "flex",
+              justifyContent: hideAmounts ? "flex-start" : "flex-end",
+              transition: "all 0.2s ease",
+            }}
+          >
+            <span
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: "50%",
+                background: hideAmounts ? "var(--smiles)" : "rgba(255,255,255,0.45)",
+                boxShadow: hideAmounts ? "0 0 16px rgba(216,168,90,0.45)" : "none",
+                transition: "all 0.2s ease",
+              }}
+            />
+          </button>
+        </div>
       ) : (
         <>
           {/* ═══════════════════════════════════════════════════
@@ -872,7 +958,7 @@ export function Dashboard({
                           </div>
                           <div style={{ textAlign: "left", flexShrink: 0 }}>
                             <div style={{ fontSize: "var(--fs-sm)", color: "#d4af37", fontWeight: 700 }}>
-                              {formatMoney(c.purchase_price, c.currency)} {c.currency === "USD" ? "USD" : "IQ"}
+                              <PriceDisplay amount={c.purchase_price} currency={c.currency} noColor />
                             </div>
                             <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.35)" }}>سعر الشراء</div>
                           </div>
@@ -956,32 +1042,18 @@ export function Dashboard({
                       <div style={{ gridColumn: "span 2" }}>
                         <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.45)" }}>قيمة القسط المستحق</div>
                         <div style={{ fontWeight: 800, fontSize: "var(--fs-lg)", color: "#d4af37" }}>
-                          {formatMoney(selectedInstallment.amount, selectedInstallment.currency)} {selectedInstallment.currency === "USD" ? "USD" : "IQ"}
+                          <PriceDisplay amount={selectedInstallment.amount} currency={selectedInstallment.currency} noColor />
                         </div>
                       </div>
                     </div>
-                    <div className="form-group">
-                      <label className="label">المبلغ المسدد</label>
-                      <PriceInput value={payAmount} onChange={setPayAmount} currency={selectedInstallment.currency as "IQD" | "USD"} onCurrencyChange={() => { }} />
-                      {compareMoney(payAmount, selectedInstallment.amount) > 0 && (
-                        <div style={{ marginTop: "0.5rem", padding: "0.6rem 0.75rem", background: "rgba(212,175,55,0.07)", border: "1px solid rgba(212,175,55,0.2)", borderRadius: "var(--all-radius)", fontSize: "var(--fs-xs)", color: "#d4af37" }}>
-                          ✨ الفائض <strong>{formatMoney(moneySub(payAmount, selectedInstallment.amount), selectedInstallment.currency)} {selectedInstallment.currency === "USD" ? "USD" : "IQ"}</strong> سيتم توزيعه على الأقساط القادمة تلقائياً
-                        </div>
-                      )}
-                    </div>
-                    <div className="form-group">
-                      <label className="label">يدخل إلى</label>
-                      <div className="payment-type-selector">
-                        {(["قاصه"] as const).map((opt) => (
-                          <button key={opt} type="button" className={`payment-type-btn payment-type-btn--${opt === "قاصه" ? "qasa" : "external"} ${payMethod === opt ? "payment-type-btn--active" : ""}`} onClick={() => setPayMethod(opt)}>{opt}</button>
-                        ))}
-                      </div>
-                    </div>
+                    <p style={{ color: "rgba(255,255,255,0.75)", fontSize: "var(--fs-sm)", margin: "0.75rem 0", textAlign: "center" }}>
+                      سيتم تحويلك إلى صفحة الشريك لإكمال التسديد.
+                    </p>
                     <div className="modal-dialog__actions">
                       <ActionButton type="button" variant="ghost" onClick={() => setShowPayInstallmentModal(false)}>إلغاء</ActionButton>
-                      <GoldFxButton type="submit" variant="red" style={{ flex: 1, margin: 0 }} disabled={loadingAction || !Number(payAmount)}>
+                      <GoldFxButton type="submit" variant="red" style={{ flex: 1, margin: 0 }} disabled={loadingAction}>
                         <span className="gold-fx-btn__icon">↑</span>
-                        <span className="gold-fx-btn__label">{loadingAction ? "جاري التسديد..." : "تسديد"}</span>
+                        <span className="gold-fx-btn__label">{loadingAction ? "جاري التحويل..." : "تسديد"}</span>
                       </GoldFxButton>
                     </div>
                   </form>
@@ -1021,8 +1093,8 @@ export function Dashboard({
                                 {c.phone && <div style={{ fontSize: "var(--fs-xs)", color: "rgba(255,255,255,0.4)" }}>📞 {c.phone}</div>}
                               </div>
                               <div style={{ textAlign: "left", flexShrink: 0 }}>
-                                {compareMoney(c.usd_balance, 0) < 0 && <div style={{ fontWeight: 800, color: "#f87171", fontSize: "var(--fs-sm)" }}>{formatMoney(c.usd_balance, "USD")} USD</div>}
-                                {compareMoney(c.iqd_balance, 0) < 0 && <div style={{ fontWeight: 600, color: "#fca5a5", fontSize: "var(--fs-sm)" }}>{formatMoney(c.iqd_balance, "IQD")} IQ</div>}
+                                {compareMoney(c.usd_balance, 0) < 0 && <div style={{ fontWeight: 800, color: "#f87171", fontSize: "var(--fs-sm)" }}><PriceDisplay amount={c.usd_balance} currency="USD" noColor /></div>}
+                                {compareMoney(c.iqd_balance, 0) < 0 && <div style={{ fontWeight: 600, color: "#fca5a5", fontSize: "var(--fs-sm)" }}><PriceDisplay amount={c.iqd_balance} currency="IQD" noColor /></div>}
                               </div>
                             </button>
                           ))}

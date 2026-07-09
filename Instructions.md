@@ -1180,9 +1180,9 @@ Use explicit fields and clear source references.
 
 The following behaviors have been reviewed and confirmed as correct. They must not be flagged as bugs by future audits or AI reviews.
 
-## 30.1 Cash Sale — Single Cash Movement to Partners
+## 30.1 Cash Sale — Cash Movement + Signed Profit Recognition Rows
 
-When a car is sold for cash, the system deposits the full selling price to partners in a single `cash_movement` row. There is no separate `profit_recognition` partner row at the database level. Profit for cash car sales is calculated analytically in `calculate_analytical_profit` by reading the `cars` table directly (`selling - purchase - car_expenses`). This is by design and is correct.
+When a car is sold for cash, the system deposits the full selling price to partners in a single `cash_movement` row (affects_qasa = affects_partner_cash = 1, affects_profit = 0). In addition, `rebuild_cash_sale_profit_recognition` creates SIGNED `profit_recognition` rows (source_type = `car_sale`, affects_profit = 1, affects_qasa = affects_partner_cash = 0) carrying the car profit — or the negative loss — split 50/50. `calculate_analytical_profit` reads these `profit_recognition` rows (it does not recompute from the `cars` table). The profit rows never enter Qasa/Cash, so there is no double counting. This is by design and is correct.
 
 ## 30.2 Down Payment — Full Two-Effect Treatment
 
@@ -1214,3 +1214,15 @@ When rebuilding profit recognitions (`rebuild_customer_payment_profit_recognitio
 ## 30.8 Down Payment Cap — Must Include Existing Down Payments
 
 When validating a down payment update, the cap check must include all existing down payments for the same sale (not just installment events). The formula is: `new_amount + paid_installments + existing_down_payments <= selling_price`.
+
+## 30.9 Agency Profit — Recognized When Recorded, Cash Only When Received
+
+Per section 13, agency profit `profit_recognition` rows are created as soon as the agency is recorded, even when the payment status is "غير واصل". The `cash_movement` rows are created only when the status is "واصل" (real cash). While unpaid, a receivable row (kind = "وكالة") tracks the amount owed. The ledger always credits `revenue` at record time, debiting `cash` when received or `receivable` while owed.
+
+## 30.10 Deferred Revenue Ledger Account Holds Unearned Profit Only
+
+For installment/term sales, the sale ledger entries follow the installment method: `Dr receivable (selling price)`, `Cr inventory (car cost)`, and `Cr deferred_revenue (full car profit only)`. Loss sales record `Dr expense "خسارة بيع سيارة"` instead of a deferred credit. Each payment's profit recognition transfers `Dr deferred_revenue / Cr revenue` for the profit portion, so the deferred account reaches exactly zero when the full car profit is recognized.
+
+## 30.11 Deterministic 50/50 Split Remainder
+
+When an odd smallest unit cannot be split evenly, the remainder deterministically goes to the FIRST partner (alphabetical order). Rebuilding generated rows therefore always reproduces identical amounts.

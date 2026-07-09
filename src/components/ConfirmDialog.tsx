@@ -29,6 +29,12 @@ export function ConfirmDialog({
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Enter" && !loading) {
+        // F11: don't trigger confirm when the user is typing in an input/textarea/contenteditable.
+        const active = document.activeElement;
+        const tag = (active?.tagName ?? "").toLowerCase();
+        if (tag === "input" || tag === "textarea" || (active as HTMLElement)?.isContentEditable) {
+          return; // don't trigger on Enter while typing
+        }
         e.preventDefault();
         onConfirm();
       }

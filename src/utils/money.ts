@@ -54,6 +54,9 @@ export function moneyMul(left: MoneyInput, right: MoneyInput): Decimal {
   return toMoney(left).times(toMoney(right));
 }
 
+// Audit note #23: division by zero intentionally returns 0 (total function for
+// display math). Callers that need to distinguish "no divisor" must guard the
+// divisor themselves (see carProfitPercentage).
 export function moneyDiv(left: MoneyInput, right: MoneyInput): Decimal {
   const divisor = toMoney(right);
   return divisor.isZero() ? ZERO : toMoney(left).div(divisor);
@@ -81,9 +84,12 @@ export function moneyToStorage(value: MoneyInput): string {
   return money.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed();
 }
 
+// Audit fix #24: formatMoney is sign-preserving. Losses/negative balances must
+// never be rendered as positive numbers. Callers that intentionally render the
+// sign themselves (e.g. PriceDisplay) already pass an absolute value via moneyAbs.
 export function formatMoney(value: MoneyInput, currency?: string | null): string {
   const places = currency === "USD" ? 2 : 0;
-  const rounded = toMoney(value).abs().toDecimalPlaces(places, Decimal.ROUND_HALF_UP);
+  const rounded = toMoney(value).toDecimalPlaces(places, Decimal.ROUND_HALF_UP);
   return rounded.toNumber().toLocaleString("en-US", {
     minimumFractionDigits: places,
     maximumFractionDigits: places,

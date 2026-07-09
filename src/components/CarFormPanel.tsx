@@ -6,13 +6,14 @@ import { QuickAddPartnerModal } from "./QuickAddPartnerModal";
 
 import { toChassisText } from "../utils/keyboardLayout";
 import { normalizePhoneNumber, toEnglishDigits } from "../utils/numberInput";
-import { formatMoney, moneyAdd, moneySum } from "../utils/money";
+import { compareMoney, moneyAdd, moneyDiv, moneySub, moneySum } from "../utils/money";
 import { todayIsoDate } from "../utils/dateSegments";
 import { UnifiedDateField } from "./UnifiedDateField";
 import { YearScrollField } from "./YearScrollField";
 import {
   TextInput,
   NumberInput,
+  PriceDisplay,
   PriceInput,
   type Currency,
 } from "@/components/ui";
@@ -73,17 +74,17 @@ export function CarFormPanel({
   const isPlateDuplicate = form.num.trim() !== "" && (() => {
     const normalizedNum = form.num.trim().toLowerCase().replace(/\s/g, "");
     return existingCars.some((c) => {
-      if (isEditing && form.oldNum && (c.car_plate_num || "").trim().toLowerCase() === form.oldNum.trim().toLowerCase()) {
+      if (isEditing && form.oldNum && (c.car_number || "").trim().toLowerCase() === form.oldNum.trim().toLowerCase()) {
         return false;
       }
-      return (c.car_plate_num || "").trim().toLowerCase().replace(/\s/g, "") === normalizedNum;
+      return (c.car_plate_num || c.car_number || "").trim().toLowerCase().replace(/\s/g, "") === normalizedNum;
     });
   })();
 
   const isChassisDuplicate = form.chassis.trim() !== "" && (() => {
     const normalizedChassis = form.chassis.trim().toLowerCase().replace(/\s/g, "");
     return existingCars.some((c) => {
-      if (isEditing && form.oldNum && (c.car_plate_num || "").trim().toLowerCase() === form.oldNum.trim().toLowerCase()) {
+      if (isEditing && form.oldNum && (c.car_number || "").trim().toLowerCase() === form.oldNum.trim().toLowerCase()) {
         return false;
       }
       return c.chassis_number && c.chassis_number.trim().toLowerCase().replace(/\s/g, "") === normalizedChassis;
@@ -221,10 +222,7 @@ export function CarFormPanel({
       if (!form.financerName.trim()) return false;
     }
 
-    // 3. Check duplicate fields
-    if (isPlateDuplicate || isChassisDuplicate) return false;
-
-    // 4. Check sale fields if the car is sold
+    // 3. Check sale fields if the car is sold
     if (isSold) {
       if (form.selling === "" || Number(form.selling) <= 0) return false;
       if (!form.buyerName.trim()) return false;
@@ -265,8 +263,6 @@ export function CarFormPanel({
     form.installmentMonths,
     form.firstPaymentDate,
     form.deliveryDate,
-    isPlateDuplicate,
-    isChassisDuplicate,
   ]);
 
   useEffect(() => {
@@ -276,7 +272,7 @@ export function CarFormPanel({
   const amountRemaining = Number(form.amountRemaining) || 0;
 
   const monthly = form.paymentType === "اقساط" && installmentMonths > 0
-    ? amountRemaining / installmentMonths : 0;
+    ? moneyDiv(amountRemaining, installmentMonths).toNumber() : 0;
   const formRef = useRef<HTMLFormElement>(null);
 
   const prevAutoType = useRef(form.paymentType);
@@ -356,12 +352,10 @@ export function CarFormPanel({
     if (!formEl) return;
 
     if (isPlateDuplicate) {
-      alert("تنبيه: رقم اللوحة مكرر بالفعل!");
-      return;
+      alert("تنبيه: رقم اللوحة موجود سابقاً، وسيتم حفظ السيارة بمعرّف مختلف.");
     }
     if (isChassisDuplicate) {
-      alert("تنبيه: رقم الشاصي مكرر بالفعل!");
-      return;
+      alert("تنبيه: رقم الشاصي موجود سابقاً، وسيتم الحفظ بشكل طبيعي.");
     }
 
     formEl.querySelectorAll(".input--error").forEach(el => el.classList.remove("input--error"));
@@ -439,10 +433,9 @@ export function CarFormPanel({
     }
 
     if (isSold) {
-      const selling = Number(form.selling) || 0;
-      const paid = Number(form.amountPaid) || 0;
-      const remaining = Number(form.amountRemaining) || 0;
-      if (Math.abs(selling - (paid + remaining + receivedInstallmentsTotal)) > 0.01) {
+      // F9: use Decimal-based comparison instead of JS float subtraction to avoid precision drift.
+      const expected = moneyAdd(form.amountPaid, form.amountRemaining, receivedInstallmentsTotal);
+      if (compareMoney(moneySub(form.selling, expected), 0) !== 0) {
         if (receivedInstallmentsTotal > 0) {
           alert("تنبيه: مجموع (المقدمة + المبلغ المتبقي + الأقساط الواصلة) يجب أن يساوي سعر البيع!");
         } else {
@@ -741,7 +734,7 @@ export function CarFormPanel({
                               justifyContent: "center",
                             }}
                           >
-                            {formatMoney(total, form.currency)} {form.currency === "USD" ? "USD" : "IQ"}
+                            <PriceDisplay amount={total} currency={form.currency} noColor />
                           </div>
                         );
                       })()}
@@ -923,7 +916,7 @@ export function CarFormPanel({
                               {exp.description}
                             </td>
                             <td className="py-1.5 text-center font-bold text-[var(--car-accent-light)] whitespace-nowrap">
-                              {exp.amount.toLocaleString()} {exp.currency === "USD" ? "USD" : "IQ"}
+                              <PriceDisplay amount={exp.amount} currency={exp.currency} noColor />
                             </td>
                           </tr>
                         ))}
@@ -1187,13 +1180,22 @@ export function CarFormPanel({
                     </div>
                     <div>
                       <label className="text-[var(--car-fs-label)] text-[var(--car-text-label)] block mb-1 text-center">القسط الشهري</label>
-                      <TextInput
-                        inputSize="sm"
-                        value={`${monthly.toLocaleString("en-US")} ${form.saleCurrency === "USD" ? "USD" : "IQ"}`}
-                        disabled
-                        dir="ltr"
-                        style={{ color: "var(--car-accent-light)", fontWeight: "bold" }}
-                      />
+                      <div
+                        style={{
+                          height: "34px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          background: "var(--textinputbg)",
+                          border: "1px solid var(--textinputborder)",
+                          borderRadius: "var(--all-radius)",
+                          color: "var(--car-accent-light)",
+                          fontWeight: "bold",
+                          direction: "ltr",
+                        }}
+                      >
+                        <PriceDisplay amount={monthly} currency={form.saleCurrency} noColor />
+                      </div>
                     </div>
                   </>
                 )}

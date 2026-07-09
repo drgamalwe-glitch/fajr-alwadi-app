@@ -6,57 +6,7 @@ import { PriceDisplay } from "@/components/ui";
 import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
 import { formatLedgerDetails } from "../utils/notesDisplay";
-import { compareMoney, formatMoney, moneyAbs, moneyDiv, moneyMul, type MoneyValue } from "../utils/money";
-
-const parseCommissionText = (notes: string | null | undefined, currency?: string | null, amount?: MoneyValue): string => {
-  const curr = currency || "IQD";
-  if (!notes) return "—";
-  const parts = notes.split("عمولة:");
-  if (parts.length > 1) {
-    const cleanPart = parts[1].split("%")[0].trim();
-    if (parts[1].includes("%")) {
-      const pct = parseFloat(cleanPart);
-      if (!isNaN(pct)) {
-        if (amount !== undefined) {
-          const commissionVal = moneyDiv(moneyMul(moneyAbs(amount), pct), 100);
-          return curr === "USD"
-            ? `${formatMoney(commissionVal, "USD")} USD`
-            : `${formatMoney(commissionVal)} IQ`;
-        }
-        return pct + "%";
-      }
-    }
-    const val = parseFloat(cleanPart);
-    if (!isNaN(val)) {
-      return curr === "USD"
-        ? `${val.toLocaleString("en-US")} USD`
-        : `${val.toLocaleString("en-US")} IQ`;
-    }
-  }
-  return "—";
-};
-
-const parseCommissionNumeric = (notes: string | null | undefined, amount?: MoneyValue): MoneyValue => {
-  if (!notes) return 0;
-  const parts = notes.split("عمولة:");
-  if (parts.length > 1) {
-    const cleanPart = parts[1].split("%")[0].trim();
-    if (parts[1].includes("%")) {
-      const pct = parseFloat(cleanPart);
-      if (!isNaN(pct)) {
-        if (amount !== undefined) {
-          return moneyDiv(moneyMul(moneyAbs(amount), pct), 100);
-        }
-        return pct;
-      }
-    }
-    const val = parseFloat(cleanPart);
-    if (!isNaN(val)) {
-      return val;
-    }
-  }
-  return 0;
-};
+import { compareMoney, type MoneyValue } from "../utils/money";
 
 const isOutgoingEntry = (entry: CashRegisterEntry) =>
   compareMoney(entry.amount, 0) < 0 || entry.type_.includes("سحب") || entry.type_.includes("شراء") || entry.type_.includes("مصروف");
@@ -104,15 +54,10 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
     const { key, direction } = sortConfig;
     const sign = direction === "asc" ? 1 : -1;
     return [...entries].sort((a, b) => {
-      let valA: unknown = a[key as keyof CashRegisterEntry] ?? "";
-      let valB: unknown = b[key as keyof CashRegisterEntry] ?? "";
+      const valA: unknown = a[key as keyof CashRegisterEntry] ?? "";
+      const valB: unknown = b[key as keyof CashRegisterEntry] ?? "";
 
-      if (key === "commission") {
-        valA = parseCommissionNumeric(a.notes, a.amount);
-        valB = parseCommissionNumeric(b.notes, b.amount);
-      }
-
-      if (key === "amount" || key === "balance" || key === "id" || key === "commission") {
+      if (key === "amount" || key === "balance" || key === "id") {
         return (key === "id" ? Number(valA) - Number(valB) : compareMoney(valA as MoneyValue, valB as MoneyValue)) * sign;
       }
       if (key === "date") {
@@ -169,16 +114,15 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
               <th className={sortConfig?.key === "time" ? "th--sorted" : ""} onClick={() => handleSort("time")} style={{ width: "60px", cursor: "pointer" }}>الساعة</th>
               <th className={sortConfig?.key === "type_" ? "th--sorted" : ""} onClick={() => handleSort("type_")} style={{ width: "200px", cursor: "pointer" }}>نوع العملية</th>
               <th className={`col-money ${sortConfig?.key === "amount" ? "th--sorted" : ""}`} onClick={() => handleSort("amount")} style={{width: "200px", cursor: "pointer" }}>المبلغ</th>
-              {paymentType === "ممول" && <th className={sortConfig?.key === "commission" ? "th--sorted" : ""} onClick={() => handleSort("commission")} style={{ width: "80px", textAlign: "center", cursor: "pointer" }}>العمولة</th>}
               <th className={sortConfig?.key === "description" ? "th--sorted" : ""} onClick={() => handleSort("description")} style={{ cursor: "pointer" }}>التفاصيل</th>
               <th className={`col-money ${sortConfig?.key === "balance" ? "th--sorted" : ""}`} onClick={() => handleSort("balance")} style={{ cursor: "pointer" }}>الرصيد</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={paymentType === "ممول" ? 8 : 7} className="empty-cell">جاري التحميل...</td></tr>
+              <tr><td colSpan={7} className="empty-cell">جاري التحميل...</td></tr>
             ) : entries.length === 0 ? (
-              <tr><td colSpan={paymentType === "ممول" ? 8 : 7} className="empty-cell">لا توجد معاملات بعد</td></tr>
+              <tr><td colSpan={7} className="empty-cell">لا توجد معاملات بعد</td></tr>
             ) : (
               <>
                 {pageEntries.map((entry, idx) => (
@@ -192,11 +136,6 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
                     <td className={`col-money ${isOutgoingEntry(entry) ? "qasa-amount-neg" : "qasa-amount-pos"}`}>
                       {formatEntry(entry, entry.amount)}
                     </td>
-                    {paymentType === "ممول" && (
-                      <td className="qasa-commission-text">
-                        {parseCommissionText(entry.notes, entry.currency, entry.amount)}
-                      </td>
-                    )}
                     <td className="cell-notes-text" title={formatLedgerDetails(entry.description, entry.notes)}>
                       {formatLedgerDetails(entry.description, entry.notes)}
                     </td>
@@ -212,7 +151,6 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
                     <td>&nbsp;</td>
                     <td>&nbsp;</td>
                     <td>&nbsp;</td>
-                    {paymentType === "ممول" && <td>&nbsp;</td>}
                     <td>&nbsp;</td>
                     <td>&nbsp;</td>
                   </tr>

@@ -8,7 +8,13 @@ import os
 import sys
 
 def create_test_db(path):
+    # Bug P6: previously this unconditionally deleted any existing file at `path`.
+    # We now prompt for confirmation before overwriting an existing DB so the
+    # user doesn't lose a hand-crafted test fixture by accident.
     if os.path.exists(path):
+        resp = input(f"File {path} exists. Overwrite? [y/N] ")
+        if resp.lower() != "y":
+            sys.exit("Aborted.")
         os.remove(path)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row

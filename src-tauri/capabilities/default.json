@@ -7,11 +7,10 @@
     "core:default",
     "core:window:allow-create",
     "core:window:allow-center",
-    "core:webview:allow-create-webview-window",
-    "opener:default",
+    "opener:allow-open-url",
     {
       "identifier": "opener:allow-open-path",
-      "allow": [{ "path": "$TEMP/**" }]
+      "allow": [{ "path": "$TEMP/fajr_*.pdf" }]
     },
     "fs:default",
     "fs:allow-read-file",
@@ -19,7 +18,7 @@
     {
       "identifier": "fs:scope",
       "allow": [
-        { "path": "$TEMP/**" },
+        { "path": "$TEMP/fajr_*.pdf" },
         { "path": "$RESOURCE/logo.png" },
         { "path": "$RESOURCE/assets/logo.png" },
         { "path": "$RESOURCE/fonts/**" }

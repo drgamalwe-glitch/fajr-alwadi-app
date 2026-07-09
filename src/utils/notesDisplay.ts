@@ -5,7 +5,15 @@ export function formatNotesText(notes: string | null | undefined): string {
   if (text.includes(" - عمولة:")) {
     text = text.split(" - عمولة:")[0].trim();
   }
-  return text.replace(/\s*\|\s*قسط#\d+\s*/g, "").trim();
+  return text
+    .replace(/\s*\|\s*قسط#\d+\s*/g, "")
+    .replace(/\s*#بيع_سيارة_[^\s|،,؛)]+/g, "")
+    .replace(/(?:رقم\s+)?الشاصي\s*[:：]?\s*/g, "")
+    .replace(/شاصي\s*[:：]?\s*/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")")
+    .trim();
 }
 
 /** دمج التفاصيل والملاحظات في نص واحد مختصر بلون أسود */

@@ -10,9 +10,11 @@ interface UserInfo {
 
 interface UsersTabProps {
   onLogout: () => void;
+  /** Bug AU3: Session token for admin command authentication */
+  sessionToken?: string | null;
 }
 
-export function UsersTab({ onLogout }: UsersTabProps) {
+export function UsersTab({ onLogout, sessionToken }: UsersTabProps) {
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -67,10 +69,6 @@ export function UsersTab({ onLogout }: UsersTabProps) {
       setFormError("اسم المستخدم مطلوب");
       return;
     }
-    if (formPassword.trim() && formPassword.trim().length < 3) {
-      setFormError("كلمة المرور يجب أن تكون 3 أحرف على الأقل");
-      return;
-    }
 
     try {
       if (editingUser) {
@@ -79,11 +77,13 @@ export function UsersTab({ onLogout }: UsersTabProps) {
           username: formUsername.trim(),
           displayName: formDisplayName.trim(),
           profileImage: editingUser.profile_image,
+          sessionToken,
         });
         if (formPassword.trim()) {
           await callTauri("change_password", {
             id: editingUser.id,
             newPassword: formPassword.trim(),
+            sessionToken,
           });
         }
         setFormSuccess("تم تحديث المستخدم");
@@ -97,6 +97,7 @@ export function UsersTab({ onLogout }: UsersTabProps) {
           password: formPassword.trim(),
           displayName: formDisplayName.trim(),
           profileImage: null,
+          sessionToken,
         });
         setFormSuccess("تم إنشاء المستخدم");
       }
@@ -111,7 +112,7 @@ export function UsersTab({ onLogout }: UsersTabProps) {
     if (!confirm(`هل أنت متأكد من حذف المستخدم "${user.display_name}"؟`)) return;
 
     try {
-      await callTauri("delete_user", { id: user.id });
+      await callTauri("delete_user", { id: user.id, sessionToken });
       void loadUsers();
     } catch (err) {
       alert(String(err));

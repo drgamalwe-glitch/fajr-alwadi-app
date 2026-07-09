@@ -25,7 +25,7 @@ type CarOpenTarget = {
   initialPage?: 0 | 1;
 };
 
-type DashboardSubTab = "dashboard" | "company-status" | "users";
+type DashboardSubTab = "dashboard" | "company-status" | "users" | "settings";
 type PartnersFinancialSubTab = "customers" | "personal" | "receivables" | "liabilities";
 type CarsSubTab = "available" | "sold";
 const CARS_SUB_TABS = new Set<CarsSubTab>(["available", "sold"]);
@@ -33,6 +33,29 @@ const CARS_SUB_TABS = new Set<CarsSubTab>(["available", "sold"]);
 /** Narrow an arbitrary string to a known sub-tab union, or return null. */
 function narrowSubTab<T extends string>(value: string | undefined | null, allowed: ReadonlySet<T>): T | null {
   return value && allowed.has(value as T) ? (value as T) : null;
+}
+
+const FIELD_NAV_KEYS = new Set(["ArrowRight", "ArrowLeft"]);
+const FIELD_NAV_SELECTOR = [
+  "input:not([type='hidden'])",
+  "textarea",
+  "select",
+  "[contenteditable='true']",
+].join(",");
+
+function isFocusableField(el: Element): el is HTMLElement {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.matches("[disabled], [aria-disabled='true']")) return false;
+  if (el.getAttribute("tabindex") === "-1") return false;
+  const style = window.getComputedStyle(el);
+  return style.display !== "none" && style.visibility !== "hidden" && el.offsetParent !== null;
+}
+
+function focusField(el: HTMLElement) {
+  el.focus();
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    window.setTimeout(() => el.select(), 0);
+  }
 }
 
 // Static array of background paths to optimize build size and prevent file duplication
@@ -85,7 +108,6 @@ function pickAvailableBackground(preferred: string | null | undefined, available
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
   const [isDeveloperMode, setIsDeveloperMode] = useState(false);
-  const typedKeysRef = useRef<string>("");
 
   const [dashboardSubTab, setDashboardSubTab] = useState<DashboardSubTab | null>(null);
   const [partnersFinancialSubTab, setPartnersFinancialSubTab] = useState<PartnersFinancialSubTab | null>(null);
@@ -130,12 +152,52 @@ export default function App() {
     return () => window.removeEventListener("beforeunload", handler);
   }, []);
 
+  useEffect(() => {
+    const handleFieldArrowNavigation = (event: KeyboardEvent) => {
+      if (!FIELD_NAV_KEYS.has(event.key)) return;
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+
+      const target = event.target as HTMLElement | null;
+      if (!target || !target.matches(FIELD_NAV_SELECTOR)) return;
+      if (target.closest("[data-arrow-nav-disabled='true']")) return;
+      if (target instanceof HTMLInputElement && target.type === "search") return;
+      if (target.closest(".search-popup, [role='search']")) return;
+
+      const openCombobox = target.closest(".search-select")?.querySelector(".combobox-dropdown--open");
+      if (openCombobox && (event.key === "ArrowUp" || event.key === "ArrowDown")) return;
+
+      const root =
+        target.closest("form") ||
+        target.closest(".modal-dialog") ||
+        target.closest(".mb-dialog") ||
+        target.closest(".dashboard-panel") ||
+        document.body;
+      const fields = Array.from(root.querySelectorAll(FIELD_NAV_SELECTOR)).filter(isFocusableField);
+      const currentIndex = fields.indexOf(target);
+      if (currentIndex < 0 || fields.length < 2) return;
+
+      const direction = event.key === "ArrowLeft" ? 1 : -1;
+      const nextIndex = (currentIndex + direction + fields.length) % fields.length;
+      event.preventDefault();
+      event.stopPropagation();
+      focusField(fields[nextIndex]);
+    };
+
+    document.addEventListener("keydown", handleFieldArrowNavigation, true);
+    return () => document.removeEventListener("keydown", handleFieldArrowNavigation, true);
+  }, []);
+
   const [carFormTrigger, setCarFormTrigger] = useState<CarOpenTarget | null>(null);
   const [carsSearchOpen, setCarsSearchOpen] = useState(false);
   const [partnersSearchOpen, setPartnersSearchOpen] = useState(false);
   const [partnerActions, setPartnerActions] = useState<{ onDeposit: () => void; onWithdraw: () => void; depositLabel?: string; withdrawLabel?: string } | null>(null);
   const [carFormActions, setCarFormActions] = useState<{ onSave: () => void; onCancel: () => void; disabled?: boolean } | null>(null);
   const [returnState, setReturnState] = useState<{ section: TabId; subTab?: string } | null>(null);
+  // A5: mirror returnState in a ref so clearReturnState can read it without calling side effects inside a state updater.
+  const returnStateRef = useRef<{ section: TabId; subTab?: string } | null>(null);
+  useEffect(() => {
+    returnStateRef.current = returnState;
+  }, [returnState]);
 
   const [addAccountAction, setAddAccountAction] = useState<{ action: () => void } | null>(null);
   const [addCarAction, setAddCarAction] = useState<{ action: () => void } | null>(null);
@@ -152,28 +214,37 @@ export default function App() {
   const [exportingExcel, setExportingExcel] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<UserInfo | null>(null);
+  /** Bug AU3: Session token issued by the Rust backend on login. Passed to admin commands. */
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
   const pendingTabRef = useRef<TabId | null>(null);
   const tabCloseRequestRef = useRef<{ request: (afterClose?: () => void) => void } | null>(null);
   const dirtyRef = useRef(false);
 
-  const handleLogin = useCallback((user: UserInfo) => {
+  const handleLogin = useCallback((user: UserInfo, sessionToken?: string | null) => {
     setCurrentUser(user);
-    localStorage.setItem("app_current_user", JSON.stringify(user));
+    if (sessionToken) {
+      setSessionToken(sessionToken);
+      // In-memory only — do NOT persist to localStorage (Bug A2/AU3).
+    } else {
+      setSessionToken(null);
+    }
   }, []);
 
   const handleLogout = useCallback(() => {
+    // Best-effort: notify backend to revoke the session token (fire-and-forget).
+    if (sessionToken) {
+      callTauri<void>("logout", { sessionToken }).catch(() => {
+        // ignore — backend may be unavailable in dev/mock mode
+      });
+    }
+    setSessionToken(null);
     setCurrentUser(null);
-    localStorage.removeItem("app_current_user");
     setActiveTab("dashboard");
-  }, []);
+  }, [sessionToken]);
 
   const exitDeveloperMode = useCallback(() => {
     setIsDeveloperMode(false);
-    if (currentUser?.username === "developer") {
-      setCurrentUser(null);
-      localStorage.removeItem("app_current_user");
-    }
-  }, [currentUser]);
+  }, []);
 
   // Navigation history variables
   const navigationHistoryRef = useRef<{ section: TabId; subTab: string | null }[]>([]);
@@ -207,6 +278,10 @@ export default function App() {
       setCurrentFinancialSubTab("transactions");
       targetTab = "financial-accounts";
     } else if (nextTab === "profit-distribution") {
+      // Bug A9: reset filter/date-range when navigating to profit-distribution
+      // so the user doesn't see stale filtered data from a previous view.
+      setFromDate("");
+      setToDate("");
       setExpensesSubTab("profit");
       setCurrentExpensesSubTab("profit");
       targetTab = "expenses";
@@ -233,10 +308,15 @@ export default function App() {
     const car = cars.find((c) => c.car_number === carNumber);
     if (car) {
       setCarFormTrigger({ mode: "edit", car, initialPage });
+    } else {
+      // A7: surface missing car instead of silently navigating to an empty car form.
+      alert("لم يتم العثور على السيارة. قد تكون محذوفة.");
     }
     navigateTo("cars");
   }, [cars, navigateTo]);
   const handleSmartBack = useCallback(() => {
+    // A6: prevent re-entrant smart-back calls while a back navigation is in flight.
+    if (isBackingRef.current) return;
     const history = navigationHistoryRef.current;
     if (history.length === 0) return;
 
@@ -244,7 +324,7 @@ export default function App() {
     if (prev) {
       isBackingRef.current = true;
       navigateTo(prev.section);
-      
+
       // Restore the sub-tab
       if (prev.section === "dashboard" && prev.subTab) {
         setCurrentDashboardSubTab(prev.subTab as DashboardSubTab);
@@ -259,24 +339,28 @@ export default function App() {
         setCurrentFinancialSubTab(prev.subTab as "قاصه" | "الكاش");
         setFinancialSubTab(prev.subTab as "قاصه" | "الكاش");
       }
-      isBackingRef.current = false;
+      // isBackingRef.current is reset by the useEffect that watches activeTab (see below) to avoid premature resets.
     }
   }, [navigateTo]);
 
+  // A6: reset the backing flag once the navigation has settled on the new tab.
+  useEffect(() => {
+    isBackingRef.current = false;
+  }, [activeTab]);
+
   const clearReturnState = useCallback(() => {
-    setReturnState(prev => {
-      if (!prev) return null;
-      const rs = prev;
-      navigateTo(rs.section);
-      if (rs.section === "dashboard" && rs.subTab) {
-        setDashboardSubTab(rs.subTab as DashboardSubTab);
-      } else if (rs.section === "cars" && rs.subTab) {
-        setCarsSubTab(narrowSubTab(rs.subTab, CARS_SUB_TABS));
-      } else if (rs.section === "partners-financial" && rs.subTab) {
-        setPartnersFinancialSubTab(rs.subTab as PartnersFinancialSubTab);
-      }
-      return null;
-    });
+    // A5: read returnState via ref and call navigateTo OUTSIDE the state updater to avoid side effects during render.
+    const rs = returnStateRef.current;
+    setReturnState(null);
+    if (!rs) return;
+    navigateTo(rs.section);
+    if (rs.section === "dashboard" && rs.subTab) {
+      setDashboardSubTab(rs.subTab as DashboardSubTab);
+    } else if (rs.section === "cars" && rs.subTab) {
+      setCarsSubTab(narrowSubTab(rs.subTab, CARS_SUB_TABS));
+    } else if (rs.section === "partners-financial" && rs.subTab) {
+      setPartnersFinancialSubTab(rs.subTab as PartnersFinancialSubTab);
+    }
   }, [navigateTo]);
 
   const handleDirtyChange = useCallback((dirty: boolean) => {
@@ -360,7 +444,7 @@ export default function App() {
         navigateTo(section);
       } else {
         if (section === "dashboard") {
-          const arr: DashboardSubTab[] = ["dashboard", "company-status", "users"];
+          const arr: DashboardSubTab[] = ["dashboard", "company-status", "users", "settings"];
           const idx = arr.indexOf(currentDashboardSubTab);
           const nextVal = arr[(idx + 1) % arr.length];
           setCurrentDashboardSubTab(nextVal);
@@ -411,7 +495,7 @@ export default function App() {
         navigateTo(section);
       } else {
         if (section === "dashboard") {
-          const arr: DashboardSubTab[] = ["dashboard", "company-status", "users"];
+          const arr: DashboardSubTab[] = ["dashboard", "company-status", "users", "settings"];
           const idx = arr.indexOf(currentDashboardSubTab);
           const nextVal = arr[(idx - 1 + arr.length) % arr.length];
           setCurrentDashboardSubTab(nextVal);
@@ -456,6 +540,8 @@ export default function App() {
   }, [activeTab, navigateTo, resetAllSubTabsToDefault, currentDashboardSubTab, currentCarsSubTab, currentPartnersFinancialSubTab, currentFinancialSubTab, currentExpensesSubTab]);
 
   const refreshData = useCallback(async () => {
+    // A4: reset loading state and clear stale errors so retry button reflects in-progress load.
+    setLoading(true);
     setError(null);
     try {
       const [carsResult, partnersResult] = await Promise.allSettled([
@@ -474,8 +560,9 @@ export default function App() {
 
       }
 
-      if (carsResult.status === "rejected" && partnersResult.status === "rejected") {
-        setError("تعذر تحميل البيانات من قاعدة البيانات المحلية.");
+      // A3: surface partial-load errors too (not just total failure) so users know some screens may be empty.
+      if (carsResult.status === "rejected" || partnersResult.status === "rejected") {
+        setError("تعذّر تحميل بعض البيانات. قد تكون بعض الشاشات فارغة.");
       }
     } catch {
       setError("تعذر تحميل البيانات من قاعدة البيانات المحلية.");
@@ -484,8 +571,13 @@ export default function App() {
     }
   }, []);
 
+  // A10: ignore flag prevents state updates on unmounted/stale calls.
   useEffect(() => {
-    void refreshData();
+    let ignore = false;
+    void refreshData().then(() => {
+      if (ignore) return;
+    });
+    return () => { ignore = true; };
   }, [refreshData]);
 
   // Update CSS property and persist background selection
@@ -550,36 +642,6 @@ export default function App() {
     };
   }, []);
 
-  // Global Developer Mode shortcut "maloka4444"
-  useEffect(() => {
-    const handleGlobalKeyPress = (e: KeyboardEvent) => {
-      if (e.key.length !== 1) return;
-
-      typedKeysRef.current = (typedKeysRef.current + e.key).slice(-10);
-
-      if (typedKeysRef.current === "maloka4444") {
-        setIsDeveloperMode(true);
-        typedKeysRef.current = "";
-
-        // Automatically log in if not logged in
-        setCurrentUser((prev) => {
-          if (!prev) {
-            return {
-              id: 999,
-              username: "developer",
-              display_name: "وضع المطور",
-              profile_image: null,
-            };
-          }
-          return prev;
-        });
-      }
-    };
-
-    window.addEventListener("keydown", handleGlobalKeyPress);
-    return () => window.removeEventListener("keydown", handleGlobalKeyPress);
-  }, []);
-
   // Arrow keys navigation for backgrounds in Developer Mode
   useEffect(() => {
     if (!isDeveloperMode) return;
@@ -613,17 +675,25 @@ export default function App() {
 
 
 
-  // فتح مربع البحث بـ Space عندما لا يكون التركيز في حقل نص
+  // فتح مربع البحث بـ Space أو Ctrl+F / Cmd+F
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code !== "Space") return;
-      const tag = (document.activeElement?.tagName ?? "").toLowerCase();
-      const isEditable =
-        tag === "input" ||
-        tag === "textarea" ||
-        tag === "select" ||
-        (document.activeElement as HTMLElement)?.isContentEditable;
-      if (isEditable) return;
+      const isSearchShortcut =
+        (e.code === "KeyF" && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey);
+      const isSpaceShortcut = e.code === "Space";
+
+      if (!isSearchShortcut && !isSpaceShortcut) return;
+
+      // Space: فقط عندما لا يكون التركيز في حقل نص
+      if (isSpaceShortcut) {
+        const tag = (document.activeElement?.tagName ?? "").toLowerCase();
+        const isEditable =
+          tag === "input" ||
+          tag === "textarea" ||
+          tag === "select" ||
+          (document.activeElement as HTMLElement)?.isContentEditable;
+        if (isEditable) return;
+      }
 
       e.preventDefault();
 
@@ -687,7 +757,7 @@ export default function App() {
     setExportingExcel(true);
     setExportMessage(null);
     try {
-      const filePath = await callTauri<string>("export_database_to_excel");
+      const filePath = await callTauri<string>("export_database_to_excel", { sessionToken });
       setExportMessage(`تم التصدير: ${filePath}`);
     } catch (err) {
       console.error("فشل تصدير Excel:", err);
@@ -742,6 +812,7 @@ export default function App() {
           toDate={toDate}
           onFromDateChange={setFromDate}
           onToDateChange={setToDate}
+          expensesSubTab={currentExpensesSubTab}
         />
 
         <div className="app-content">
@@ -763,7 +834,6 @@ export default function App() {
           ) : (
             <main className="app-main">
               <div
-                key={activeTab}
                 className="origin-nano-weave"
               >
                 {activeTab === "dashboard" && (
@@ -789,6 +859,7 @@ export default function App() {
                       handleTabChange(tab, subTab);
                     }}
                     onLogout={handleLogout}
+                    sessionToken={sessionToken}
                   />
                 )}
                 {activeTab === "cars" && (
@@ -840,7 +911,6 @@ export default function App() {
                     onAddExpenseChange={setAddExpenseAction}
                     requestCloseRef={tabCloseRequestRef}
                     onDirtyChange={handleDirtyChange}
-                    onRefreshAllData={refreshData}
                     onDistributeChange={setAddDistributeAction}
                     fromDate={fromDate}
                     toDate={toDate}

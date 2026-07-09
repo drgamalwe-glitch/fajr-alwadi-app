@@ -1,7 +1,7 @@
 import type { FinancialSummary, TabId, UnifiedAccount, Partner } from "../types";
+import { PriceDisplay } from "./ui";
 import {
   compareMoney,
-  formatMoney,
   moneyAbs,
   moneyAdd,
   moneyDiv,
@@ -29,7 +29,7 @@ const getPartnerImage = (name: string) => {
   return undefined;
 };
 
-const ACCOUNT_LIST_KINDS = new Set(["مستثمر", "ممول", "زبون", "شركة"]);
+const ACCOUNT_LIST_KINDS = new Set(["مستثمر", "ممول", "زبون", "وكالة", "شركة"]);
 
 export function CompanyStatusTab({
   summary,
@@ -89,24 +89,6 @@ export function CompanyStatusTab({
   const isCompanyValueIqdNegative = compareMoney(companyValueIqd, 0) < 0;
   const isCompanyValueUsdNegative = compareMoney(companyValueUsd, 0) < 0;
 
-  const formatCompact = (value: MoneyValue): string => {
-    const money = toMoney(value);
-    const absVal = money.abs();
-    if (absVal.greaterThanOrEqualTo(1_000_000_000)) {
-      const formatted = money.div(1_000_000_000).toDecimalPlaces(1).toFixed(1);
-      return (formatted.endsWith(".0") ? formatted.slice(0, -2) : formatted) + "B";
-    }
-    if (absVal.greaterThanOrEqualTo(1_000_000)) {
-      const formatted = money.div(1_000_000).toDecimalPlaces(1).toFixed(1);
-      return (formatted.endsWith(".0") ? formatted.slice(0, -2) : formatted) + "M";
-    }
-    if (absVal.greaterThanOrEqualTo(1_000)) {
-      const formatted = money.div(1_000).toDecimalPlaces(1).toFixed(1);
-      return (formatted.endsWith(".0") ? formatted.slice(0, -2) : formatted) + "K";
-    }
-    return formatMoney(money);
-  };
-
   const sharedIqd = moneyDiv(
     moneySub(
       moneyAdd(summary.inventory_value_iqd, receivablesIqd),
@@ -156,8 +138,12 @@ export function CompanyStatusTab({
           </div>
         </div>
         <div className="partner-capital-card__values">
-          <div className="partner-capital-card__value">{formatCompact(capitalIqd)} <span className="partner-capital-card__currency">IQ</span></div>
-          <div className="partner-capital-card__sub-value">{formatCompact(capitalUsd)} <span className="partner-capital-card__currency">USD</span></div>
+          <div className="partner-capital-card__value">
+            <PriceDisplay amount={capitalIqd} currency="IQD" compact noColor />
+          </div>
+          <div className="partner-capital-card__sub-value">
+            <PriceDisplay amount={capitalUsd} currency="USD" compact noColor />
+          </div>
         </div>
       </div>
     );
@@ -177,14 +163,14 @@ export function CompanyStatusTab({
                 data-testid="company-value-iqd"
               >
                 {isCompanyValueIqdNegative && <span className="company-value__negative-label">-</span>}
-                <span>{formatMoney(companyValueIqd)}</span>
+                <span><PriceDisplay amount={moneyAbs(companyValueIqd)} currency="IQD" noColor /></span>
               </div>
               <div className="currency">دينار عراقي</div>
               {compareMoney(companyValueUsd, 0) !== 0 && (
                 <>
                   <div className={`value-usd ${isCompanyValueUsdNegative ? "company-value__amount--negative" : ""}`}>
                     {isCompanyValueUsdNegative && <span className="company-value__negative-label">-</span>}
-                    <span>{formatMoney(companyValueUsd, "USD")}</span>
+                    <span><PriceDisplay amount={moneyAbs(companyValueUsd)} currency="USD" noColor /></span>
                   </div>
                   <div className="currency-usd">دولار أمريكي</div>
                 </>
@@ -215,9 +201,9 @@ export function CompanyStatusTab({
               <div className="label">الكاش</div>
             </div>
             <div className="card-values">
-              <div className="number">{formatCompact(netCashIqd)} <span className="card-currency-iq">IQ</span></div>
+              <div className="number"><PriceDisplay amount={netCashIqd} currency="IQD" compact noColor /></div>
               {compareMoney(netCashUsd, 0) !== 0 && (
-                <div className="card-sub-val">{formatCompact(netCashUsd)} <span className="card-currency-usd">USD</span></div>
+                <div className="card-sub-val"><PriceDisplay amount={netCashUsd} currency="USD" compact noColor /></div>
               )}
             </div>
           </div>
@@ -239,9 +225,9 @@ export function CompanyStatusTab({
               <div className="label">قيمة السيارات</div>
             </div>
             <div className="card-values">
-              <div className="number">{formatCompact(summary.inventory_value_iqd)} <span className="card-currency-iq">IQ</span></div>
+              <div className="number"><PriceDisplay amount={summary.inventory_value_iqd} currency="IQD" compact noColor /></div>
               {compareMoney(summary.inventory_value_usd, 0) !== 0 && (
-                <div className="card-sub-val">{formatCompact(summary.inventory_value_usd)} <span className="card-currency-usd">USD</span></div>
+                <div className="card-sub-val"><PriceDisplay amount={summary.inventory_value_usd} currency="USD" compact noColor /></div>
               )}
             </div>
           </div>
@@ -262,9 +248,9 @@ export function CompanyStatusTab({
               <div className="label">نطلب</div>
             </div>
             <div className="card-values">
-              <div className="number">{formatCompact(receivablesIqd)} <span className="card-currency-iq">IQ</span></div>
+              <div className="number"><PriceDisplay amount={receivablesIqd} currency="IQD" compact noColor /></div>
               {compareMoney(receivablesUsd, 0) !== 0 && (
-                <div className="card-sub-val">{formatCompact(receivablesUsd)} <span className="card-currency-usd">USD</span></div>
+                <div className="card-sub-val"><PriceDisplay amount={receivablesUsd} currency="USD" compact noColor /></div>
               )}
             </div>
           </div>
@@ -285,9 +271,9 @@ export function CompanyStatusTab({
               <div className="label">مطلوبين</div>
             </div>
             <div className="card-values">
-              <div className="number">{formatCompact(liabilitiesIqd)} <span className="card-currency-iq">IQ</span></div>
+              <div className="number"><PriceDisplay amount={liabilitiesIqd} currency="IQD" compact noColor /></div>
               {compareMoney(liabilitiesUsd, 0) !== 0 && (
-                <div className="card-sub-val">{formatCompact(liabilitiesUsd)} <span className="card-currency-usd">USD</span></div>
+                <div className="card-sub-val"><PriceDisplay amount={liabilitiesUsd} currency="USD" compact noColor /></div>
               )}
             </div>
           </div>
@@ -308,9 +294,9 @@ export function CompanyStatusTab({
               <div className="label">القاصة</div>
             </div>
             <div className="card-values">
-              <div className="number">{formatCompact(summary.qasa_iqd)} <span className="card-currency-iq">IQ</span></div>
+              <div className="number"><PriceDisplay amount={summary.qasa_iqd} currency="IQD" compact noColor /></div>
               {compareMoney(summary.qasa_usd, 0) !== 0 && (
-                <div className="card-sub-val">{formatCompact(summary.qasa_usd)} <span className="card-currency-usd">USD</span></div>
+                <div className="card-sub-val"><PriceDisplay amount={summary.qasa_usd} currency="USD" compact noColor /></div>
               )}
             </div>
           </div>
@@ -332,9 +318,9 @@ export function CompanyStatusTab({
               <div className="label">المصروفات</div>
             </div>
             <div className="card-values">
-              <div className="number">{formatCompact(summary.total_expenses_iqd)} <span className="card-currency-iq">IQ</span></div>
+              <div className="number"><PriceDisplay amount={summary.total_expenses_iqd} currency="IQD" compact noColor /></div>
               {compareMoney(summary.total_expenses_usd, 0) !== 0 && (
-                <div className="card-sub-val">{formatCompact(summary.total_expenses_usd)} <span className="card-currency-usd">USD</span></div>
+                <div className="card-sub-val"><PriceDisplay amount={summary.total_expenses_usd} currency="USD" compact noColor /></div>
               )}
             </div>
           </div>
@@ -356,9 +342,9 @@ export function CompanyStatusTab({
               <div className="label">صافي الأرباح</div>
             </div>
             <div className="card-values">
-              <div className="number">{formatCompact(summary.monthly_profits_iqd)} <span className="card-currency-iq">IQ</span></div>
+              <div className="number"><PriceDisplay amount={summary.monthly_profits_iqd} currency="IQD" compact noColor /></div>
               {compareMoney(summary.monthly_profits_usd, 0) !== 0 && (
-                <div className="card-sub-val">{formatCompact(summary.monthly_profits_usd)} <span className="card-currency-usd">USD</span></div>
+                <div className="card-sub-val"><PriceDisplay amount={summary.monthly_profits_usd} currency="USD" compact noColor /></div>
               )}
             </div>
           </div>

@@ -7,20 +7,46 @@ Validates Instructions.md required scenarios against the database.
 import sqlite3
 import sys
 import os
+from decimal import Decimal, InvalidOperation
+
+MONEY_EPSILON = Decimal("0.01")
+
+def money(value):
+    if value is None:
+        return Decimal("0")
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal("0")
 
 def find_db():
+    """Find the Fajr Alwadi SQLite DB in documented app-data locations.
+
+    Bug P3: previously this function did an os.walk over the entire home
+    directory which is slow and broad. We now only check the documented
+    paths used by the Tauri app (see src-tauri/src/lib.rs::setup).
+    Bug P4: the DB filename is `fjr_alwadi_data.db`, not `fajr_alwadi.db`.
+    For non-default installs, pass the DB path as a CLI argument instead:
+        python check_installment_profit.py /path/to/fjr_alwadi_data.db
+    """
     candidates = [
-        os.path.expanduser("~/.fajr-alwadi/fajr_alwadi.db"),
-        os.path.expanduser("~/Library/Application Support/fajr-alwadi/fajr_alwadi.db"),
-        "fajr_alwadi.db",
+        # Dev mode (cargo run): CARGO_MANIFEST_DIR/fjr_alwadi_data.db
+        os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                     "src-tauri", "fjr_alwadi_data.db"),
+        # Linux release
+        os.path.expanduser("~/.local/share/com.fajralwadi.app/fjr_alwadi_data.db"),
+        # macOS release
+        os.path.expanduser("~/Library/Application Support/com.fajralwadi.app/fjr_alwadi_data.db"),
+        # Windows release (AppData/Roaming)
+        os.path.expandvars("%APPDATA%/com.fajralwadi.app/fjr_alwadi_data.db"),
+        # Legacy fallback name (older dev installs)
+        "fjr_alwadi_data.db",
     ]
     for c in candidates:
-        if os.path.exists(c):
+        if c and os.path.exists(c):
             return c
-    for root, dirs, files in os.walk(os.path.expanduser("~")):
-        for f in files:
-            if f == "fajr_alwadi.db":
-                return os.path.join(root, f)
     return None
 
 def check(db_path):
@@ -52,10 +78,12 @@ def check(db_path):
     """).fetchall()
     for car in cash_cars:
         cn = car['car_number']
-        expenses = conn.execute(
+        expenses = money(conn.execute(
             "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?", [cn]
-        ).fetchone()[0]
-        full_profit = car['selling_price'] - car['purchase_price'] - expenses
+        ).fetchone()[0])
+        selling = money(car['selling_price'])
+        purchase = money(car['purchase_price'])
+        full_profit = selling - purchase - expenses
         if full_profit <= 0:
             continue
 
@@ -69,16 +97,17 @@ def check(db_path):
              profit_qasa < 0.01,
              f"profit in Qasa={profit_qasa:,.0f}")
 
-        cash_increase = conn.execute("""
+        cash_increase = money(conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE affects_qasa = 1 AND kind = 'شريك'
-              AND type = 'ايداع بيع سيارة'
-              AND notes LIKE ?
-        """, [f"%{cn}%"]).fetchone()[0]
+              AND source_type = 'car_sale'
+              AND source_id = ?
+              AND source_role = 'cash_movement'
+        """, [cn]).fetchone()[0])
         if cash_increase > 0:
             test(f"Cash sale {cn}: Qasa increase = selling_price",
-                 abs(cash_increase - car['selling_price']) < 0.01,
-                 f"Qasa={cash_increase:,.0f} expected={car['selling_price']:,.0f}")
+                 abs(cash_increase - selling) < MONEY_EPSILON,
+                 f"Qasa={cash_increase:,.0f} expected={selling:,.0f}")
 
     # ===== Scenario 2: Installment Sale =====
     print("\n[2] INSTALLMENT SALE")
@@ -88,33 +117,33 @@ def check(db_path):
     """).fetchall()
     for car in inst_cars:
         cn = car['car_number']
-        expenses = conn.execute(
+        expenses = money(conn.execute(
             "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?", [cn]
-        ).fetchone()[0]
-        full_profit = car['selling_price'] - car['purchase_price'] - expenses
+        ).fetchone()[0])
+        full_profit = money(car['selling_price']) - money(car['purchase_price']) - expenses
         if full_profit <= 0:
             continue
 
-        amir = conn.execute("""
+        amir = money(conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE partner_name LIKE '%أمير%' AND kind = 'شريك'
               AND affects_profit = 1 AND type = 'ايداع ارباح سيارة'
               AND notes LIKE ?
-        """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
-        muntasir = conn.execute("""
+        """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0])
+        muntasir = money(conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE partner_name LIKE '%منتصر%' AND kind = 'شريك'
               AND affects_profit = 1 AND type = 'ايداع ارباح سيارة'
               AND notes LIKE ?
-        """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+        """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0])
         total = amir + muntasir
 
         test(f"Installment {cn}: recognized <= full profit",
-             total <= full_profit + 0.01,
+             total <= full_profit + MONEY_EPSILON,
              f"recognized={total:,.0f} full={full_profit:,.0f}")
 
         test(f"Installment {cn}: equal partner shares",
-             abs(amir - muntasir) < 0.01,
+             abs(amir - muntasir) < MONEY_EPSILON,
              f"amir={amir:,.0f} muntasir={muntasir:,.0f}")
 
         profit_qasa = conn.execute("""
@@ -237,14 +266,15 @@ def check(db_path):
                OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
     """).fetchall()
     for cp in customer_payments:
+        cp_amount = money(cp['amount'])
         cash_movement = conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE source_type = 'customer_payment' AND source_id = ?1
               AND source_role = 'cash_movement' AND kind = 'شريك'
         """, [str(cp['id'])]).fetchone()[0]
         test(f"Payment {cp['id']}: cash movement = payment amount",
-             abs(cash_movement - cp['amount']) < 0.01,
-             f"cash={cash_movement:,.0f} expected={cp['amount']:,.0f}")
+             abs(money(cash_movement) - cp_amount) < MONEY_EPSILON,
+             f"cash={money(cash_movement):,.0f} expected={cp_amount:,.0f}")
 
         bad_cash_affects = conn.execute("""
             SELECT COUNT(*) FROM partner_transactions
@@ -283,6 +313,7 @@ def check(db_path):
     """).fetchall()
     for cp in customer_payments_cr:
         cp_id = str(cp['id'])
+        cp_amount = money(cp['amount'])
         # Net capital change (handles reversals)
         cap_net = conn.execute("""
             SELECT COALESCE(SUM(fl.credit - fl.debit), 0.0) FROM financial_ledger fl
@@ -304,8 +335,8 @@ def check(db_path):
               AND fl.account_type = 'receivable'
         """, [cp_id]).fetchone()[0]
         test(f"Payment {cp_id}: receivable reduces (net)",
-             abs(recv_net - cp['amount']) < 0.01,
-             f"recv net={recv_net:,.0f} expected={cp['amount']:,.0f}")
+             abs(money(recv_net) - cp_amount) < MONEY_EPSILON,
+             f"recv net={money(recv_net):,.0f} expected={cp_amount:,.0f}")
 
         # Net cash debit from generated cash_movement rows (handles reversals)
         cash_net = conn.execute("""
@@ -317,8 +348,8 @@ def check(db_path):
               AND pt.source_role = 'cash_movement' AND pt.kind = 'شريك'
         """, [cp_id]).fetchone()[0]
         test(f"Payment {cp_id}: cash increases (net)",
-             abs(cash_net - cp['amount']) < 0.01,
-             f"cash net={cash_net:,.0f} expected={cp['amount']:,.0f}")
+             abs(money(cash_net) - cp_amount) < MONEY_EPSILON,
+             f"cash net={money(cash_net):,.0f} expected={cp_amount:,.0f}")
 
     # ===== Scenario 12: Investor Double-Count =====
     print("\n[12] INVESTOR DOUBLE-COUNT")
@@ -355,22 +386,22 @@ def check(db_path):
     """).fetchall()
     for car in inst_cars_cycle:
         cn = car['car_number']
-        expenses = conn.execute(
+        expenses = money(conn.execute(
             "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?", [cn]
-        ).fetchone()[0]
-        full_profit = car['selling_price'] - car['purchase_price'] - expenses
+        ).fetchone()[0])
+        full_profit = money(car['selling_price']) - money(car['purchase_price']) - expenses
         if full_profit <= 0:
             continue
 
         # Total recognized profit (using NET values for reversal safety)
-        recognized_net = conn.execute("""
+        recognized_net = money(conn.execute("""
             SELECT COALESCE(SUM(pt.amount), 0.0) FROM partner_transactions pt
             WHERE pt.kind = 'شريك' AND pt.affects_profit = 1
               AND pt.type = 'ايداع ارباح سيارة'
               AND pt.notes LIKE ?
-        """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+        """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0])
         test(f"Installment {cn}: total recognized <= full profit",
-             recognized_net <= full_profit + 0.01,
+             recognized_net <= full_profit + MONEY_EPSILON,
              f"recognized={recognized_net:,.0f} full={full_profit:,.0f}")
 
         # Customer balance for this car's buyer
@@ -384,9 +415,10 @@ def check(db_path):
                 WHERE partner_name = ? AND kind = 'زبون'
             """, [buyer_name]).fetchone()
             if buyer_bal:
+                buyer_balance = money(buyer_bal[0])
                 test(f"Installment {cn}: customer {buyer_name} balance >= 0",
-                     buyer_bal[0] >= -0.01,
-                     f"balance={buyer_bal[0]:,.0f}")
+                     buyer_balance >= -MONEY_EPSILON,
+                     f"balance={buyer_balance:,.0f}")
 
     # ===== Scenario 15: Car purchase source_type check =====
     print("\n[15] CAR PURCHASE SOURCE TYPE")
@@ -433,21 +465,21 @@ def check(db_path):
     for car in inst_recv_cars:
         cn = car['car_number']
         buyer = car['buyer_name']
-        selling = car['selling_price']
+        selling = money(car['selling_price'])
         if not buyer:
             continue
         # Car ledger receivable should be full selling price
-        car_recv = conn.execute("""
+        car_recv = money(conn.execute("""
             SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
             WHERE reference_type = 'car' AND reference_id = ?
               AND account_type = 'receivable'
-        """, [cn]).fetchone()[0]
+        """, [cn]).fetchone()[0])
         test(f"Car {cn}: car ledger receivable = selling price",
-             abs(car_recv - selling) < 0.01,
+             abs(car_recv - selling) < MONEY_EPSILON,
              f"car_recv={car_recv:,.0f} selling={selling:,.0f}")
         # Payment receivable credits
         if has_related_col:
-            payment_recv = conn.execute("""
+            payment_recv = money(conn.execute("""
                 SELECT COALESCE(SUM(fl.credit - fl.debit), 0.0) FROM financial_ledger fl
                 WHERE fl.reference_type = 'partner_transaction'
                   AND fl.account_type = 'receivable'
@@ -457,29 +489,39 @@ def check(db_path):
                       WHERE (pt.related_source_type = 'car' AND pt.related_source_id = ?)
                          OR (pt.related_source_id IS NULL AND pt.notes LIKE ?)
                   )
-            """, [buyer, cn, f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
-            total_payments = conn.execute("""
+            """, [buyer, cn, f"%#بيع_سيارة_{cn}%"]).fetchone()[0])
+            total_payments = money(conn.execute("""
                 SELECT COALESCE(SUM(pt.amount), 0.0) FROM partner_transactions pt
-                WHERE pt.kind = 'زبون' AND pt.source_type = 'customer_transaction'
+                WHERE pt.kind = 'زبون'
+                  AND COALESCE(pt.is_reversed, 0) = 0
+                  AND (
+                    pt.source_type = 'customer_transaction'
+                    OR (pt.source_type = 'customer_sale_payment' AND pt.source_role = 'sale_down_payment')
+                  )
                   AND ((pt.related_source_type = 'car' AND pt.related_source_id = ?)
                        OR (pt.related_source_id IS NULL AND pt.notes LIKE ?))
-            """, [cn, f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+            """, [cn, f"%#بيع_سيارة_{cn}%"]).fetchone()[0])
         else:
-            payment_recv = conn.execute("""
+            payment_recv = money(conn.execute("""
                 SELECT COALESCE(SUM(fl.credit - fl.debit), 0.0) FROM financial_ledger fl
                 WHERE fl.reference_type = 'partner_transaction'
                   AND fl.account_type = 'receivable'
                   AND fl.account_id = ?
-            """, [buyer]).fetchone()[0]
-            total_payments = conn.execute("""
+            """, [buyer]).fetchone()[0])
+            total_payments = money(conn.execute("""
                 SELECT COALESCE(SUM(pt.amount), 0.0) FROM partner_transactions pt
-                WHERE pt.kind = 'زبون' AND pt.source_type = 'customer_transaction'
+                WHERE pt.kind = 'زبون'
+                  AND COALESCE(pt.is_reversed, 0) = 0
+                  AND (
+                    pt.source_type = 'customer_transaction'
+                    OR (pt.source_type = 'customer_sale_payment' AND pt.source_role = 'sale_down_payment')
+                  )
                   AND pt.notes LIKE ?
-            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0])
         net_receivable = car_recv - payment_recv
         expected_remaining = selling - total_payments
         test(f"Car {cn}: net receivable correct",
-             abs(net_receivable - expected_remaining) < 0.01,
+             abs(net_receivable - expected_remaining) < MONEY_EPSILON,
              f"net={net_receivable:,.0f} expected={expected_remaining:,.0f}")
 
     # ===== Scenario 18: Profit cap source linking =====
@@ -505,36 +547,36 @@ def check(db_path):
     """).fetchall()
     for car in sold_cars_cap:
         cn = car['car_number']
-        expenses = conn.execute(
+        expenses = money(conn.execute(
             "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?", [cn]
-        ).fetchone()[0]
-        full_profit = car['selling_price'] - car['purchase_price'] - expenses
+        ).fetchone()[0])
+        full_profit = money(car['selling_price']) - money(car['purchase_price']) - expenses
         if full_profit <= 0:
             continue
         if has_related_col:
-            recognized = conn.execute("""
+            recognized = money(conn.execute("""
                 SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
                 WHERE kind = 'شريك' AND affects_profit = 1
                   AND source_role = 'profit_recognition'
                   AND related_source_type = 'car' AND related_source_id = ?
-            """, [cn]).fetchone()[0]
-            recognized_legacy = conn.execute("""
+            """, [cn]).fetchone()[0])
+            recognized_legacy = money(conn.execute("""
                 SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
                 WHERE kind = 'شريك' AND affects_profit = 1
                   AND source_role = 'profit_recognition'
                   AND (related_source_id IS NULL OR related_source_id = '')
                   AND notes LIKE ?
-            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0])
         else:
-            recognized = 0.0
-            recognized_legacy = conn.execute("""
+            recognized = Decimal("0")
+            recognized_legacy = money(conn.execute("""
                 SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
                 WHERE kind = 'شريك' AND affects_profit = 1
                   AND notes LIKE ?
-            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0])
         total_recognized = recognized + recognized_legacy
         test(f"Car {cn}: profit cap respected",
-             total_recognized <= full_profit + 0.01,
+             total_recognized <= full_profit + MONEY_EPSILON,
              f"recognized={total_recognized:,.0f} full={full_profit:,.0f}")
 
     # ===== Scenario 20: Installment ledger balanced =====
@@ -545,7 +587,7 @@ def check(db_path):
     """).fetchall()
     for car in inst_bal_cars:
         cn = car['car_number']
-        selling = car['selling_price']
+        selling = money(car['selling_price'])
         bal = conn.execute("""
             SELECT COALESCE(SUM(debit), 0.0), COALESCE(SUM(credit), 0.0)
             FROM financial_ledger
@@ -582,21 +624,21 @@ def check(db_path):
     """).fetchall()
     for cust in customers_bal:
         cname = cust['partner_name']
-        iqd_bal = cust['iqd_bal']
-        usd_bal = cust['usd_bal']
-        iqd_ledger = conn.execute("""
+        iqd_bal = money(cust['iqd_bal'])
+        usd_bal = money(cust['usd_bal'])
+        iqd_ledger = money(conn.execute("""
             SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
             WHERE account_type = 'receivable' AND account_id = ? AND currency = 'IQD'
-        """, [cname]).fetchone()[0]
-        usd_ledger = conn.execute("""
+        """, [cname]).fetchone()[0])
+        usd_ledger = money(conn.execute("""
             SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
             WHERE account_type = 'receivable' AND account_id = ? AND currency = 'USD'
-        """, [cname]).fetchone()[0]
+        """, [cname]).fetchone()[0])
         test(f"Customer {cname}: IQD balance matches ledger",
-             abs(iqd_bal - iqd_ledger) < 0.01,
+             abs(iqd_bal - iqd_ledger) < MONEY_EPSILON,
              f"balance={iqd_bal:,.0f} ledger={iqd_ledger:,.0f}")
         test(f"Customer {cname}: USD balance matches ledger",
-             abs(usd_bal - usd_ledger) < 0.01,
+             abs(usd_bal - usd_ledger) < MONEY_EPSILON,
              f"balance={usd_bal:,.0f} ledger={usd_ledger:,.0f}")
 
     # ===== Scenario 24: related_source_id migration completeness =====
@@ -660,13 +702,14 @@ def check(db_path):
     """).fetchall()
     for car in cash_cars:
         cn = car['car_number']
-        purchase_rows = conn.execute("""
+        expected_purchase = money(car['purchase_price'])
+        purchase_rows = money(conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE source_type = 'car_purchase' AND source_id = ? AND source_role = 'cash_payment'
-        """, [cn]).fetchone()[0]
+        """, [cn]).fetchone()[0])
         test(f"Car {cn}: purchase rows match purchase price",
-             abs(purchase_rows - car['purchase_price']) < 0.01,
-             f"purchase_rows={purchase_rows:,.0f} expected={car['purchase_price']:,.0f}")
+             abs(purchase_rows - expected_purchase) < MONEY_EPSILON,
+             f"purchase_rows={purchase_rows:,.0f} expected={expected_purchase:,.0f}")
 
     # ===== Scenario 29: Customer balance after full payment =====
     print("\n[29] CUSTOMER BALANCE AFTER FULL PAYMENT")
@@ -688,14 +731,14 @@ def check(db_path):
               AND (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
                    OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
         """, [cname]).fetchone()[0]
-        if remaining <= 0.01 and paid > 0:
+        if money(remaining) <= MONEY_EPSILON and money(paid) > 0:
             # All installments paid - balance should be zero or negative
-            balance = conn.execute("""
+            balance = money(conn.execute("""
                 SELECT COALESCE(iqd_balance, 0.0) FROM partners
                 WHERE partner_name = ? AND kind = 'زبون'
-            """, [cname]).fetchone()[0]
+            """, [cname]).fetchone()[0])
             test(f"Customer {cname}: balance zero after full payment",
-                 abs(balance) < 0.01,
+                 abs(balance) < MONEY_EPSILON,
                  f"balance={balance:,.0f}")
 
     # ===== Scenario 30: Ledger balance per sold car =====
@@ -951,7 +994,7 @@ def check(db_path):
     """).fetchall()
     for car in sold_cars_sale:
         cn = car['car_number']
-        selling = car['selling_price']
+        selling = money(car['selling_price'])
         has_receivable = conn.execute("""
             SELECT COUNT(*) > 0 FROM financial_ledger
             WHERE reference_type = 'car' AND reference_id = ?
@@ -1038,19 +1081,19 @@ def check(db_path):
     """).fetchall()
     for car in cash_sale_cars:
         cn = car['car_number']
-        sp = car['selling_price']
+        sp = money(car['selling_price'])
         # Get cash movement rows for this car
-        cash_movement_total = conn.execute("""
+        cash_movement_total = money(conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE source_type = 'car_sale' AND source_id = ?
               AND source_role = 'cash_movement'
-        """, [cn]).fetchone()[0]
+        """, [cn]).fetchone()[0])
         # Get profit recognition rows for this car
-        profit_recognition_total = conn.execute("""
+        profit_recognition_total = money(conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE source_type = 'car_sale' AND source_id = ?
               AND source_role = 'profit_recognition'
-        """, [cn]).fetchone()[0]
+        """, [cn]).fetchone()[0])
         # Only test if cash movement rows exist (skip for pre-migration data)
         if cash_movement_total < 0.01:
             test(f"Car {cn}: cash movement rows exist (pre-migration data)",
@@ -1058,25 +1101,25 @@ def check(db_path):
             continue
         # Cash movement should equal selling price (full amount split between partners)
         test(f"Car {cn}: cash movement = selling price",
-             abs(cash_movement_total - sp) < 0.01,
+             abs(cash_movement_total - sp) < MONEY_EPSILON,
              f"cash_movement={cash_movement_total:,.0f} selling_price={sp:,.0f}")
         for p_name in ['أمير', 'منتصر']:
             half_sale = sp / 2
-            profit_recognition_partner = conn.execute("""
+            profit_recognition_partner = money(conn.execute("""
                 SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
                 WHERE kind = 'شريك' AND partner_name = ?
                   AND source_type = 'car_sale' AND source_id = ?
                   AND source_role = 'profit_recognition'
-            """, [p_name, cn]).fetchone()[0]
+            """, [p_name, cn]).fetchone()[0])
             # Partner's cash movement for this car should equal half selling price (not inflated by profit)
-            partner_cash_movement = conn.execute("""
+            partner_cash_movement = money(conn.execute("""
                 SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
                 WHERE kind = 'شريك' AND partner_name = ?
                   AND source_type = 'car_sale' AND source_id = ?
                   AND source_role = 'cash_movement'
-            """, [p_name, cn]).fetchone()[0]
-            test(f"Partner {p_name}: cash_movement={partner_cash_movement:,.0f} == half sale ({half_sale:,.0f}), profit={profit_recognition_partner:,.0f} separate",
-                 abs(partner_cash_movement - half_sale) < 0.01 and profit_recognition_partner > 0,
+            """, [p_name, cn]).fetchone()[0])
+            test(f"Partner {p_name}: cash_movement={partner_cash_movement:,.0f} == half sale ({half_sale:,.0f}), profit/loss={profit_recognition_partner:,.0f} separate",
+                 abs(partner_cash_movement - half_sale) < MONEY_EPSILON and abs(profit_recognition_partner) > MONEY_EPSILON,
                  f"cash_movement={partner_cash_movement:,.0f} half_sale={half_sale:,.0f} profit_recognition={profit_recognition_partner:,.0f}")
             # Verify profit recognition has affects_partner_cash = 0
             profit_flags = conn.execute("""

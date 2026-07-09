@@ -1,4 +1,4 @@
-import type { Car, Partner } from "../types";
+import type { Car } from "../types";
 import {
   compareMoney,
   formatMoney,
@@ -6,7 +6,6 @@ import {
   moneyDiv,
   moneyMul,
   moneySub,
-  moneySum,
   type MoneyValue,
 } from "./money";
 
@@ -26,7 +25,8 @@ export function carProfitPercentage(car: Car): string {
   const totalCost = moneyAdd(car.purchase_price, car.expenses_sum || 0);
   const profit = moneySub(car.selling_price, totalCost);
   const sellingPrice = moneyAdd(car.selling_price);
-  if (!profit.isPositive() || !sellingPrice.isPositive()) return "0.0";
+  // Allow negative percentages (losses). Only guard against division by zero.
+  if (!sellingPrice.isPositive()) return "0.0";
   return moneyMul(moneyDiv(profit, sellingPrice), 100).toDecimalPlaces(1).toFixed(1);
 }
 
@@ -38,41 +38,6 @@ export function formatIqd(amount: MoneyValue): string {
 /** الرقم فقط بدون وحدة */
 export function formatNumber(amount: MoneyValue): string {
   return formatMoney(amount, "IQD");
-}
-
-export function computeDashboardStats(cars: Car[], partners: Partner[] = []) {
-  const availableCars = cars.filter((c) => c.status === "متوفرة");
-  // Match Cars > المعروض totals: available cars only, purchase price plus car-specific expenses.
-  const totalInventoryValue = moneySum(availableCars, (c) => moneyAdd(c.purchase_price, c.expenses_sum || 0));
-  const iqdInventory = moneySum(
-    availableCars.filter((c) => c.currency !== "USD"),
-    (c) => moneyAdd(c.purchase_price, c.expenses_sum || 0),
-  );
-  const usdInventory = moneySum(
-    availableCars.filter((c) => c.currency === "USD"),
-    (c) => moneyAdd(c.purchase_price, c.expenses_sum || 0),
-  );
-
-  const partnersTotal = moneySum(
-    partners.filter((p) => p.kind === "شريك"),
-    (p) => p.total_amount,
-  );
-
-  const investorsTotal = moneySum(
-    partners.filter((p) => p.kind === "مستثمر"),
-    (p) => p.total_amount,
-  );
-
-  const netCapital = moneySub(moneyAdd(totalInventoryValue, partnersTotal), investorsTotal);
-
-  return {
-    totalInventoryValue,
-    iqdInventory,
-    usdInventory,
-    partnersTotal,
-    investorsTotal,
-    netCapital,
-  };
 }
 
 const arabicOnesMale = ["", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة"];
@@ -107,34 +72,43 @@ function smallNumberToWords(n: number): string {
 }
 
 export function numberToArabicWords(num: number): string {
-  if (num === 0) return "صفر";
-  let result = "";
-  const billions = Math.floor(num / 1_000_000_000);
-  num %= 1_000_000_000;
-  const millions = Math.floor(num / 1_000_000);
-  num %= 1_000_000;
-  const thousands = Math.floor(num / 1_000);
-  num %= 1_000;
-  const below = num;
+  // Audit fix #29: handle negatives explicitly and round fractional input
+  // instead of silently misbehaving on non-integer amounts.
+  if (!Number.isFinite(num)) return "";
+  const isNegative = num < 0;
+  let value = Math.round(Math.abs(num));
+  if (value === 0) return "صفر";
 
+  const billions = Math.floor(value / 1_000_000_000);
+  value %= 1_000_000_000;
+  const millions = Math.floor(value / 1_000_000);
+  value %= 1_000_000;
+  const thousands = Math.floor(value / 1_000);
+  value %= 1_000;
+  const below = value;
+
+  // Audit fix #29: join the magnitude groups with "و" per Arabic grammar
+  // (e.g. "مليون وخمسة آلاف" instead of "مليون خمسة آلاف").
+  const parts: string[] = [];
   if (billions > 0) {
-    if (billions === 1) result += "مليار ";
-    else if (billions === 2) result += "ملياران ";
-    else result += smallNumberToWords(billions) + "مليار ";
+    if (billions === 1) parts.push("مليار");
+    else if (billions === 2) parts.push("ملياران");
+    else parts.push((smallNumberToWords(billions) + (billions > 10 ? "مليار" : "مليارات")).trim());
   }
   if (millions > 0) {
-    if (millions === 1) result += "مليون ";
-    else if (millions === 2) result += "مليونان ";
-    else result += smallNumberToWords(millions) + (millions > 10 ? "مليون " : "ملايين ");
+    if (millions === 1) parts.push("مليون");
+    else if (millions === 2) parts.push("مليونان");
+    else parts.push((smallNumberToWords(millions) + (millions > 10 ? "مليون" : "ملايين")).trim());
   }
   if (thousands > 0) {
-    if (thousands === 1) result += "ألف ";
-    else if (thousands === 2) result += "ألفان ";
-    else result += smallNumberToWords(thousands) + (thousands > 10 ? "ألف " : "آلاف ");
+    if (thousands === 1) parts.push("ألف");
+    else if (thousands === 2) parts.push("ألفان");
+    else parts.push((smallNumberToWords(thousands) + (thousands > 10 ? "ألف" : "آلاف")).trim());
   }
   if (below > 0) {
-    result += smallNumberToWords(below);
+    parts.push(smallNumberToWords(below).trim());
   }
 
-  return result.trim();
+  const joined = parts.join(" و");
+  return (isNegative ? "سالب " : "") + joined;
 }

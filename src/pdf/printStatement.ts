@@ -119,7 +119,7 @@ export async function printStatement(props: PartnerStatementPrintProps): Promise
   const blob = await pdf(
     statementDocument
   ).toBlob();
-  const filename = `statement_${Date.now()}.pdf`;
+  const filename = `fajr_statement_${Date.now()}.pdf`;
 
   if (!isTauriRuntime()) {
     downloadInBrowser(blob, filename);

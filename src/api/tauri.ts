@@ -17,6 +17,8 @@ function parseJsonArray<T>(raw: string | null): T[] {
   }
 }
 
+// WARNING: When adding a new Tauri command that accepts a money argument, add the arg key here.
+// Otherwise the value will be sent as a JS number and lose precision.
 const MONEY_ARG_KEYS = new Set([
   "amount",
   "actualPaidAmount",
@@ -45,32 +47,69 @@ const MONEY_ARG_KEYS = new Set([
   "selling",
   "sellingPrice",
   "selling_price",
+  // Additional money-like keys used across the codebase
+  "cost",
+  "cost_price",
+  "profit",
+  "balance",
+  "capital",
+  "cash",
+  "value",
+]);
+
+// Pattern used by the dev-mode runtime check in serializeTauriMoneyArgs to catch money-like
+// arg keys that were forgotten in MONEY_ARG_KEYS.
+const MONEY_ARG_KEY_PATTERN = /amount|price|payment|cost|profit|balance|capital|commission|monthly|cash|value/i;
+const NON_MONEY_ARG_KEYS = new Set([
+  "paymentType",
+  "payment_type",
+  "purchasePaymentType",
+  "purchase_payment_type",
+  "salePaymentType",
+  "sale_payment_type",
 ]);
 
 const PHONE_ARG_KEYS = new Set(["phone", "buyerPhone", "buyer_phone"]);
 
-function serializeTauriMoneyArgs(value: unknown, key?: string): unknown {
+function serializeTauriMoneyArgs(value: unknown, key?: string, depth = 0): unknown {
+  // Recursion guard: avoid stack overflow on deeply-nested (or cyclic) objects.
+  if (depth > 10) return value;
   if (key && PHONE_ARG_KEYS.has(key) && typeof value === "string") {
     return normalizePhoneNumber(value);
   }
   if (key && MONEY_ARG_KEYS.has(key)) {
     return value === null || value === undefined ? value : moneyToStorage(value as MoneyInput);
   }
+  // Dev-mode runtime check: warn about money-like keys missing from MONEY_ARG_KEYS.
+  if (
+    import.meta.env &&
+    !import.meta.env.PROD &&
+    key &&
+    !MONEY_ARG_KEYS.has(key) &&
+    !NON_MONEY_ARG_KEYS.has(key) &&
+    MONEY_ARG_KEY_PATTERN.test(key) &&
+    (typeof value === "string" || typeof value === "number")
+  ) {
+    console.warn(
+      `[serializeTauriMoneyArgs] Arg "${key}" looks like a money field but is not in MONEY_ARG_KEYS. ` +
+      `Add it to MONEY_ARG_KEYS to ensure money precision is preserved across the Tauri IPC boundary.`,
+    );
+  }
   if (Array.isArray(value)) {
-    return value.map((item) => serializeTauriMoneyArgs(item));
+    return value.map((item) => serializeTauriMoneyArgs(item, undefined, depth + 1));
   }
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).map(([childKey, childValue]) => [
         childKey,
-        serializeTauriMoneyArgs(childValue, childKey),
+        serializeTauriMoneyArgs(childValue, childKey, depth + 1),
       ]),
     );
   }
   return value;
 }
 
-// Obfuscate / encrypt localStorage mock data in web simulation environment
+// Obfuscate localStorage mock data (base64 encoding — NOT encryption, for dev mode only)
 if (typeof window !== "undefined" && !isTauri()) {
   const originalGetItem = localStorage.getItem.bind(localStorage);
   const originalSetItem = localStorage.setItem.bind(localStorage);
@@ -156,18 +195,67 @@ function parseCommissionAmount(amount: MoneyInput, notes: string | null | undefi
   return toMoney(0);
 }
 
+function normalizeVehicleKey(value: string): string {
+  return value.trim().toLowerCase().replace(/\s/g, "");
+}
+
+function resolveMockCarNumber(existing: Car[], requestedPlate: string, oldNum?: string | null): string {
+  const plate = requestedPlate.trim();
+  const oldKey = (oldNum ?? "").trim();
+  if (oldKey) {
+    const oldCar = existing.find((car) => car.car_number === oldKey);
+    const oldPlate = oldCar?.car_plate_num || oldCar?.car_number || "";
+    if (oldCar && normalizeVehicleKey(oldPlate) === normalizeVehicleKey(plate)) {
+      return oldCar.car_number;
+    }
+  }
+
+  if (!existing.some((car) => car.car_number === plate)) {
+    return plate;
+  }
+
+  for (let suffix = 2; suffix < 10000; suffix += 1) {
+    const candidate = `${plate}#${suffix}`;
+    if (!existing.some((car) => car.car_number === candidate)) {
+      return candidate;
+    }
+  }
+
+  return `${plate}#${Date.now()}`;
+}
+
 function isCustomerDebit(tx: PartnerTransaction): boolean {
   return !tx.type_.startsWith("تحويل") &&
     !tx.type_.startsWith("واصل") &&
     (tx.type_.startsWith("باقي") || tx.type_.startsWith("سحب"));
 }
 
+function isCustomerManualPayment(tx: PartnerTransaction): boolean {
+  if (
+    !["ايداع", "إيداع", "مقدمة", "استلام", "إستلام", "تسديد", "واصل", "واصل قسط"].includes(tx.type_) &&
+    !tx.type_.startsWith("تسديد قسط سيارة")
+  ) {
+    return false;
+  }
+  if (tx.source_type === "customer_installment_schedule" || tx.source_type === "customer_sale_payment") {
+    return false;
+  }
+  if (tx.related_source_type === "customer_payment_event") {
+    return false;
+  }
+  return true;
+}
+
 function calculateCustomerRemaining(txns: PartnerTransaction[], currency?: "IQD" | "USD"): MoneyValue {
   const scoped = txns.filter((tx) =>
     (!currency || (tx.currency || "IQD") === currency) &&
+    (tx.is_reversed ?? 0) === 0 &&
     !tx.type_.startsWith("تحويل")
   );
-  return moneySum(scoped.filter((tx) => isCustomerDebit(tx)), (tx) => tx.amount);
+  return moneySub(
+    moneySum(scoped.filter((tx) => isCustomerDebit(tx)), (tx) => tx.amount),
+    moneySum(scoped.filter((tx) => isCustomerManualPayment(tx)), (tx) => tx.amount),
+  );
 }
 
 function mapMockCar(args: any): Car {
@@ -221,18 +309,205 @@ function recalculateMockPartnerTotal(partnerName: string, kind: string) {
   const pIdx = partners.findIndex((p) => p.partner_name === partnerName && p.kind === kind);
   if (pIdx < 0) return;
 
-  partners[pIdx].total_amount = kind === "زبون" ? moneySum(txns.filter(tx => isCustomerDebit(tx)), (tx) => tx.amount) : txns.reduce((total, tx) => {
-    if (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة")) return moneyAdd(total, tx.amount);
-    if (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) return moneySub(total, tx.amount);
-    return total;
-  }, toMoney(0));
+  if (kind === "زبون" || kind === "وكالة") {
+    partners[pIdx].iqd_balance = calculateCustomerRemaining(txns, "IQD");
+    partners[pIdx].usd_balance = calculateCustomerRemaining(txns, "USD");
+    partners[pIdx].total_amount = calculateCustomerRemaining(txns);
+  } else {
+    partners[pIdx].total_amount = txns.reduce((total, tx) => {
+      if (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة")) return moneyAdd(total, tx.amount);
+      if (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) return moneySub(total, tx.amount);
+      return total;
+    }, toMoney(0));
+  }
   localStorage.setItem("mock_partners", JSON.stringify(partners));
+}
+
+function normalizeMockAgencyPaymentStatus(value: unknown): Agency["payment_status"] {
+  return value === "غير واصل" ? "غير واصل" : "واصل";
+}
+
+function normalizeMockAgency(agency: Agency): Agency {
+  return {
+    ...agency,
+    payment_status: normalizeMockAgencyPaymentStatus(agency.payment_status),
+  };
+}
+
+function syncMockAgencyReceivable(agency: Agency) {
+  const txKey = "mock_partner_transactions";
+  const allTx = parseJsonArray<PartnerTransaction>(localStorage.getItem(txKey));
+  const sourceId = String(agency.id);
+  const affectedCustomers = new Set(
+    allTx
+      .filter((tx) => (tx.kind === "زبون" || tx.kind === "وكالة") && tx.source_type === "agency" && tx.source_id === sourceId)
+      .map((tx) => tx.partner_name),
+  );
+  const nextTx = allTx.filter((tx) => !(tx.source_type === "agency" && tx.source_id === sourceId));
+
+  if (normalizeMockAgencyPaymentStatus(agency.payment_status) === "غير واصل") {
+    const customerName = agency.new_agent_name.trim();
+    if (customerName) {
+      const partnersKey = "mock_partners";
+      const partners = parseJsonArray<Partner>(localStorage.getItem(partnersKey));
+      const phone = String(agency.phone ?? "").trim();
+      const existingIdx = partners.findIndex((p) => p.partner_name === customerName && p.kind === "وكالة");
+      if (existingIdx >= 0) {
+        if (phone) partners[existingIdx] = { ...partners[existingIdx], phone };
+      } else {
+        partners.push({
+          partner_name: customerName,
+          phone,
+          total_amount: 0,
+          iqd_balance: 0,
+          usd_balance: 0,
+          total_withdrawals: 0,
+          kind: "وكالة",
+        });
+      }
+      localStorage.setItem(partnersKey, JSON.stringify(partners));
+
+      const makeTx = (amount: MoneyValue, currency: "IQD" | "USD", offset: number): PartnerTransaction => ({
+        id: Date.now() + offset,
+        partner_name: customerName,
+        kind: "وكالة",
+        type_: "باقي وكالة",
+        amount,
+        date: agency.date,
+        time: agency.time || new Date().toTimeString().slice(0, 5),
+        notes: agency.notes ? `غير واصل وكالة - ${agency.notes}` : "غير واصل وكالة",
+        currency,
+        paymentType: "قاصه",
+        payment_type: "قاصه",
+        source_type: "agency",
+        source_id: sourceId,
+        source_role: "agency_receivable",
+        affects_qasa: 0,
+        affects_partner_cash: 0,
+        affects_profit: 0,
+        related_source_type: "agency",
+        related_source_id: sourceId,
+      });
+
+      if (compareMoney(agency.amount_iqd, 0) > 0) nextTx.push(makeTx(agency.amount_iqd, "IQD", 1));
+      if (compareMoney(agency.amount_usd, 0) > 0) nextTx.push(makeTx(agency.amount_usd, "USD", 2));
+      affectedCustomers.add(customerName);
+    }
+  }
+
+  localStorage.setItem(txKey, JSON.stringify(nextTx));
+  for (const name of affectedCustomers) {
+    recalculateMockPartnerTotal(name, "زبون");
+    recalculateMockPartnerTotal(name, "وكالة");
+  }
+}
+
+// ============================================================================
+// MOCK LAYER (development / preview only)
+// ----------------------------------------------------------------------------
+// NOTE: Mock layer uses `as unknown as T` for brevity. In production, replace
+// with proper runtime validation (e.g., zod schemas).
+// ============================================================================
+
+// Audit fix #30: shared mock profit calculation (Instructions.md §5 formula):
+// cash car sale profits (INCLUDING losses) + installment payment profits +
+// agency profits − general expenses, all within [startDate, endDate].
+function computeMockProfitTotals(startDate: string, endDate: string): {
+  profitIqd: MoneyValue;
+  profitUsd: MoneyValue;
+  expensesIqd: MoneyValue;
+  expensesUsd: MoneyValue;
+} {
+  const allTx: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
+  const expenses: ExpenseEntry[] = JSON.parse(localStorage.getItem("mock_expenses") ?? "[]");
+  const cars: Car[] = JSON.parse(localStorage.getItem("mock_cars") ?? "[]");
+  const carExpensesList: CarExpenseRecord[] = JSON.parse(localStorage.getItem("mock_car_expenses") ?? "[]");
+
+  let profitIqd: MoneyValue = toMoney(0);
+  let profitUsd: MoneyValue = toMoney(0);
+
+  for (const c of cars) {
+    if (c.status === "مبيوعة" && (c.payment_type || "كاش") === "كاش" && c.sale_date) {
+      if (c.sale_date >= startDate && c.sale_date <= endDate) {
+        const carExpenses = carExpensesList.filter((e) => e.car_number === c.car_number);
+        const expensesSum = moneySum(carExpenses, (e) => e.amount);
+        const totalCost = moneyAdd(c.purchase_price, expensesSum);
+        const carProfit = moneySub(c.selling_price, totalCost);
+        // Losses must reduce net profit too (Instructions.md §24.1).
+        if (compareMoney(carProfit, 0) !== 0) {
+          if (c.sale_currency === "USD") {
+            profitUsd = moneyAdd(profitUsd, carProfit);
+          } else {
+            profitIqd = moneyAdd(profitIqd, carProfit);
+          }
+        }
+      }
+    }
+  }
+
+  for (const tx of allTx) {
+    if (tx.kind === "زبون" && (tx.source_role === "cash_movement" || (tx.type_ || "").includes("تسديد") || (tx.type_ || "").includes("واصل"))) {
+      if (tx.date >= startDate && tx.date <= endDate) {
+        const carNumber = tx.related_source_id || (tx.notes ? tx.notes.match(/#بيع_سيارة_([^\s]+)/)?.[1] : null);
+        if (carNumber) {
+          const c = cars.find((car) => car.car_number === carNumber);
+          if (c && c.payment_type === "اقساط") {
+            const carExpenses = carExpensesList.filter((e) => e.car_number === c.car_number);
+            const expensesSum = moneySum(carExpenses, (e) => e.amount);
+            const totalCost = moneyAdd(c.purchase_price, expensesSum);
+            const fullProfit = moneySub(c.selling_price, totalCost);
+            if (compareMoney(fullProfit, 0) !== 0 && compareMoney(c.selling_price, 0) > 0) {
+              const profitRatio = moneyDiv(fullProfit, c.selling_price);
+              const paymentProfit = moneyMul(tx.amount, profitRatio);
+              if (c.sale_currency === "USD") {
+                profitUsd = moneyAdd(profitUsd, paymentProfit);
+              } else {
+                profitIqd = moneyAdd(profitIqd, paymentProfit);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const agencies = parseJsonArray<Agency>(localStorage.getItem("mock_default"));
+  for (const a of agencies) {
+    if (a.date >= startDate && a.date <= endDate) {
+      if (compareMoney(a.amount_iqd, 0) > 0) {
+        profitIqd = moneyAdd(profitIqd, a.amount_iqd);
+      }
+      if (compareMoney(a.amount_usd, 0) > 0) {
+        profitUsd = moneyAdd(profitUsd, a.amount_usd);
+      }
+    }
+  }
+
+  let expensesIqd: MoneyValue = toMoney(0);
+  let expensesUsd: MoneyValue = toMoney(0);
+  for (const e of expenses) {
+    if (!e.car_number && e.date >= startDate && e.date <= endDate) {
+      if (e.currency === "USD") {
+        expensesUsd = moneyAdd(expensesUsd, e.amount);
+      } else {
+        expensesIqd = moneyAdd(expensesIqd, e.amount);
+      }
+    }
+  }
+
+  return { profitIqd, profitUsd, expensesIqd, expensesUsd };
 }
 
 async function mockInvoke<T>(
   command: string,
   args: any = {},
 ): Promise<T> {
+  // Production guard: the mock layer MUST never be reachable from a production
+  // build. If you see this error in prod, it means isTauri() / isE2E() failed
+  // to detect the runtime correctly and the fallback was triggered.
+  if (import.meta.env.PROD) {
+    throw new Error("Mock layer disabled in production build");
+  }
   const key = mockStorageKey(command);
 
   if (command === "export_database_to_excel") {
@@ -260,8 +535,8 @@ async function mockInvoke<T>(
   if (command === "add_car") {
     const existing: Car[] = JSON.parse(localStorage.getItem(key) ?? "[]");
     const plateNum = String(args.num ?? "").trim();
-    const province = String(args.province ?? "").trim();
-    const carNumber = province ? `${plateNum} ${province}` : plateNum;
+    const oldNum = String(args.oldNum ?? args.old_num ?? "").trim();
+    const carNumber = resolveMockCarNumber(existing, plateNum, oldNum);
     const oldCar = existing.find((c) => c.car_number === carNumber);
 
     const now = new Date();
@@ -273,11 +548,13 @@ async function mockInvoke<T>(
     const sale_time = args.sale_time ?? args.saleTime ?? oldCar?.sale_time ?? (args.sale_date || args.saleDate ? currentTime : null);
 
     const item = {
-      ...mapMockCar(args),
+      ...mapMockCar({ ...args, num: carNumber }),
+      car_number: carNumber,
+      car_plate_num: plateNum,
       purchase_time: purchase_time ? String(purchase_time) : null,
       sale_time: sale_time ? String(sale_time) : null,
     };
-    const next = existing.filter((c) => c.car_number !== item.car_number);
+    const next = existing.filter((c) => c.car_number !== item.car_number && (!oldNum || c.car_number !== oldNum));
     next.push(item);
     localStorage.setItem(key, JSON.stringify(next));
     return undefined as T;
@@ -355,7 +632,13 @@ async function mockInvoke<T>(
     const allTx: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
     for (const p of partners) {
       const txns = allTx.filter((t) => t.partner_name === p.partner_name && t.kind === p.kind);
-      p.total_amount = p.kind === "زبون" ? calculateCustomerRemaining(txns) : txns.reduce((total, tx) => {
+      if (p.kind === "زبون" || p.kind === "وكالة") {
+        p.iqd_balance = calculateCustomerRemaining(txns, "IQD");
+        p.usd_balance = calculateCustomerRemaining(txns, "USD");
+        p.total_amount = calculateCustomerRemaining(txns);
+        continue;
+      }
+      p.total_amount = txns.reduce((total, tx) => {
         if (tx.type_.startsWith("ايداع") || tx.type_.startsWith("إيداع") || tx.type_.startsWith("مقدمة")) return moneyAdd(total, tx.amount);
         if (tx.type_.startsWith("سحب") || tx.type_.startsWith("باقي")) return moneySub(total, tx.amount);
         return total;
@@ -496,7 +779,7 @@ async function mockInvoke<T>(
         });
       }
     }
-    return undefined as T;
+    return newTx.id as unknown as T;
   }
 
   if (command === "pay_financier_from_partners") {
@@ -839,6 +1122,7 @@ async function mockInvoke<T>(
       if (!isMumuol) {
         const agencies = parseJsonArray<Agency>(localStorage.getItem("mock_default"));
         for (const a of agencies) {
+          if (normalizeMockAgencyPaymentStatus(a.payment_status) !== "واصل") continue;
           const desc = `أرباح وكالة ${a.old_agent_name} ← ${a.new_agent_name}`;
           if (compareMoney(a.amount_iqd, 0) > 0) {
             entries.push({
@@ -1004,82 +1288,13 @@ async function mockInvoke<T>(
 
     const partners: Partner[] = JSON.parse(localStorage.getItem("mock_partners") ?? "[]");
     const allTx: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
-    const expenses: ExpenseEntry[] = JSON.parse(localStorage.getItem("mock_expenses") ?? "[]");
-    const cars: Car[] = JSON.parse(localStorage.getItem("mock_cars") ?? "[]");
-    const carExpensesList: CarExpenseRecord[] = JSON.parse(localStorage.getItem("mock_car_expenses") ?? "[]");
 
-    let profitIqd = toMoney(0);
-    let profitUsd = toMoney(0);
-
-    for (const c of cars) {
-      if (c.status === "مبيوعة" && (c.payment_type || "كاش") === "كاش" && c.sale_date) {
-        if (c.sale_date >= startDate && c.sale_date <= endDate) {
-          const carExpenses = carExpensesList.filter((e) => e.car_number === c.car_number);
-          const expensesSum = moneySum(carExpenses, (e) => e.amount);
-          const totalCost = moneyAdd(c.purchase_price, expensesSum);
-          const carProfit = moneySub(c.selling_price, totalCost);
-          if (compareMoney(carProfit, 0) > 0) {
-            if (c.sale_currency === "USD") {
-              profitUsd = moneyAdd(profitUsd, carProfit);
-            } else {
-              profitIqd = moneyAdd(profitIqd, carProfit);
-            }
-          }
-        }
-      }
-    }
-
-    for (const tx of allTx) {
-      if (tx.kind === "زبون" && (tx.source_role === "cash_movement" || (tx.type_ || "").includes("تسديد") || (tx.type_ || "").includes("واصل"))) {
-        if (tx.date >= startDate && tx.date <= endDate) {
-          const carNumber = tx.related_source_id || (tx.notes ? tx.notes.match(/#بيع_سيارة_([^\s]+)/)?.[1] : null);
-          if (carNumber) {
-            const c = cars.find((car) => car.car_number === carNumber);
-            if (c && c.payment_type === "اقساط") {
-              const carExpenses = carExpensesList.filter((e) => e.car_number === c.car_number);
-              const expensesSum = moneySum(carExpenses, (e) => e.amount);
-              const totalCost = moneyAdd(c.purchase_price, expensesSum);
-              const fullProfit = moneySub(c.selling_price, totalCost);
-              if (compareMoney(fullProfit, 0) > 0 && compareMoney(c.selling_price, 0) > 0) {
-                const profitRatio = moneyDiv(fullProfit, c.selling_price);
-                const paymentProfit = moneyMul(tx.amount, profitRatio);
-                if (c.sale_currency === "USD") {
-                  profitUsd = moneyAdd(profitUsd, paymentProfit);
-                } else {
-                  profitIqd = moneyAdd(profitIqd, paymentProfit);
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-    const agencies = parseJsonArray<Agency>(localStorage.getItem("mock_default"));
-    for (const a of agencies) {
-      if (a.date >= startDate && a.date <= endDate) {
-        if (compareMoney(a.amount_iqd, 0) > 0) {
-          profitIqd = moneyAdd(profitIqd, a.amount_iqd);
-        }
-        if (compareMoney(a.amount_usd, 0) > 0) {
-          profitUsd = moneyAdd(profitUsd, a.amount_usd);
-        }
-      }
-    }
-
-    let expensesIqd = toMoney(0);
-    let expensesUsd = toMoney(0);
-    for (const e of expenses) {
-      if (!e.car_number && e.date >= startDate && e.date <= endDate) {
-        if (e.currency === "USD") {
-          expensesUsd = moneyAdd(expensesUsd, e.amount);
-        } else {
-          expensesIqd = moneyAdd(expensesIqd, e.amount);
-        }
-      }
-    }
+    const { profitIqd, profitUsd, expensesIqd, expensesUsd } = computeMockProfitTotals(startDate, endDate);
 
     const sharikPartners = partners.filter((p) => p.kind === "شريك");
+    // Audit fix #11 (mock parity): divide by the actual partner count so the sum of
+    // the shares always equals the total profit.
+    const shareCount = Math.max(sharikPartners.length, 1);
     const partnersList = sharikPartners.map((p) => {
       let drawingsIqd = toMoney(0);
       let drawingsUsd = toMoney(0);
@@ -1101,8 +1316,8 @@ async function mockInvoke<T>(
 
       return {
         partner_name: p.partner_name,
-        profit_iqd: moneyDiv(profitIqd, 2),
-        profit_usd: moneyDiv(profitUsd, 2),
+        profit_iqd: moneyDiv(profitIqd, shareCount),
+        profit_usd: moneyDiv(profitUsd, shareCount),
         drawings_iqd: drawingsIqd,
         drawings_usd: drawingsUsd,
       };
@@ -1225,6 +1440,7 @@ async function mockInvoke<T>(
       // Add agency profits
       const agencies = parseJsonArray<Agency>(localStorage.getItem("mock_default"));
       for (const a of agencies) {
+        if (normalizeMockAgencyPaymentStatus(a.payment_status) !== "واصل") continue;
         if (compareMoney(a.amount_iqd, 0) > 0) {
           cashIqd = moneyAdd(cashIqd, a.amount_iqd);
         }
@@ -1287,6 +1503,16 @@ async function mockInvoke<T>(
 
     const qasaIqd = moneyAdd(cashIqd, totalInvestmentsIqd);
     const qasaUsd = moneyAdd(cashUsd, totalInvestmentsUsd);
+
+    // Audit fix #30: monthly profits are computed (profit − general expenses since
+    // the first day of the current month), mirroring the backend formula instead
+    // of a hardcoded zero.
+    const now = new Date();
+    const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const monthly = computeMockProfitTotals(monthStart, "9999-12-31");
+    const monthlyProfitsIqd = moneySub(monthly.profitIqd, monthly.expensesIqd);
+    const monthlyProfitsUsd = moneySub(monthly.profitUsd, monthly.expensesUsd);
+
     return {
       cash_iqd: cashIqd,
       cash_usd: cashUsd,
@@ -1304,8 +1530,8 @@ async function mockInvoke<T>(
       total_expenses_usd: totalExpensesUsd,
       net_capital_iqd: netCapitalIqd,
       net_capital_usd: netCapitalUsd,
-      monthly_profits_iqd: 0,
-      monthly_profits_usd: 0,
+      monthly_profits_iqd: monthlyProfitsIqd,
+      monthly_profits_usd: monthlyProfitsUsd,
     } as T;
   }
 
@@ -1316,23 +1542,23 @@ async function mockInvoke<T>(
     let usd_total = toMoney(0);
     const partnerTx = allTx.filter((tx) => {
       if (kind === "partners-financial") {
-        return tx.kind === "شريك" || tx.kind === "مستثمر" || tx.kind === "ممول" || tx.kind === "زبون" || tx.kind === "شركة";
+        return tx.kind === "شريك" || tx.kind === "مستثمر" || tx.kind === "ممول" || tx.kind === "زبون" || tx.kind === "وكالة" || tx.kind === "شركة";
       }
       if (kind === "customers-only") {
-        return tx.kind === "مستثمر" || tx.kind === "ممول" || tx.kind === "زبون" || tx.kind === "شركة";
+        return tx.kind === "مستثمر" || tx.kind === "ممول" || tx.kind === "زبون" || tx.kind === "وكالة" || tx.kind === "شركة";
       }
       if (kind === "partners-only") {
         return tx.kind === "شريك";
       }
       return tx.kind === kind;
     });
-    const customerTx = partnerTx.filter((tx) => tx.kind === "زبون");
+    const customerTx = partnerTx.filter((tx) => tx.kind === "زبون" || tx.kind === "وكالة");
     if (customerTx.length > 0) {
       iqd_total = moneyAdd(iqd_total, calculateCustomerRemaining(customerTx, "IQD"));
       usd_total = moneyAdd(usd_total, calculateCustomerRemaining(customerTx, "USD"));
     }
     for (const tx of partnerTx) {
-      if (tx.kind === "زبون") continue;
+      if (tx.kind === "زبون" || tx.kind === "وكالة") continue;
       // Skip profit recognition rows — they don't affect cash
       if ((tx.source_role ?? '') === 'profit_recognition') continue;
       if ((tx.affects_profit ?? 0) === 1 && (tx.affects_partner_cash ?? 1) === 0) continue;
@@ -1360,13 +1586,13 @@ async function mockInvoke<T>(
   if (command === "get_unified_accounts") {
     const partners: Partner[] = JSON.parse(localStorage.getItem("mock_partners") ?? "[]");
     const allTx: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
-    const filtered = partners.filter((p) => p.kind === "ممول" || p.kind === "شركة" || p.kind === "مستثمر" || p.kind === "زبون");
+    const filtered = partners.filter((p) => p.kind === "ممول" || p.kind === "شركة" || p.kind === "مستثمر" || p.kind === "زبون" || p.kind === "وكالة");
 
     return filtered.map((p) => {
       const txns = allTx.filter((tx) => tx.partner_name === p.partner_name && tx.kind === p.kind);
       let iqd_balance = toMoney(0);
       let usd_balance = toMoney(0);
-      if (p.kind === "زبون") {
+      if (p.kind === "زبون" || p.kind === "وكالة") {
         return {
           partner_name: p.partner_name,
           phone: p.phone,
@@ -1405,11 +1631,18 @@ async function mockInvoke<T>(
 
   if (command === "get_agencies") {
     const raw = localStorage.getItem(key);
-    return (raw ? JSON.parse(raw) : []) as T;
+    return parseJsonArray<Agency>(raw).map(normalizeMockAgency) as T;
   }
 
   if (command === "add_agency") {
     const existing = parseJsonArray<Agency>(localStorage.getItem(key));
+    const creationToken = String(args.creation_token ?? args.creationToken ?? "").trim();
+    if (creationToken) {
+      const existingByToken = existing.find((agency) =>
+        (agency as Agency & { creation_token?: string }).creation_token === creationToken
+      );
+      if (existingByToken) return existingByToken.id as unknown as T;
+    }
     const now = new Date();
     const hh = String(now.getHours()).padStart(2, "0");
     const mm = String(now.getMinutes()).padStart(2, "0");
@@ -1428,8 +1661,10 @@ async function mockInvoke<T>(
       amount_usd: toMoney(args.amount_usd ?? args.amountUsd),
       amount_iqd: toMoney(args.amount_iqd ?? args.amountIqd),
       notes: String(args.notes ?? "").trim(),
+      payment_status: normalizeMockAgencyPaymentStatus(args.payment_status ?? args.paymentStatus),
       date: `${y}-${m}-${d}`,
       time: `${hh}:${mm}`,
+      creation_token: creationToken || undefined,
     };
     const idx = existing.findIndex((a) => a.id === item.id);
     if (idx >= 0) {
@@ -1438,6 +1673,7 @@ async function mockInvoke<T>(
       existing.push(item);
     }
     localStorage.setItem(key, JSON.stringify(existing));
+    syncMockAgencyReceivable(item);
     return item.id as unknown as T;
   }
 
@@ -1460,21 +1696,56 @@ async function mockInvoke<T>(
         amount_usd: toMoney(args.amount_usd ?? args.amountUsd),
         amount_iqd: toMoney(args.amount_iqd ?? args.amountIqd),
         notes: String(args.notes ?? "").trim(),
+        payment_status: normalizeMockAgencyPaymentStatus(args.payment_status ?? args.paymentStatus),
       };
       existing[itemIdx] = updatedItem;
       localStorage.setItem("mock_default", JSON.stringify(existing));
+      syncMockAgencyReceivable(updatedItem);
     }
+    return undefined as T;
+  }
+
+  if (command === "set_agency_receivable_status") {
+    const transactionId = Number(args.transaction_id ?? args.transactionId);
+    const paid = Boolean(args.paid);
+    const allTx = parseJsonArray<PartnerTransaction>(localStorage.getItem("mock_partner_transactions"));
+    const tx = allTx.find((item) =>
+      item.id === transactionId &&
+      item.kind === "وكالة" &&
+      item.source_type === "agency" &&
+      item.source_role === "agency_receivable"
+    );
+    if (!tx) {
+      throw new Error("تعذر العثور على مديونية الوكالة المرتبطة بهذه الحركة");
+    }
+    const agencyId = Number(tx.source_id);
+    const existing = parseJsonArray<Agency>(localStorage.getItem("mock_default")).map(normalizeMockAgency);
+    const itemIdx = existing.findIndex((agency) => agency.id === agencyId);
+    if (itemIdx < 0) {
+      throw new Error("تعذر العثور على الوكالة المرتبطة بهذه الحركة");
+    }
+    const updatedItem: Agency = {
+      ...existing[itemIdx],
+      payment_status: paid ? "واصل" : "غير واصل",
+    };
+    existing[itemIdx] = updatedItem;
+    localStorage.setItem("mock_default", JSON.stringify(existing));
+    syncMockAgencyReceivable(updatedItem);
     return undefined as T;
   }
 
   if (command === "delete_agency") {
     const existing = parseJsonArray<Agency>(localStorage.getItem(key));
     const targetId = Number(args.id) || 0;
+    const removed = existing.find((a) => a.id === targetId);
     const next = existing.filter((a) => a.id !== targetId);
     localStorage.setItem(key, JSON.stringify(next));
     const txKey = "mock_agency_transactions";
     const allTx = parseJsonArray<AgencyTransaction>(localStorage.getItem(txKey));
     localStorage.setItem(txKey, JSON.stringify(allTx.filter((t) => t.agency_id !== targetId)));
+    if (removed) {
+      syncMockAgencyReceivable({ ...removed, payment_status: "واصل" });
+    }
     return undefined as T;
   }
 
@@ -1535,18 +1806,30 @@ async function mockInvoke<T>(
   }
 
   if (command === "login") {
+    // MOCK ONLY — never use in production. Real auth handled by Rust backend.
     const username = String(args.username ?? "").trim();
     const password = String(args.password ?? "").trim();
     // Mock: any username/password works (except blank)
     if (!username || !password) {
       return { success: false, user: null, error: "اسم المستخدم أو كلمة المرور فارغة" } as T;
     }
+    // Bug AU3: Mock also issues a fake session token so the frontend code path
+    // exercises the session-token plumbing even in dev mode.
+    const mockSessionToken = Array.from({ length: 64 }, () =>
+      "0123456789abcdef"[Math.floor(Math.random() * 16)],
+    ).join("");
     return {
       success: true,
       user: { id: 1, username, display_name: "مدير النظام", profile_image: null },
       error: null,
       password_change_required: false,
+      session_token: mockSessionToken,
     } as T;
+  }
+
+  if (command === "logout") {
+    // Bug AU3: Mock logout — no-op in dev mode.
+    return undefined as T;
   }
 
   if (command === "get_users") {
@@ -1636,6 +1919,193 @@ async function mockInvoke<T>(
     return undefined as T;
   }
 
+  // ====================================================================
+  // F1: 7 Tauri commands that previously had no mock handlers.
+  // These are simplified dev-mode stubs that operate on localStorage mock
+  // data — they do NOT replicate the full Rust accounting logic. They exist
+  // so the frontend can be exercised in browser/preview mode without a
+  // backend. Real accounting happens in the Rust commands (see lib.rs).
+  // ====================================================================
+
+  if (command === "save_and_sell_car_with_accounting") {
+    // Insert the car as sold in one shot. Mirrors save_and_sell_car_with_accounting
+    // in lib.rs (which is atomic — insert car + record purchase + sell it).
+    const existing: Car[] = JSON.parse(localStorage.getItem("mock_cars") ?? "[]");
+    const plateNum = String(args.num ?? "").trim();
+    const carNumber = resolveMockCarNumber(existing, plateNum);
+    const item = {
+      ...mapMockCar({ ...args, num: carNumber }),
+      car_number: carNumber,
+      car_plate_num: plateNum,
+      status: "مبيوعة" as const,
+      sale_time: new Date().toTimeString().slice(0, 5),
+    };
+    const next = existing.filter((c) => c.car_number !== item.car_number);
+    next.push(item);
+    localStorage.setItem("mock_cars", JSON.stringify(next));
+
+    // Create customer account if not present (same as sell_car_with_accounting).
+    const partners: Partner[] = JSON.parse(localStorage.getItem("mock_partners") ?? "[]");
+    const buyerName = String(args.buyer_name ?? args.buyerName ?? "").trim();
+    const amountRemaining = toMoney(args.amount_remaining ?? args.amountRemaining);
+    if (buyerName && !partners.some(p => p.partner_name === buyerName && p.kind === "زبون")) {
+      partners.push({
+        partner_name: buyerName,
+        phone: String(args.buyer_phone ?? args.buyerPhone ?? ""),
+        total_amount: amountRemaining,
+        iqd_balance: amountRemaining,
+        usd_balance: 0,
+        total_withdrawals: 0,
+        kind: "زبون",
+      });
+      localStorage.setItem("mock_partners", JSON.stringify(partners));
+    }
+    return undefined as T;
+  }
+
+  if (command === "update_sold_car_with_accounting") {
+    // Edit the financial/sale fields of an existing sold car.
+    const carNumber = String(args.car_number ?? args.carNumber ?? "").trim();
+    const existing: Car[] = JSON.parse(localStorage.getItem("mock_cars") ?? "[]");
+    const idx = existing.findIndex((c) => c.car_number === carNumber);
+    if (idx >= 0) {
+      existing[idx] = {
+        ...existing[idx],
+        buyer_name: String(args.buyer_name ?? args.buyerName ?? existing[idx].buyer_name ?? ""),
+        buyer_phone: String(args.buyer_phone ?? args.buyerPhone ?? existing[idx].buyer_phone ?? ""),
+        selling_price: toMoney(args.selling_price ?? args.sellingPrice ?? existing[idx].selling_price),
+        sale_currency: (args.sale_currency ?? args.saleCurrency ?? existing[idx].sale_currency ?? "IQD") as Car["sale_currency"],
+        sale_date: String(args.sale_date ?? args.saleDate ?? existing[idx].sale_date ?? ""),
+        payment_type: (args.payment_type ?? args.paymentType ?? existing[idx].payment_type ?? "كاش") as Car["payment_type"],
+        amount_paid: toMoney(args.amount_paid ?? args.amountPaid ?? existing[idx].amount_paid),
+        amount_remaining: toMoney(args.amount_remaining ?? args.amountRemaining ?? existing[idx].amount_remaining),
+        installment_months: Number(args.installment_months ?? args.installmentMonths ?? existing[idx].installment_months ?? 0) || 0,
+        first_payment_date: (args.first_payment_date ?? args.firstPaymentDate ?? existing[idx].first_payment_date ?? null) as string | null,
+        delivery_date: (args.delivery_date ?? args.deliveryDate ?? existing[idx].delivery_date ?? null) as string | null,
+        monthly_payment: toMoney(args.monthly_payment ?? args.monthlyPayment ?? existing[idx].monthly_payment),
+      };
+      localStorage.setItem("mock_cars", JSON.stringify(existing));
+    }
+    return undefined as T;
+  }
+
+  if (command === "pay_customer_installment") {
+    // Mark a single installment row as paid in mock_partner_transactions.
+    const installmentId = Number(args.installment_id ?? args.installmentId);
+    const allTx: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
+    const nextTx = allTx.map((tx) =>
+      tx.id === installmentId
+        ? {
+          ...tx,
+          type_: tx.type_.replace(/^باقي/, "واصل"),
+          actual_paid_amount: toMoney(args.actual_paid_amount ?? args.actualPaidAmount ?? tx.amount),
+          date: String(args.date ?? tx.date ?? ""),
+          notes: args.notes != null ? String(args.notes) : tx.notes,
+          currency: (args.currency as string) || tx.currency || "IQD",
+          paymentType: ((args.payment_type ?? args.paymentType ?? tx.paymentType ?? "قاصه") as string),
+          payment_type: ((args.payment_type ?? args.paymentType ?? tx.payment_type ?? "قاصه") as string),
+        }
+        : tx,
+    );
+    localStorage.setItem("mock_partner_transactions", JSON.stringify(nextTx));
+    const tx = allTx.find((t) => t.id === installmentId);
+    if (tx) {
+      recalculateMockPartnerTotal(
+        String(args.customer_name ?? args.customerName ?? tx.partner_name),
+        "زبون",
+      );
+    }
+    return undefined as T;
+  }
+
+  if (command === "reverse_customer_installment_payment") {
+    // Revert a paid installment back to unpaid ("باقي").
+    const installmentId = Number(args.installment_id ?? args.installmentId);
+    const allTx: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
+    const nextTx = allTx.map((tx) =>
+      tx.id === installmentId
+        ? {
+          ...tx,
+          type_: tx.type_.replace(/^واصل/, "باقي"),
+          actual_paid_amount: toMoney(0),
+        }
+        : tx,
+    );
+    localStorage.setItem("mock_partner_transactions", JSON.stringify(nextTx));
+    const tx = allTx.find((t) => t.id === installmentId);
+    if (tx) recalculateMockPartnerTotal(tx.partner_name, "زبون");
+    return undefined as T;
+  }
+
+  if (command === "set_customer_installment_status") {
+    // Backward-compatible wrapper: paid=true → pay; paid=false → reverse.
+    const paid = Boolean(args.paid);
+    const installmentId = Number(args.installment_id ?? args.installmentId);
+    const allTx: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
+    const nextTx = allTx.map((tx) => {
+      if (tx.id !== installmentId) return tx;
+      if (paid) {
+        return {
+          ...tx,
+          type_: tx.type_.replace(/^باقي/, "واصل"),
+          actual_paid_amount: toMoney(args.amount ?? tx.amount),
+          date: String(args.date ?? tx.date ?? ""),
+          currency: (args.currency as string) || tx.currency || "IQD",
+          paymentType: ((args.payment_type ?? args.paymentType ?? tx.paymentType ?? "قاصه") as string),
+          payment_type: ((args.payment_type ?? args.paymentType ?? tx.payment_type ?? "قاصه") as string),
+        };
+      }
+      return {
+        ...tx,
+        type_: tx.type_.replace(/^واصل/, "باقي"),
+        actual_paid_amount: toMoney(0),
+      };
+    });
+    localStorage.setItem("mock_partner_transactions", JSON.stringify(nextTx));
+    const tx = allTx.find((t) => t.id === installmentId);
+    if (tx) recalculateMockPartnerTotal(String(args.partner_name ?? tx.partner_name), "زبون");
+    return undefined as T;
+  }
+
+  if (command === "preview_installment_payment_redistribution") {
+    // Return a stub preview matching InstallmentPaymentPreview (types.ts).
+    const installmentId = Number(args.installment_id ?? args.installmentId);
+    const actualPaid = toMoney(args.actual_paid_amount ?? args.actualPaidAmount ?? 0);
+    const allTx: PartnerTransaction[] = JSON.parse(localStorage.getItem("mock_partner_transactions") ?? "[]");
+    const target = allTx.find((t) => t.id === installmentId);
+    const currentAmount = toMoney(target?.amount ?? 0);
+    const difference = moneySub(actualPaid, currentAmount);
+    const direction = difference.isPositive() ? "forward" : difference.isNegative() ? "backward" : "none";
+    return {
+      installment_id: installmentId,
+      current_amount: currentAmount,
+      actual_paid_amount: actualPaid,
+      difference_amount: difference,
+      affected_count: target ? 1 : 0,
+      redistribution_direction: direction,
+      preview_installments: target
+        ? [{
+            installment_id: installmentId,
+            due_date: target.date ?? "",
+            old_amount: currentAmount,
+            new_amount: actualPaid,
+            currency: target.currency ?? "IQD",
+            status: "preview",
+          }]
+        : [],
+    } as unknown as T;
+  }
+
+  if (command === "open_whatsapp") {
+    // No-op in dev mode: just log to console. Real implementation opens the
+    // whatsapp:// URL via the OS handler (see lib.rs::open_whatsapp).
+    const phone = String(args.phone ?? "");
+    const text = String(args.text ?? "");
+    // eslint-disable-next-line no-console
+    console.info(`[mock open_whatsapp] phone=${phone} text=${text}`);
+    return undefined as T;
+  }
+
   throw new Error(`أمر غير معروف: ${command}`);
 }
 
@@ -1646,8 +2116,14 @@ export function buildCarInvokeArgs(form: CarFormState) {
   const isInstallment = isSold && form.paymentType === "اقساط";
   const isDeferred = isSold && form.paymentType !== "كاش";
   const months = Math.max(1, Number(form.installmentMonths) || 1);
-  const remaining = Number(form.amountRemaining) || 0;
-  const paid = Number(form.amountPaid) || 0;
+  // Pass raw form strings for money fields — serializeTauriMoneyArgs + moneyToStorage
+  // (via toMoney, which strips commas) will normalize them at the IPC boundary so we
+  // never lose precision by going through JS Number() coercion.
+  const remaining = form.amountRemaining;
+  const paid = form.amountPaid;
+  // Use Decimal division to avoid JS floating-point errors on money.
+  // moneyDiv returns a Decimal; moneyToStorage serializes it for IPC.
+  const monthlyPayment = moneyDiv(form.amountRemaining, months);
 
   const savedUser = localStorage.getItem("app_current_user");
   const adminName = savedUser ? (JSON.parse(savedUser).display_name || JSON.parse(savedUser).username) : null;
@@ -1660,15 +2136,15 @@ export function buildCarInvokeArgs(form: CarFormState) {
     name: form.name.trim(),
     color: form.color.trim(),
     details: form.details.trim(),
-    purchase: Number(form.purchase) || 0,
-    selling: Number(form.selling) || 0,
+    purchase: form.purchase,
+    selling: form.selling,
     status: form.status,
     paymentType: isSold ? form.paymentType : null,
     cashPrice: isSold && (form.paymentType === "كاش" || form.paymentType === "موعد") ? paid : null,
     amountPaid: isSold ? paid : null,
     amountRemaining: isDeferred ? remaining : null,
     installmentMonths: isInstallment ? months : null,
-    monthlyPayment: isInstallment ? remaining / months : null,
+    monthlyPayment: isInstallment ? monthlyPayment : null,
     buyerName: isSold ? form.buyerName.trim() || null : null,
     buyerPhone: isSold ? normalizePhoneNumber(form.phone) || null : null,
     purchaseDate: form.purchaseDate || null,
@@ -1694,10 +2170,17 @@ const isE2E = () =>
   typeof import.meta !== "undefined" &&
   import.meta.env?.VITE_E2E === "1";
 
+// E2E bridge is for Playwright tests only. Requires VITE_E2E=1 build flag and a
+// running bridge server on port 3899. Never available in production builds.
 async function e2eInvoke<T>(
   command: string,
   args: Record<string, unknown> = {},
 ): Promise<T> {
+  // Production guard: the E2E bridge MUST never be reachable from a production
+  // build, even if VITE_E2E was somehow set.
+  if (import.meta.env.PROD) {
+    throw new Error("E2E bridge disabled in production");
+  }
   const res = await fetch(E2E_BRIDGE_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

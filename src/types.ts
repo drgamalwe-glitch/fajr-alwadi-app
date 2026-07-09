@@ -159,6 +159,7 @@ export interface Agency {
   amount_usd: MoneyValue;
   amount_iqd: MoneyValue;
   notes: string;
+  payment_status: "واصل" | "غير واصل";
   date: string;
   time: string;
 }
@@ -185,6 +186,10 @@ export interface LoginResult {
   success: boolean;
   user?: UserInfo | null;
   error?: string | null;
+  /** Set when the user must change their password before further actions. */
+  password_change_required?: boolean;
+  /** Bug AU3: Backend issues a session token on successful login */
+  session_token?: string | null;
 }
 
 export type TabId = "dashboard" | "company-status" | "cars" | "partners-financial" | "cashregister" | "expenses" | "financial-accounts" | "financial-transactions" | "agencies" | "profit-distribution" | "users";

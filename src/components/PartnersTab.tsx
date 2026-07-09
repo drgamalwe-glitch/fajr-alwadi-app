@@ -17,7 +17,7 @@ import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/paginat
 import { formatNotesText } from "../utils/notesDisplay";
 import { printStatement } from "../pdf/printStatement";
 import Decimal from "decimal.js";
-import { toMoney, moneyAdd, moneySub, moneyDiv, moneySum, compareMoney, moneyAbs, type MoneyValue } from "../utils/money";
+import { toMoney, moneyAdd, moneySub, moneyDiv, moneyMul, moneySum, compareMoney, moneyAbs, type MoneyValue } from "../utils/money";
 
 interface PartnersTabProps {
   partners: Partner[];
@@ -117,10 +117,16 @@ const isSaleDownPaymentRecord = (tx: PartnerTransaction) =>
   tx.source_type === "customer_sale_payment" &&
   tx.source_role === "sale_down_payment";
 
+const isAgencyReceivableRecord = (tx: PartnerTransaction | null | undefined) =>
+  !!tx &&
+  tx.kind === "وكالة" &&
+  tx.source_type === "agency" &&
+  tx.source_role === "agency_receivable";
+
 const isFinancialClientKind = (kind: string) =>
   kind === "مستثمر" || kind === "ممول" || kind === "شركة";
 
-const isBorrowerKind = (kind: string) => kind === "زبون";
+const isBorrowerKind = (kind: string) => kind === "زبون" || kind === "وكالة";
 
 const isCustomerRemainingBalanceTx = (tx: PartnerTransaction) =>
   !tx.type_.startsWith("تحويل") &&
@@ -150,7 +156,7 @@ const getErrorMessage = (err: unknown, fallback: string): string => {
 
 type AccountsTabId = "customers" | "personal" | "receivables" | "liabilities";
 
-const ACCOUNT_LIST_KINDS = new Set(["مستثمر", "ممول", "زبون", "شركة"]);
+const ACCOUNT_LIST_KINDS = new Set(["مستثمر", "ممول", "زبون", "وكالة", "شركة"]);
 
 const isAccountListKind = (kind: string) => ACCOUNT_LIST_KINDS.has(kind);
 
@@ -361,23 +367,24 @@ export function PartnersTab({
       : '#partner-phone, .toolbar-field-input[placeholder="رقم الهاتف"], input[placeholder="رقم الهاتف"]';
     document.querySelectorAll(selector).forEach((el) => el.classList.remove("input--error"));
   };
-  const [partnersSort, setPartnersSort] = useState<{ key: string; direction: "asc" | "desc" }>({ key: "name", direction: "asc" });
+  const [partnersSort, setPartnersSort] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
   const handleSortPartners = (key: string) => {
     setPartnersSort((prev) => ({
       key,
-      direction: prev.key === key && prev.direction === "asc" ? "desc" : "asc",
+      direction: prev?.key === key && prev.direction === "asc" ? "desc" : "asc",
     }));
   };
 
   const myPartners = useMemo(() => {
     let list = [];
     if (kind === "partners-financial") {
-      // تبويب "حسابات العملاء" يعرض فقط: مستثمر، ممول، زبون، شركة — بدون شريك
-      list = partners.filter((p) => p.kind === "مستثمر" || p.kind === "ممول" || p.kind === "زبون" || p.kind === "شركة");
+      // تبويب "حسابات العملاء" يعرض فقط حسابات العملاء والجهات المالية — بدون شريك
+      list = partners.filter((p) => isAccountListKind(p.kind));
     } else {
       list = partners.filter((p) => (p.kind || kind) === kind);
     }
 
+    if (!partnersSort) return list;
     const { key, direction } = partnersSort;
     const sign = direction === "asc" ? 1 : -1;
     return [...list].sort((a, b) => {
@@ -400,6 +407,7 @@ export function PartnersTab({
   const sharikPartners = useMemo(() => {
     if (kind !== "partners-financial") return [];
     const list = partners.filter((p) => p.kind === "شريك");
+    if (!partnersSort) return list;
     const { key, direction } = partnersSort;
     const sign = direction === "asc" ? 1 : -1;
     return [...list].sort((a, b) => {
@@ -413,7 +421,20 @@ export function PartnersTab({
     });
   }, [partners, kind, partnersSort]);
 
-  const sharikTotalSame = useMemo(() => moneySum(sharikPartners, (p) => p.total_amount), [sharikPartners]);
+  // Audit fix #5: share ratios must never mix IQD and USD amounts in one division.
+  // The ratio is computed per currency: IQD balances are used when the group has
+  // any positive IQD total, otherwise USD balances are used.
+  const partnerRatioIn = useCallback((partner: Partner, group: Partner[]): number => {
+    const totalIqd = moneySum(group, (p) => p.iqd_balance ?? 0);
+    const totalUsd = moneySum(group, (p) => p.usd_balance ?? 0);
+    if (compareMoney(totalIqd, 0) > 0) {
+      return moneyDiv(toMoney(partner.iqd_balance ?? 0), totalIqd).times(100).toNumber();
+    }
+    if (compareMoney(totalUsd, 0) > 0) {
+      return moneyDiv(toMoney(partner.usd_balance ?? 0), totalUsd).times(100).toNumber();
+    }
+    return 0;
+  }, []);
 
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [modalPage, setModalPage] = useState(0);
@@ -480,7 +501,7 @@ export function PartnersTab({
   const [transactionSort, setTransactionSort] = useState<{
     key: TransactionSortKey;
     direction: SortDirection;
-  }>({ key: "date", direction: "asc" });
+  }>({ key: "sequence", direction: "asc" });
   const transactionListRef = useRef<HTMLDivElement | null>(null);
   const shouldScrollTransactionsRef = useRef(false);
 
@@ -493,11 +514,11 @@ export function PartnersTab({
 
 
 
-  const [accountsSort, setAccountsSort] = useState<{ key: string; direction: "asc" | "desc" }>({ key: "name", direction: "asc" });
+  const [accountsSort, setAccountsSort] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
   const handleSortAccounts = (key: string) => {
     setAccountsSort((prev) => ({
       key,
-      direction: prev.key === key && prev.direction === "asc" ? "desc" : "asc",
+      direction: prev?.key === key && prev.direction === "asc" ? "desc" : "asc",
     }));
   };
 
@@ -515,6 +536,7 @@ export function PartnersTab({
       return false;
     });
 
+    if (!accountsSort) return result;
     const { key, direction } = accountsSort;
     const sign = direction === "asc" ? 1 : -1;
     return result.sort((a, b) => {
@@ -1105,23 +1127,35 @@ export function PartnersTab({
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime() || a.id - b.id);
 
     const paidIds = new Set<number>();
-    let remaining = toMoney(0);
+    // Audit fix #18: unlinked payments are pooled PER CURRENCY — IQD payments must
+    // never mark USD installments as paid (and vice versa).
+    const remainingByCurrency = new Map<string, ReturnType<typeof toMoney>>();
     for (const payment of payments) {
       const linkedId = getLinkedInstallmentId(payment);
       if (linkedId) {
         paidIds.add(linkedId);
       } else {
-        remaining = moneyAdd(remaining, payment.amount);
+        const curr = payment.currency || "IQD";
+        remainingByCurrency.set(curr, moneyAdd(remainingByCurrency.get(curr) ?? toMoney(0), payment.amount));
       }
     }
 
+    const stoppedCurrencies = new Set<string>();
     for (const inst of installments) {
+      // F14: fast path — if the row already carries a paid_event_id or actual_paid_amount, treat it as paid without consulting the heuristic.
+      if (inst.paid_event_id != null || inst.actual_paid_amount != null) {
+        paidIds.add(inst.id);
+        continue;
+      }
       if (paidIds.has(inst.id)) continue;
+      const curr = inst.currency || "IQD";
+      if (stoppedCurrencies.has(curr)) continue;
+      const remaining = remainingByCurrency.get(curr) ?? toMoney(0);
       if (compareMoney(remaining, inst.amount) >= 0) {
         paidIds.add(inst.id);
-        remaining = moneySub(remaining, inst.amount);
+        remainingByCurrency.set(curr, moneySub(remaining, inst.amount));
       } else {
-        break;
+        stoppedCurrencies.add(curr);
       }
     }
 
@@ -1162,11 +1196,12 @@ export function PartnersTab({
   useEffect(() => {
     if (kind !== "partners-financial" || !pendingPartnerOpen) return;
     let cancelled = false;
+    // F20: require kind to match — don't fall back to a name-only lookup that could match an unrelated account.
     const partner = partners.find(
       (p) =>
         p.partner_name === pendingPartnerOpen.name &&
         (!pendingPartnerOpen.kind || p.kind === pendingPartnerOpen.kind),
-    ) ?? partners.find((p) => p.partner_name === pendingPartnerOpen.name);
+    );
     if (partner) {
       openPersonalAccount(
         partner,
@@ -1196,7 +1231,7 @@ export function PartnersTab({
     const q = partnersSearch.trim().toLowerCase();
     if (!q) return [];
     return partners.filter((p) => {
-      if (p.kind !== "شريك" && p.kind !== "مستثمر" && p.kind !== "ممول" && p.kind !== "زبون" && p.kind !== "شركة") return false;
+      if (p.kind !== "شريك" && !isAccountListKind(p.kind)) return false;
       return (
         p.partner_name.toLowerCase().includes(q) ||
         (p.phone && p.phone.includes(q))
@@ -1240,7 +1275,7 @@ export function PartnersTab({
         depositLabel: `تسليم الى ${firstName}`,
         withdrawLabel: `استلام من ${firstName}`,
       });
-    } else if (partner.kind === "زبون") {
+    } else if (isBorrowerKind(partner.kind)) {
       onPartnerActionsChange?.(null);
     } else {
       onPartnerActionsChange?.({
@@ -1347,7 +1382,7 @@ export function PartnersTab({
       },
     };
     return () => { requestCloseRef.current = null; };
-  });
+  }, []);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -1617,6 +1652,11 @@ export function PartnersTab({
       !!editingTransactionId &&
       !!originalEditingTransaction &&
       isSaleDownPaymentRecord(originalEditingTransaction);
+    const isAgencyReceivableEdit =
+      form.kind === "وكالة" &&
+      !!editingTransactionId &&
+      !!originalEditingTransaction &&
+      isAgencyReceivableRecord(originalEditingTransaction);
     const originalInstallmentAmount = originalEditingTransaction
       ? moneyValueToNumber(originalEditingTransaction.amount)
       : 0;
@@ -1669,8 +1709,9 @@ export function PartnersTab({
         ? Math.max(1, Math.floor(Number(txForm.installments)) || 1)
         : 1;
       const periodAmount = Number.isFinite(effectiveAmount) ? effectiveAmount : 0;
-      const installmentAmount = Math.floor(periodAmount / installments);
-      const remainder = periodAmount - installmentAmount * installments;
+      // Use Decimal division for money; round installments down with ROUND_FLOOR.
+      const installmentAmount = moneyDiv(periodAmount, installments).toDecimalPlaces(0, Decimal.ROUND_FLOOR).toNumber();
+      const remainder = moneySub(periodAmount, moneyMul(installmentAmount, installments)).toNumber();
 
       if (isSaleDownPaymentEdit && originalEditingTransaction) {
         await callTauri("update_customer_sale_down_payment", {
@@ -1697,54 +1738,84 @@ export function PartnersTab({
           currency: txCurrency,
           paymentType: originalEditingTransaction.payment_type || originalEditingTransaction.paymentType || "قاصه",
         });
+      } else if (isAgencyReceivableEdit && originalEditingTransaction) {
+        await callTauri("set_agency_receivable_status", {
+          transactionId: originalEditingTransaction.id,
+          paid: txForm.type === "ايداع",
+        });
       } else {
-        for (let i = 0; i < installments; i++) {
-          const [yStr, mStr, dStr] = dateStr.split("-");
-          const year = parseInt(yStr, 10);
-          const month = parseInt(mStr, 10) - 1;
-          const day = parseInt(dStr, 10);
-          const date = new Date(year, month + i, day);
-          const dateStr_i = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-          const amount = i === installments - 1 ? installmentAmount + remainder : installmentAmount;
-          const monthNote = (() => {
-            if (form.kind === "ممول" && txForm.type === "سحب") {
-              const commissionVal = txForm.commission || 0;
-              const totalWithCommission = moneyValueToNumber(amount) + moneyValueToNumber(commissionVal);
-              const formattedTotal = txCurrency === "USD"
-                ? `$${formatEnglishNumber(totalWithCommission)}`
-                : `${formatEnglishNumber(totalWithCommission)} د.ع`;
-              return `تم تسليم الممول ${form.name} بـ ${formattedTotal} ارسل اليه بواسطة ${txForm.transferBy || "—"}${txForm.notes ? ` - ${txForm.notes}` : ""} - عمولة: ${commissionVal}`;
+        // Track created transaction IDs so we can roll back on partial failure (atomic multi-installment creation).
+        const createdIds: number[] = [];
+        try {
+          for (let i = 0; i < installments; i++) {
+            const [yStr, mStr, dStr] = dateStr.split("-");
+            const year = parseInt(yStr, 10);
+            const month = parseInt(mStr, 10) - 1;
+            const day = parseInt(dStr, 10);
+            // F5: clamp day to the last valid day of the target month to avoid off-by-one rollover (e.g. day 31 in a 30-day month).
+            const maxDay = new Date(year, month + i + 1, 0).getDate();
+            const safeDay = Math.min(day, maxDay);
+            const date = new Date(year, month + i, safeDay);
+            const dateStr_i = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+            const amount = i === installments - 1 ? installmentAmount + remainder : installmentAmount;
+            const monthNote = (() => {
+              if (form.kind === "ممول" && txForm.type === "سحب") {
+                const commissionVal = txForm.commission || 0;
+                const totalWithCommission = moneyValueToNumber(amount) + moneyValueToNumber(commissionVal);
+                const formattedTotal = txCurrency === "USD"
+                  ? `$${formatEnglishNumber(totalWithCommission)}`
+                  : `${formatEnglishNumber(totalWithCommission)} د.ع`;
+                return `تم تسليم الممول ${form.name} بـ ${formattedTotal} ارسل اليه بواسطة ${txForm.transferBy || "—"}${txForm.notes ? ` - ${txForm.notes}` : ""} - عمولة: ${commissionVal}`;
+              }
+              return installments > 1
+                ? `قسط ${i + 1}/${installments}${txForm.notes ? ` - ${txForm.notes}` : ""}`
+                : (txForm.notes || null);
+            })();
+
+            const isCompanyCashWithdrawal = form.kind === "شركة" && txForm.type === "سحب";
+            // Audit fix #15: the cash flag is carried by the TYPE field ("سحب نقدي"),
+            // which is the classifier used across the whole system. The notes marker
+            // is kept only for readability / backward compatibility.
+            const cashWdrNote = isCompanyCashWithdrawal
+              ? (monthNote ? `سحب نقدي - ${monthNote}` : "سحب نقدي")
+              : monthNote;
+            const transactionPayload = {
+              partnerName: editingKey,
+              kind: form.kind,
+              type: form.kind === "شريك" && txForm.type === "سحب"
+                ? "سحب شريك"
+                : isCompanyCashWithdrawal
+                  ? "سحب نقدي"
+                  : (form.kind === "زبون" && txForm.type === "ايداع") ? "تسديد قسط سيارة" : txForm.type,
+              amount,
+              date: dateStr_i,
+              notes: cashWdrNote,
+              currency: txCurrency,
+              paymentType: (form.kind === "ممول" && txForm.type === "ايداع") ? "ممول" : txForm.paymentType,
+            };
+
+            if (editingTransactionId) {
+              await callTauri("update_partner_transaction", {
+                id: editingTransactionId,
+                ...transactionPayload,
+              });
+            } else {
+              const newId = await callTauri<number>("add_partner_transaction", transactionPayload);
+              if (typeof newId === "number" && Number.isFinite(newId)) {
+                createdIds.push(newId);
+              }
             }
-            return installments > 1
-              ? `قسط ${i + 1}/${installments}${txForm.notes ? ` - ${txForm.notes}` : ""}`
-              : (txForm.notes || null);
-          })();
-
-          const isCompanyCashWithdrawal = form.kind === "شركة" && txForm.type === "سحب";
-          const cashWdrNote = isCompanyCashWithdrawal
-            ? (monthNote ? `سحب نقدي - ${monthNote}` : "سحب نقدي")
-            : monthNote;
-          const transactionPayload = {
-            partnerName: editingKey,
-            kind: form.kind,
-            type: form.kind === "شريك" && txForm.type === "سحب"
-              ? "سحب شريك"
-              : (form.kind === "زبون" && txForm.type === "ايداع") ? "تسديد قسط سيارة" : txForm.type,
-            amount,
-            date: dateStr_i,
-            notes: cashWdrNote,
-            currency: txCurrency,
-            paymentType: (form.kind === "ممول" && txForm.type === "ايداع") ? "ممول" : txForm.paymentType,
-          };
-
-          if (editingTransactionId) {
-            await callTauri("update_partner_transaction", {
-              id: editingTransactionId,
-              ...transactionPayload,
-            });
-          } else {
-            await callTauri("add_partner_transaction", transactionPayload);
           }
+        } catch (rollbackErr) {
+          // Best-effort rollback of any transactions created in this loop before the failure.
+          for (const createdId of createdIds) {
+            try {
+              await callTauri("delete_partner_transaction", { id: createdId, partnerName: editingKey, kind: form.kind });
+            } catch (cleanupErr) {
+              console.error("Failed to roll back installment transaction", createdId, cleanupErr);
+            }
+          }
+          throw rollbackErr;
         }
 
       }
@@ -1761,7 +1832,7 @@ export function PartnersTab({
       setShowTxModal(false);
     } catch (err) {
       console.error(err);
-      alert("تعذر إضافة المعاملة.");
+      alert(getErrorMessage(err, "تعذر حفظ العملية. حاول مرة أخرى."));
     } finally {
       setSaving(false);
     }
@@ -1787,7 +1858,7 @@ export function PartnersTab({
         moneySum(transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")), (t) => t.amount),
         moneySum(transactions.filter((t) => depositPrefixes(t) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")), (t) => t.amount)
       )
-      : form.kind === "زبون"
+      : isBorrowerKind(form.kind)
         ? moneySum(transactions.filter((t) => isCustomerRemainingBalanceTx(t) && (t.currency || "IQD") === "IQD"), (t) => t.amount)
         : moneySub(
           moneySum(cashTransactions.filter((t) => depositPrefixes(t) && (t.currency || "IQD") === "IQD" && !t.type_.startsWith("تحويل")), (t) => t.amount),
@@ -1801,7 +1872,7 @@ export function PartnersTab({
         moneySum(transactions.filter((t) => (t.type_.startsWith("سحب") || t.type_.startsWith("باقي")) && t.currency === "USD" && !t.type_.startsWith("تحويل")), (t) => t.amount),
         moneySum(transactions.filter((t) => depositPrefixes(t) && t.currency === "USD" && !t.type_.startsWith("تحويل")), (t) => t.amount)
       )
-      : form.kind === "زبون"
+      : isBorrowerKind(form.kind)
         ? moneySum(transactions.filter((t) => isCustomerRemainingBalanceTx(t) && t.currency === "USD"), (t) => t.amount)
         : moneySub(
           moneySum(cashTransactions.filter((t) => depositPrefixes(t) && t.currency === "USD" && !t.type_.startsWith("تحويل")), (t) => t.amount),
@@ -1826,7 +1897,7 @@ export function PartnersTab({
   };
   const getPartnerCurrencyBalance = (currency: "IQD" | "USD") => {
     if (!partnerToView) return currency === "IQD" ? currencyTotals[0] : currencyTotals[1];
-    if (form.kind === "زبون") {
+    if (isBorrowerKind(form.kind)) {
       return moneySum(
         transactions.filter((t) => (t.currency || "IQD") === currency && isCustomerRemainingBalanceTx(t)),
         (t) => t.amount
@@ -2017,6 +2088,7 @@ export function PartnersTab({
                           { label: "مستثمر", value: "مستثمر", kind: "مستثمر" },
                           { label: "ممول", value: "ممول", kind: "ممول" },
                           { label: "زبون", value: "زبون", kind: "زبون" },
+                          { label: "وكالة", value: "وكالة", kind: "وكالة" },
                           { label: "شركة", value: "شركة", kind: "شركة" },
                         ]}
                       />
@@ -2097,10 +2169,10 @@ export function PartnersTab({
             </div>
             <div className="unified-toolbar__center"></div>
             <div className="unified-toolbar__left">
-              <div className={`currency-card currency-card--usd ${(kind === "زبون" || isFinancialClientKind(kind)) ? getDetailBalanceCardClass(currencyTotals[1]) : currencyTotals[1] >= 0 ? "currency-card--balance-positive" : "currency-card--balance-negative"}`}>
+              <div className={`currency-card currency-card--usd ${(isBorrowerKind(kind) || isFinancialClientKind(kind)) ? getDetailBalanceCardClass(currencyTotals[1]) : currencyTotals[1] >= 0 ? "currency-card--balance-positive" : "currency-card--balance-negative"}`}>
                 <PriceDisplay amount={Math.abs(currencyTotals[1])} currency="USD" noColor />
               </div>
-              <div className={`currency-card currency-card--iqd ${(kind === "زبون" || isFinancialClientKind(kind)) ? getDetailBalanceCardClass(currencyTotals[0]) : currencyTotals[0] >= 0 ? "currency-card--balance-positive" : "currency-card--balance-negative"}`}>
+              <div className={`currency-card currency-card--iqd ${(isBorrowerKind(kind) || isFinancialClientKind(kind)) ? getDetailBalanceCardClass(currencyTotals[0]) : currencyTotals[0] >= 0 ? "currency-card--balance-positive" : "currency-card--balance-negative"}`}>
                 <PriceDisplay amount={Math.abs(currencyTotals[0])} noColor />
               </div>
             </div>
@@ -2136,11 +2208,11 @@ export function PartnersTab({
                   <tr>
                     <th className="cell-num">ت</th>
                     <th>النوع</th>
-                    <th className={`col-name ${accountsSort.key === "name" ? "th--sorted" : ""}`} onClick={() => handleSortAccounts("name")} style={{ cursor: "pointer" }}>الاسم</th>
-                    <th className={`col-phone ${accountsSort.key === "phone" ? "th--sorted" : ""}`} onClick={() => handleSortAccounts("phone")} style={{ cursor: "pointer" }}>رقم الهاتف</th>
+                    <th className={`col-name ${accountsSort?.key === "name" ? "th--sorted" : ""}`} onClick={() => handleSortAccounts("name")} style={{ cursor: "pointer" }}>الاسم</th>
+                    <th className={`col-phone ${accountsSort?.key === "phone" ? "th--sorted" : ""}`} onClick={() => handleSortAccounts("phone")} style={{ cursor: "pointer" }}>رقم الهاتف</th>
                     <th className="col-status">الحالة</th>
-                    <th className={`col-money ${accountsSort.key === "iqd" ? "th--sorted" : ""}`} onClick={() => handleSortAccounts("iqd")} style={{ cursor: "pointer" }}>الرصيد بالدينار</th>
-                    <th className={`col-money ${accountsSort.key === "usd" ? "th--sorted" : ""}`} onClick={() => handleSortAccounts("usd")} style={{ cursor: "pointer" }}>الرصيد بالدولار</th>
+                    <th className={`col-money ${accountsSort?.key === "iqd" ? "th--sorted" : ""}`} onClick={() => handleSortAccounts("iqd")} style={{ cursor: "pointer" }}>الرصيد بالدينار</th>
+                    <th className={`col-money ${accountsSort?.key === "usd" ? "th--sorted" : ""}`} onClick={() => handleSortAccounts("usd")} style={{ cursor: "pointer" }}>الرصيد بالدولار</th>
                     <th className="col-delete" style={{ width: "40px" }}></th>
                   </tr>
                 </thead>
@@ -2257,16 +2329,18 @@ export function PartnersTab({
                 <thead>
                   <tr>
                     <th className="cell-num">ت</th>
-                    <th className={`col-name ${partnersSort.key === "name" ? "th--sorted" : ""}`} onClick={() => handleSortPartners("name")} style={{ cursor: "pointer" }}>الاسم</th>
-                    <th className={`col-phone ${partnersSort.key === "phone" ? "th--sorted" : ""}`} onClick={() => handleSortPartners("phone")} style={{ cursor: "pointer" }}>رقم الهاتف</th>
-                    <th className={`col-money ${partnersSort.key === "amount" ? "th--sorted" : ""}`} onClick={() => handleSortPartners("amount")} style={{ cursor: "pointer" }}>المبلغ</th>
+                    <th className={`col-name ${partnersSort?.key === "name" ? "th--sorted" : ""}`} onClick={() => handleSortPartners("name")} style={{ cursor: "pointer" }}>الاسم</th>
+                    <th className={`col-phone ${partnersSort?.key === "phone" ? "th--sorted" : ""}`} onClick={() => handleSortPartners("phone")} style={{ cursor: "pointer" }}>رقم الهاتف</th>
+                    <th className={`col-money ${partnersSort?.key === "amount" ? "th--sorted" : ""}`} onClick={() => handleSortPartners("amount")} style={{ cursor: "pointer" }}>المبلغ</th>
                     <th className="col-ratio">نسبة الشراكة</th>
                     <th className="col-delete" style={{ width: "40px" }}></th>
                   </tr>
                 </thead>
                 <tbody>
                   {sharikPartners.slice(sharikPage * PAGE_SIZE, (sharikPage + 1) * PAGE_SIZE).map((partner, idx) => {
-                    const ratio = compareMoney(sharikTotalSame, 0) > 0 ? moneyDiv(partner.total_amount, sharikTotalSame).times(100).toNumber() : 0;
+                    // Per Instructions.md §1.1, partners own 50% each. Hardcode the ratio instead of using the cash-balance ratio.
+                    // Audit fix #5: non-partner ratios are computed per currency (never IQD+USD mixed).
+                    const ratio = partner.kind === "شريك" ? 50 : partnerRatioIn(partner, sharikPartners);
                     return (
                       <tr
                         key={`${partner.partner_name}_شريك`}
@@ -2361,7 +2435,7 @@ export function PartnersTab({
                       return (
                         <tr
                           key={tx.id}
-                          className={`partner-tx-row ${isProfitRow ? "partner-tx-row--profit" : isFinancialClientKind(form.kind) || form.kind === "زبون"
+                          className={`partner-tx-row ${isProfitRow ? "partner-tx-row--profit" : isFinancialClientKind(form.kind) || isBorrowerKind(form.kind)
                             ? direction.rowClass
                             : (isDeposit ? "partner-tx-row--deposit" : "partner-tx-row--withdraw")
                             }`}
@@ -2372,13 +2446,13 @@ export function PartnersTab({
                           <td className="col-date">{tx.date}</td>
                           <td className="col-time">{tx.time || "00:00"}</td>
                           <td className="col-type">
-                            <span className={isProfitRow ? "tx-type-profit" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? `${direction.colorClass} font-bold` : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
-                              {isProfitRow ? "ارباح" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.label : (form.kind === "زبون" && isSaleInstallmentTx(tx)) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
+                            <span className={isProfitRow ? "tx-type-profit" : isFinancialClientKind(form.kind) || isBorrowerKind(form.kind) ? `${direction.colorClass} font-bold` : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
+                              {isProfitRow ? "ارباح" : isFinancialClientKind(form.kind) || isBorrowerKind(form.kind) ? direction.label : (form.kind === "زبون" && isSaleInstallmentTx(tx)) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
                             </span>
                           </td>
                           <td className={cn(
                             "col-amount font-bold",
-                            isProfitRow ? "tx-amount-profit" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.colorClass : (form.kind === "زبون" && isSaleInstallmentTx(tx)) ? "text-green" : (isWithdraw ? "text-red" : "text-green")
+                            isProfitRow ? "tx-amount-profit" : isFinancialClientKind(form.kind) || isBorrowerKind(form.kind) ? direction.colorClass : (form.kind === "زبون" && isSaleInstallmentTx(tx)) ? "text-green" : (isWithdraw ? "text-red" : "text-green")
                           )}>
                             <PriceDisplay
                               amount={tx.amount}
@@ -2440,11 +2514,11 @@ export function PartnersTab({
                 <thead>
                   <tr>
                     <th className="cell-num">ت</th>
-                    <th className={partnersSort.key === "kind" ? "th--sorted" : ""} onClick={() => handleSortPartners("kind")} style={{ cursor: "pointer" }}>النوع</th>
-                    <th className={`col-name ${partnersSort.key === "name" ? "th--sorted" : ""}`} onClick={() => handleSortPartners("name")} style={{ cursor: "pointer" }}>الاسم</th>
-                    <th className={`col-phone ${partnersSort.key === "phone" ? "th--sorted" : ""}`} onClick={() => handleSortPartners("phone")} style={{ cursor: "pointer" }}>رقم الهاتف</th>
-                    <th className={`col-money ${partnersSort.key === "amount" ? "th--sorted" : ""}`} onClick={() => handleSortPartners("amount")} style={{ cursor: "pointer" }}>المبلغ</th>
-                    <th className={`col-ratio ${partnersSort.key === "ratio" ? "th--sorted" : ""}`} onClick={() => handleSortPartners("ratio")} style={{ cursor: "pointer" }}>نسبة الشراكة</th>
+                    <th className={partnersSort?.key === "kind" ? "th--sorted" : ""} onClick={() => handleSortPartners("kind")} style={{ cursor: "pointer" }}>النوع</th>
+                    <th className={`col-name ${partnersSort?.key === "name" ? "th--sorted" : ""}`} onClick={() => handleSortPartners("name")} style={{ cursor: "pointer" }}>الاسم</th>
+                    <th className={`col-phone ${partnersSort?.key === "phone" ? "th--sorted" : ""}`} onClick={() => handleSortPartners("phone")} style={{ cursor: "pointer" }}>رقم الهاتف</th>
+                    <th className={`col-money ${partnersSort?.key === "amount" ? "th--sorted" : ""}`} onClick={() => handleSortPartners("amount")} style={{ cursor: "pointer" }}>المبلغ</th>
+                    <th className={`col-ratio ${partnersSort?.key === "ratio" ? "th--sorted" : ""}`} onClick={() => handleSortPartners("ratio")} style={{ cursor: "pointer" }}>نسبة الشراكة</th>
                     <th className="col-delete" style={{ width: "40px" }}></th>
                   </tr>
                 </thead>
@@ -2452,8 +2526,9 @@ export function PartnersTab({
                   {pagePartners.map((partner, idx) => {
                     const pKind = partner.kind || kind;
                     const sameKind = myPartners.filter((p) => (p.kind || kind) === pKind);
-                    const totalSameKind = moneySum(sameKind, (p) => p.total_amount);
-                    const ratio = compareMoney(totalSameKind, 0) > 0 ? moneyDiv(partner.total_amount, totalSameKind).times(100).toNumber() : 0;
+                    // Per Instructions.md §1.1, partners own 50% each. Hardcode the ratio for شريك kind.
+                    // Audit fix #5: other ratios are computed per currency (never IQD+USD mixed).
+                    const ratio = pKind === "شريك" ? 50 : partnerRatioIn(partner, sameKind);
                     return (
                       <tr
                         key={`${partner.partner_name}_${partner.kind}`}
@@ -2653,6 +2728,7 @@ export function PartnersTab({
                           { label: "مستثمر", value: "مستثمر", kind: "مستثمر" },
                           { label: "ممول", value: "ممول", kind: "ممول" },
                           { label: "زبون", value: "زبون", kind: "زبون" },
+                          { label: "وكالة", value: "وكالة", kind: "وكالة" },
                           { label: "شركة", value: "شركة", kind: "شركة" },
                         ]}
                       />
@@ -2667,7 +2743,7 @@ export function PartnersTab({
                   >
                     <span className="gold-fx-btn__label">حفظ التعديلات</span>
                   </GoldFxButton>
-                  {form.kind === "زبون" ? (
+                  {isBorrowerKind(form.kind) ? (
                     <>
                       <div className="partner-summary-field">
                         <span className="partner-summary-field__label">📊 المجموع الكلي</span>
@@ -2766,6 +2842,7 @@ export function PartnersTab({
                             { label: "مستثمر", value: "مستثمر", kind: "مستثمر" },
                             { label: "ممول", value: "ممول", kind: "ممول" },
                             { label: "زبون", value: "زبون", kind: "زبون" },
+                            { label: "وكالة", value: "وكالة", kind: "وكالة" },
                             { label: "شركة", value: "شركة", kind: "شركة" },
                           ]}
                         />
@@ -2903,7 +2980,7 @@ export function PartnersTab({
                                     return (
                                       <tr
                                         key={tx.id}
-                                        className={`partner-tx-row ${isProfitRow ? "partner-tx-row--profit" : isFinancialClientKind(form.kind) || form.kind === "زبون"
+                                        className={`partner-tx-row ${isProfitRow ? "partner-tx-row--profit" : isFinancialClientKind(form.kind) || isBorrowerKind(form.kind)
                                           ? direction.rowClass
                                           : form.kind === "ممول"
                                             ? (isWithdraw ? "partner-tx-row--deposit" : "partner-tx-row--withdraw")
@@ -2916,8 +2993,8 @@ export function PartnersTab({
                                         <td className="col-date">{tx.date}</td>
                                         <td className="col-time">{tx.time || "00:00"}</td>
                                         <td className="col-type">
-                                          <span className={isProfitRow ? "tx-type-profit" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? `${direction.colorClass} font-bold` : form.kind === "ممول" ? (isWithdraw ? "text-green font-bold" : "text-red font-bold") : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
-                                            {isProfitRow ? "ارباح" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.label : (form.kind === "زبون" && isSaleInstallmentTx(tx)) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
+                                          <span className={isProfitRow ? "tx-type-profit" : isFinancialClientKind(form.kind) || isBorrowerKind(form.kind) ? `${direction.colorClass} font-bold` : form.kind === "ممول" ? (isWithdraw ? "text-green font-bold" : "text-red font-bold") : (isWithdraw ? "tx-type-withdraw" : "tx-type-deposit")}>
+                                            {isProfitRow ? "ارباح" : isFinancialClientKind(form.kind) || isBorrowerKind(form.kind) ? direction.label : (form.kind === "زبون" && isSaleInstallmentTx(tx)) ? (isWithdraw ? "باقي" : "واصل") : tx.type_}
                                           </span>
                                         </td>
                                         <td className="col-account">
@@ -2927,7 +3004,7 @@ export function PartnersTab({
                                         </td>
                                         <td className={cn(
                                           "col-amount font-bold",
-                                          isProfitRow ? "tx-amount-profit" : isFinancialClientKind(form.kind) || form.kind === "زبون" ? direction.colorClass :
+                                          isProfitRow ? "tx-amount-profit" : isFinancialClientKind(form.kind) || isBorrowerKind(form.kind) ? direction.colorClass :
                                             form.kind === "ممول" ? (isWithdraw ? "text-red" : "text-green") :
                                               (form.kind === "زبون" && isSaleInstallmentTx(tx)) ? "text-green" :
                                                 (isWithdraw ? "text-red" : "text-green")
@@ -2995,15 +3072,15 @@ export function PartnersTab({
                       )}
                     </div>
 
-                    {form.kind !== "زبون" && (
+                    {!isBorrowerKind(form.kind) && (
                       <div className="car-form-panel__actions partner-modal-actions" style={{ marginTop: "1rem", display: "flex", gap: "0.5rem" }}>
                         <ActionButton
                           type="button"
-                          variant={form.kind === "زبون" ? "success" : "success"}
-                          style={{ flex: 1, minWidth: 0, padding: "8px 16px", background: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)", border: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "1px solid rgba(34,197,94,0.3)" : "1px solid rgba(239,68,68,0.3)", color: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "var(--green)" : "var(--red-600)", backdropFilter: "blur(8px)", borderRadius: "var(--all-radius)", fontWeight: 700, fontSize: "var(--fs-sm)" }}
+                          variant={isBorrowerKind(form.kind) ? "success" : "success"}
+                          style={{ flex: 1, minWidth: 0, padding: "8px 16px", background: isFinancialClientKind(form.kind) || isBorrowerKind(form.kind) ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)", border: isFinancialClientKind(form.kind) || isBorrowerKind(form.kind) ? "1px solid rgba(34,197,94,0.3)" : "1px solid rgba(239,68,68,0.3)", color: isFinancialClientKind(form.kind) || isBorrowerKind(form.kind) ? "var(--green)" : "var(--red-600)", backdropFilter: "blur(8px)", borderRadius: "var(--all-radius)", fontWeight: 700, fontSize: "var(--fs-sm)" }}
                           onClick={openWithdrawForm}
                         >
-                          {form.kind === "زبون"
+                          {isBorrowerKind(form.kind)
                             ? `باقي على ${firstAccountName(form.name)}`
                             : isFinancialClientKind(form.kind)
                               ? `تسليم الى ${firstAccountName(form.name)}`
@@ -3011,11 +3088,11 @@ export function PartnersTab({
                         </ActionButton>
                         <ActionButton
                           type="button"
-                          variant={form.kind === "زبون" ? "secondary" : "secondary"}
-                          style={{ flex: 1, minWidth: 0, padding: "8px 16px", background: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "rgba(239,68,68,0.12)" : "rgba(34,197,94,0.12)", border: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(34,197,94,0.3)", color: isFinancialClientKind(form.kind) || form.kind === "زبون" ? "var(--red-600)" : "var(--green)", backdropFilter: "blur(8px)", borderRadius: "var(--all-radius)", fontWeight: 700, fontSize: "var(--fs-sm)" }}
+                          variant={isBorrowerKind(form.kind) ? "secondary" : "secondary"}
+                          style={{ flex: 1, minWidth: 0, padding: "8px 16px", background: isFinancialClientKind(form.kind) || isBorrowerKind(form.kind) ? "rgba(239,68,68,0.12)" : "rgba(34,197,94,0.12)", border: isFinancialClientKind(form.kind) || isBorrowerKind(form.kind) ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(34,197,94,0.3)", color: isFinancialClientKind(form.kind) || isBorrowerKind(form.kind) ? "var(--red-600)" : "var(--green)", backdropFilter: "blur(8px)", borderRadius: "var(--all-radius)", fontWeight: 700, fontSize: "var(--fs-sm)" }}
                           onClick={openDepositForm}
                         >
-                          {form.kind === "زبون"
+                          {isBorrowerKind(form.kind)
                             ? `واصل من ${firstAccountName(form.name)}`
                             : form.kind === "شركة" || form.kind === "ممول" || form.kind === "مستثمر"
                               ? `استلام من ${firstAccountName(form.name)}`
@@ -3544,7 +3621,10 @@ export function PartnersTab({
               </div>
             )}
 
-            {form.kind === "زبون" && editingTransactionId && !isEditingSaleDownPayment && (
+            {editingTransactionId && (
+              (form.kind === "زبون" && !isEditingSaleDownPayment) ||
+              (form.kind === "وكالة" && isAgencyReceivableRecord(editingTransaction))
+            ) && (
               <div style={{
                 display: "flex",
                 gap: "0.5rem",
@@ -3829,7 +3909,7 @@ export function PartnersTab({
               <div className="modal-dialog__actions" style={{ marginTop: "1.5rem", display: "flex", gap: "12px" }}>
                 <GoldFxButton
                   type="submit"
-                  variant={isFinancialClientKind(form.kind) || form.kind === "زبون" ? (txForm.type === "سحب" ? "green" : "red") : (txForm.type === "ايداع" ? "green" : "gray")}
+                  variant={isFinancialClientKind(form.kind) || isBorrowerKind(form.kind) ? (txForm.type === "سحب" ? "green" : "red") : (txForm.type === "ايداع" ? "green" : "gray")}
                   style={{ flex: 1, margin: 0 }}
                   disabled={saving}
                 >
@@ -3840,7 +3920,7 @@ export function PartnersTab({
                         ? "تحديث"
                         : isFinancialClientKind(form.kind)
                           ? (txForm.type === "سحب" ? "تسليم" : "استلام")
-                          : form.kind === "زبون"
+                          : isBorrowerKind(form.kind)
                             ? (txForm.type === "سحب" ? "باقي" : "واصل")
                             : "إضافة"}
                   </span>

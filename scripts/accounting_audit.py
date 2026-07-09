@@ -9,20 +9,46 @@ import sqlite3
 import sys
 import os
 import re
+from decimal import Decimal, InvalidOperation
+
+MONEY_EPSILON = Decimal("0.01")
+
+def money(value):
+    if value is None:
+        return Decimal("0")
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal("0")
 
 def find_db():
+    """Find the Fajr Alwadi SQLite DB in documented app-data locations.
+
+    Bug P3: previously this function did an os.walk over the entire home
+    directory which is slow and broad. We now only check the documented
+    paths used by the Tauri app (see src-tauri/src/lib.rs::setup).
+    Bug P4: the DB filename is `fjr_alwadi_data.db`, not `fajr_alwadi.db`.
+    For non-default installs, pass the DB path as a CLI argument instead:
+        python accounting_audit.py /path/to/fjr_alwadi_data.db
+    """
     candidates = [
-        os.path.expanduser("~/.fajr-alwadi/fajr_alwadi.db"),
-        os.path.expanduser("~/Library/Application Support/fajr-alwadi/fajr_alwadi.db"),
-        "fajr_alwadi.db",
+        # Dev mode (cargo run): CARGO_MANIFEST_DIR/fjr_alwadi_data.db
+        os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                     "src-tauri", "fjr_alwadi_data.db"),
+        # Linux release
+        os.path.expanduser("~/.local/share/com.fajralwadi.app/fjr_alwadi_data.db"),
+        # macOS release
+        os.path.expanduser("~/Library/Application Support/com.fajralwadi.app/fjr_alwadi_data.db"),
+        # Windows release (AppData/Roaming)
+        os.path.expandvars("%APPDATA%/com.fajralwadi.app/fjr_alwadi_data.db"),
+        # Legacy fallback name (older dev installs)
+        "fjr_alwadi_data.db",
     ]
     for c in candidates:
-        if os.path.exists(c):
+        if c and os.path.exists(c):
             return c
-    for root, dirs, files in os.walk(os.path.expanduser("~")):
-        for f in files:
-            if f == "fajr_alwadi.db":
-                return os.path.join(root, f)
     return None
 
 def find_lib_rs():
@@ -34,6 +60,25 @@ def find_lib_rs():
         if os.path.exists(c):
             return c
     return None
+
+def rust_function_body(content, fn_name):
+    marker = f"fn {fn_name}"
+    start = content.find(marker)
+    if start < 0:
+        return ""
+    brace = content.find("{", start)
+    if brace < 0:
+        return ""
+    depth = 0
+    for idx in range(brace, len(content)):
+        char = content[idx]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return content[start:idx + 1]
+    return content[start:]
 
 def audit_db(db_path):
     """Runtime database integrity checks."""
@@ -151,19 +196,19 @@ def audit_db(db_path):
         FROM cars WHERE status = 'مبيوعة'
     """).fetchall()
     for car in cars:
-        expenses = conn.execute(
+        expenses = money(conn.execute(
             "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?",
             [car['car_number']]
-        ).fetchone()[0]
-        full_profit = car['selling_price'] - car['purchase_price'] - expenses
+        ).fetchone()[0])
+        full_profit = money(car['selling_price']) - money(car['purchase_price']) - expenses
         if full_profit <= 0:
             continue
-        recognized = conn.execute("""
+        recognized = money(conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE kind = 'شريك' AND affects_profit = 1
               AND notes LIKE ?
-        """, [f"%#بيع_سيارة_{car['car_number']}%"]).fetchone()[0]
-        if recognized > full_profit + 0.01:
+        """, [f"%#بيع_سيارة_{car['car_number']}%"]).fetchone()[0])
+        if recognized > full_profit + MONEY_EPSILON:
             errors.append(f"FAIL: Car {car['car_number']} recognized {recognized:,.0f} > full profit {full_profit:,.0f}")
 
     # 10. Orphan ledger entries
@@ -228,13 +273,14 @@ def audit_db(db_path):
                OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%')
     """).fetchall()
     for cp in customer_payments:
-        cash_movement = conn.execute("""
+        cp_amount = money(cp['amount'])
+        cash_movement = money(conn.execute("""
             SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
             WHERE source_type = 'customer_payment' AND source_id = ?1
               AND source_role = 'cash_movement' AND kind = 'شريك'
-        """, [str(cp['id'])]).fetchone()[0]
-        if abs(cash_movement - cp['amount']) > 0.01:
-            errors.append(f"FAIL: Customer payment {cp['id']} amount={cp['amount']:,.0f} but cash_movement={cash_movement:,.0f}")
+        """, [str(cp['id'])]).fetchone()[0])
+        if abs(cash_movement - cp_amount) > MONEY_EPSILON:
+            errors.append(f"FAIL: Customer payment {cp['id']} amount={cp_amount:,.0f} but cash_movement={cash_movement:,.0f}")
 
     # 14. Customer payment profit recognition check
     print("\n[14] Customer payment profit recognition check...")
@@ -303,22 +349,23 @@ def audit_db(db_path):
     """).fetchall()
     for cp in customer_payments_ledger:
         cp_id = str(cp['id'])
+        cp_amount = money(cp['amount'])
         # Net cash debit from generated cash_movement rows (debit - credit handles reversals)
-        cash_net = conn.execute("""
+        cash_net = money(conn.execute("""
             SELECT COALESCE(SUM(fl.debit - fl.credit), 0.0) FROM financial_ledger fl
             JOIN partner_transactions pt ON CAST(pt.id AS TEXT) = fl.reference_id
             WHERE fl.reference_type = 'partner_transaction'
               AND fl.account_type = 'cash'
               AND pt.source_type = 'customer_payment' AND pt.source_id = ?
               AND pt.source_role = 'cash_movement' AND pt.kind = 'شريك'
-        """, [cp_id]).fetchone()[0]
+        """, [cp_id]).fetchone()[0])
         # Net receivable credit from original customer row (credit - debit handles reversals)
-        recv_net = conn.execute("""
+        recv_net = money(conn.execute("""
             SELECT COALESCE(SUM(fl.credit - fl.debit), 0.0) FROM financial_ledger fl
             WHERE fl.reference_type = 'partner_transaction'
               AND fl.reference_id = ?
               AND fl.account_type = 'receivable'
-        """, [cp_id]).fetchone()[0]
+        """, [cp_id]).fetchone()[0])
         # Net capital change from any related rows
         cap_net = conn.execute("""
             SELECT COALESCE(SUM(fl.credit - fl.debit), 0.0) FROM financial_ledger fl
@@ -329,11 +376,11 @@ def audit_db(db_path):
                   WHERE source_type = 'customer_payment' AND source_id = ?
               )
         """, [cp_id]).fetchone()[0]
-        if abs(cash_net - cp['amount']) > 0.01:
-            errors.append(f"FAIL: Customer payment {cp_id} cash net={cash_net:,.0f} expected={cp['amount']:,.0f}")
-        if abs(recv_net - cp['amount']) > 0.01:
-            errors.append(f"FAIL: Customer payment {cp_id} receivable net={recv_net:,.0f} expected={cp['amount']:,.0f}")
-        if abs(cap_net) > 0.01:
+        if abs(cash_net - cp_amount) > MONEY_EPSILON:
+            errors.append(f"FAIL: Customer payment {cp_id} cash net={cash_net:,.0f} expected={cp_amount:,.0f}")
+        if abs(recv_net - cp_amount) > MONEY_EPSILON:
+            errors.append(f"FAIL: Customer payment {cp_id} receivable net={recv_net:,.0f} expected={cp_amount:,.0f}")
+        if abs(money(cap_net)) > MONEY_EPSILON:
             errors.append(f"FAIL: Customer payment {cp_id} capital net={cap_net:,.0f} (should be 0)")
     if not customer_payments_ledger:
         print("  SKIP (no customer payments found)")
@@ -351,10 +398,10 @@ def audit_db(db_path):
             SELECT COALESCE(p.iqd_balance, 0.0), COALESCE(p.usd_balance, 0.0)
             FROM partners p WHERE p.partner_name = ? AND p.kind = 'زبون'
         """, [cname]).fetchone()
-        iqd_bal = balance[0]
-        usd_bal = balance[1]
+        iqd_bal = money(balance[0])
+        usd_bal = money(balance[1])
         # Verify balance >= 0 (debt can't be negative in normal flow)
-        if iqd_bal < -0.01 or usd_bal < -0.01:
+        if iqd_bal < -MONEY_EPSILON or usd_bal < -MONEY_EPSILON:
             warnings.append(f"WARN: Customer {cname} has negative balance IQD={iqd_bal:,.0f} USD={usd_bal:,.0f}")
 
     # 20. net_capital formula check
@@ -475,21 +522,21 @@ def audit_db(db_path):
     for car in installment_cars:
         cn = car['car_number']
         buyer = car['buyer_name']
-        selling = car['selling_price']
+        selling = money(car['selling_price'])
         if not buyer:
             continue
         # Receivable from car ledger (should be full selling_price)
-        car_recv = conn.execute("""
+        car_recv = money(conn.execute("""
             SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
             WHERE reference_type = 'car' AND reference_id = ?
               AND account_type = 'receivable'
-        """, [cn]).fetchone()[0]
+        """, [cn]).fetchone()[0])
         # Car receivable should equal full selling price
-        if abs(car_recv - selling) > 0.01:
+        if abs(car_recv - selling) > MONEY_EPSILON:
             errors.append(f"FAIL: Car {cn} receivable={car_recv:,.0f} expected={selling:,.0f} (full selling price)")
         # Receivable credits from customer payment rows linked to this car
         if has_related_col:
-            payment_recv = conn.execute("""
+            payment_recv = money(conn.execute("""
                 SELECT COALESCE(SUM(fl.credit - fl.debit), 0.0) FROM financial_ledger fl
                 WHERE fl.reference_type = 'partner_transaction'
                   AND fl.account_type = 'receivable'
@@ -499,30 +546,40 @@ def audit_db(db_path):
                       WHERE (pt.related_source_type = 'car' AND pt.related_source_id = ?)
                          OR (pt.related_source_id IS NULL AND pt.notes LIKE ?)
                   )
-            """, [buyer, cn, f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
-            total_payments = conn.execute("""
+            """, [buyer, cn, f"%#بيع_سيارة_{cn}%"]).fetchone()[0])
+            total_payments = money(conn.execute("""
                 SELECT COALESCE(SUM(pt.amount), 0.0) FROM partner_transactions pt
-                WHERE pt.kind = 'زبون' AND pt.source_type = 'customer_transaction'
+                WHERE pt.kind = 'زبون'
+                  AND COALESCE(pt.is_reversed, 0) = 0
+                  AND (
+                    pt.source_type = 'customer_transaction'
+                    OR (pt.source_type = 'customer_sale_payment' AND pt.source_role = 'sale_down_payment')
+                  )
                   AND ((pt.related_source_type = 'car' AND pt.related_source_id = ?)
                        OR (pt.related_source_id IS NULL AND pt.notes LIKE ?))
-            """, [cn, f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+            """, [cn, f"%#بيع_سيارة_{cn}%"]).fetchone()[0])
         else:
-            payment_recv = conn.execute("""
+            payment_recv = money(conn.execute("""
                 SELECT COALESCE(SUM(fl.credit - fl.debit), 0.0) FROM financial_ledger fl
                 WHERE fl.reference_type = 'partner_transaction'
                   AND fl.account_type = 'receivable'
                   AND fl.account_id = ?
-            """, [buyer]).fetchone()[0]
-            total_payments = conn.execute("""
+            """, [buyer]).fetchone()[0])
+            total_payments = money(conn.execute("""
                 SELECT COALESCE(SUM(pt.amount), 0.0) FROM partner_transactions pt
-                WHERE pt.kind = 'زبون' AND pt.source_type = 'customer_transaction'
+                WHERE pt.kind = 'زبون'
+                  AND COALESCE(pt.is_reversed, 0) = 0
+                  AND (
+                    pt.source_type = 'customer_transaction'
+                    OR (pt.source_type = 'customer_sale_payment' AND pt.source_role = 'sale_down_payment')
+                  )
                   AND pt.notes LIKE ?
-            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0])
         # Net receivable = car ledger debit - payment credits
         net_receivable = car_recv - payment_recv
         # Expected remaining = selling - total payments
         expected_remaining = selling - total_payments
-        if abs(net_receivable - expected_remaining) > 0.01:
+        if abs(net_receivable - expected_remaining) > MONEY_EPSILON:
             errors.append(f"FAIL: Car {cn} net receivable={net_receivable:,.0f} expected remaining={expected_remaining:,.0f}")
 
     # 27. Profit cap source linking check
@@ -550,61 +607,70 @@ def audit_db(db_path):
     """).fetchall()
     for car in sold_cars_profit:
         cn = car['car_number']
-        expenses = conn.execute(
+        expenses = money(conn.execute(
             "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?", [cn]
-        ).fetchone()[0]
-        full_profit = car['selling_price'] - car['purchase_price'] - expenses
+        ).fetchone()[0])
+        full_profit = money(car['selling_price']) - money(car['purchase_price']) - expenses
         if full_profit <= 0:
             continue
         if has_related_col:
-            recognized = conn.execute("""
+            recognized = money(conn.execute("""
                 SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
                 WHERE kind = 'شريك' AND affects_profit = 1
                   AND source_role = 'profit_recognition'
                   AND related_source_type = 'car' AND related_source_id = ?
-            """, [cn]).fetchone()[0]
-            recognized_legacy = conn.execute("""
+            """, [cn]).fetchone()[0])
+            recognized_legacy = money(conn.execute("""
                 SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
                 WHERE kind = 'شريك' AND affects_profit = 1
                   AND source_role = 'profit_recognition'
                   AND (related_source_id IS NULL OR related_source_id = '')
                   AND notes LIKE ?
-            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0])
         else:
-            recognized = 0.0
-            recognized_legacy = conn.execute("""
+            recognized = Decimal("0")
+            recognized_legacy = money(conn.execute("""
                 SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
                 WHERE kind = 'شريك' AND affects_profit = 1
                   AND notes LIKE ?
-            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0]
+            """, [f"%#بيع_سيارة_{cn}%"]).fetchone()[0])
         total_recognized = recognized + recognized_legacy
-        if total_recognized > full_profit + 0.01:
+        if total_recognized > full_profit + MONEY_EPSILON:
             errors.append(f"FAIL: Car {cn} recognized profit={total_recognized:,.0f} > full profit={full_profit:,.0f}")
 
     # 29. Installment sale deferred_revenue check
     print("\n[29] Installment sale deferred_revenue check...")
     installment_cars_def = conn.execute("""
-        SELECT car_number, selling_price FROM cars
+        SELECT car_number, purchase_price, selling_price FROM cars
         WHERE status = 'مبيوعة' AND payment_type IN ('اقساط', 'موعد')
     """).fetchall()
     for car in installment_cars_def:
         cn = car['car_number']
-        selling = car['selling_price']
+        purchase = money(car['purchase_price'])
+        selling = money(car['selling_price'])
+        expenses = money(conn.execute(
+            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?", [cn]
+        ).fetchone()[0])
+        expected_deferred = selling - purchase - expenses
         has_deferred = conn.execute("""
             SELECT COUNT(*) FROM financial_ledger
             WHERE reference_type = 'car' AND reference_id = ?
               AND account_type = 'deferred_revenue'
         """, [cn]).fetchone()[0]
+        if expected_deferred <= 0:
+            if has_deferred > 0:
+                errors.append(f"FAIL: Loss/non-profit installment car {cn} should not have deferred_revenue")
+            continue
         if has_deferred == 0:
             errors.append(f"FAIL: Installment car {cn} missing deferred_revenue entry (ledger unbalanced)")
         else:
-            def_amount = conn.execute("""
+            def_amount = money(conn.execute("""
                 SELECT COALESCE(SUM(credit), 0.0) FROM financial_ledger
                 WHERE reference_type = 'car' AND reference_id = ?
                   AND account_type = 'deferred_revenue'
-            """, [cn]).fetchone()[0]
-            if abs(def_amount - selling) > 0.01:
-                errors.append(f"FAIL: Car {cn} deferred_revenue={def_amount:,.0f} expected={selling:,.0f}")
+            """, [cn]).fetchone()[0])
+            if abs(def_amount - expected_deferred) > MONEY_EPSILON:
+                errors.append(f"FAIL: Car {cn} deferred_revenue={def_amount:,.0f} expected={expected_deferred:,.0f}")
 
     # 30. No notes-based DELETE/UPDATE in runtime car flows (static check)
     # This is checked in audit_source below
@@ -617,20 +683,20 @@ def audit_db(db_path):
     """).fetchall()
     for cust in customers_bal:
         cname = cust['partner_name']
-        iqd_bal = cust['iqd_bal']
-        usd_bal = cust['usd_bal']
+        iqd_bal = money(cust['iqd_bal'])
+        usd_bal = money(cust['usd_bal'])
         # Get ledger receivable net
-        iqd_ledger = conn.execute("""
+        iqd_ledger = money(conn.execute("""
             SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
             WHERE account_type = 'receivable' AND account_id = ? AND currency = 'IQD'
-        """, [cname]).fetchone()[0]
-        usd_ledger = conn.execute("""
+        """, [cname]).fetchone()[0])
+        usd_ledger = money(conn.execute("""
             SELECT COALESCE(SUM(debit - credit), 0.0) FROM financial_ledger
             WHERE account_type = 'receivable' AND account_id = ? AND currency = 'USD'
-        """, [cname]).fetchone()[0]
-        if abs(iqd_bal - iqd_ledger) > 0.01:
+        """, [cname]).fetchone()[0])
+        if abs(iqd_bal - iqd_ledger) > MONEY_EPSILON:
             errors.append(f"FAIL: Customer {cname} IQD balance={iqd_bal:,.0f} != ledger={iqd_ledger:,.0f}")
-        if abs(usd_bal - usd_ledger) > 0.01:
+        if abs(usd_bal - usd_ledger) > MONEY_EPSILON:
             errors.append(f"FAIL: Customer {cname} USD balance={usd_bal:,.0f} != ledger={usd_ledger:,.0f}")
 
     # 32. related_source_id migration completeness
@@ -1080,23 +1146,22 @@ def audit_source(lib_path):
     else:
         errors.append("FAIL: v11 migration not found in lib.rs")
 
-    # 11. get_recognized_profit_for_car uses source fields
-    print("\n[S11] get_recognized_profit_for_car uses source fields...")
-    in_func = False
-    uses_source = False
-    for i, line in enumerate(lines, 1):
-        if 'fn get_recognized_profit_for_car' in line:
-            in_func = True
-        if in_func:
-            if 'source_role' in line and 'profit_recognition' in line:
-                uses_source = True
-                break
-            if line.strip().startswith('}') and i > 7300:
-                in_func = False
+    # 11. recognized installment profit helper uses source fields
+    print("\n[S11] recognized installment profit helper uses source fields...")
+    recognized_body = rust_function_body(content, "recognized_installment_profit_for_car")
+    recognized_name = "recognized_installment_profit_for_car"
+    if not recognized_body:
+        recognized_body = rust_function_body(content, "get_recognized_profit_for_car")
+        recognized_name = "get_recognized_profit_for_car"
+    uses_source = (
+        "source_type = 'customer_payment'" in recognized_body
+        and "source_role = 'profit_recognition'" in recognized_body
+        and "COALESCE(is_reversed, 0) = 0" in recognized_body
+    )
     if uses_source:
         print("  PASS")
     else:
-        errors.append("FAIL: get_recognized_profit_for_car still depends only on notes LIKE")
+        errors.append(f"FAIL: {recognized_name} does not use source fields for recognized profit")
 
     # 12. No notes-based DELETE in add_car runtime flow
     print("\n[S12] No notes-based DELETE in add_car runtime flow...")
@@ -1141,28 +1206,19 @@ def audit_source(lib_path):
     else:
         print("  PASS")
 
-    # 14. get_recognized_profit_for_car uses related_source_id, not source_id=car_number
-    print("\n[S14] get_recognized_profit_for_car uses related_source_id...")
-    in_func = False
-    uses_related = False
-    uses_wrong_source_id = False
-    for i, line in enumerate(lines, 1):
-        if 'fn get_recognized_profit_for_car' in line:
-            in_func = True
-        if in_func:
-            stripped = line.split('//')[0] if '//' in line else line
-            if 'related_source_id' in stripped:
-                uses_related = True
-            if 'source_id = ?1' in stripped and 'customer_payment' in '\n'.join(lines[max(0,i-5):i]):
-                uses_wrong_source_id = True
-            if line.strip().startswith('}') and i > 7300:
-                in_func = False
+    # 14. recognized installment profit helper uses related_source_id, not source_id=car_number
+    print("\n[S14] recognized installment profit helper uses related_source_id...")
+    uses_related = "related_source_id = ?1" in recognized_body
+    uses_wrong_source_id = (
+        re.search(r"(?<!related_)source_id\s*=\s*\?1", recognized_body) is not None
+        and "source_type = 'customer_payment'" in recognized_body
+    )
     if uses_related and not uses_wrong_source_id:
         print("  PASS")
     elif uses_wrong_source_id:
-        errors.append("FAIL: get_recognized_profit_for_car uses source_id=car_number for customer_payment rows")
+        errors.append(f"FAIL: {recognized_name} uses source_id=car_number for customer_payment rows")
     else:
-        errors.append("FAIL: get_recognized_profit_for_car does not use related_source_id")
+        errors.append(f"FAIL: {recognized_name} does not use related_source_id")
 
     # 15. Customer payment source_id must not be changed to car_number
     print("\n[S15] Customer payment source_id preservation...")

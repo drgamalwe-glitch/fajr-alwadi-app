@@ -2,12 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import { callTauri } from "../api/tauri";
 import type { ProfitDistributionSummary } from "../types";
 import { PriceDisplay } from "./ui";
-import { moneyDiv, moneySub, moneySum } from "../utils/money";
+import { moneySub, moneySum, toMoney } from "../utils/money";
 
 import type { MoneyValue } from "../utils/money";
 
 interface ProfitDistributionTabProps {
-  onRefreshAllData: () => Promise<void>;
   onDistributeChange?: (onDistribute: { action: () => void } | null) => void;
   fromDate: string;
   toDate: string;
@@ -15,8 +14,16 @@ interface ProfitDistributionTabProps {
   onSummaryLoaded?: (usd: MoneyValue, iqd: MoneyValue) => void;
 }
 
+function splitDisplayExpenseShare(total: MoneyValue, partnerIndex: number, currency: "IQD" | "USD"): MoneyValue {
+  const factor = currency === "USD" ? 100 : 1;
+  const scaled = toMoney(total).times(factor);
+  const half = scaled.div(2).trunc();
+  const remainder = scaled.minus(half.times(2));
+  const partnerScaledShare = partnerIndex === 0 ? half.plus(remainder) : half;
+  return partnerScaledShare.div(factor);
+}
+
 export function ProfitDistributionTab({
-  onRefreshAllData,
   onDistributeChange,
   fromDate,
   toDate,
@@ -36,13 +43,12 @@ export function ProfitDistributionTab({
         endDate: toDate || null,
       });
       setSummary(sumData);
-      await onRefreshAllData();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err) || "فشل تحميل بيانات توزيع الأرباح");
     } finally {
       setLoading(false);
     }
-  }, [onRefreshAllData, fromDate, toDate]);
+  }, [fromDate, toDate]);
 
   useEffect(() => {
     void loadData();
@@ -75,10 +81,6 @@ export function ProfitDistributionTab({
   // Fixed: profit distribution totals use Decimal and subtract general expenses only.
   const totalProfitUSD = moneySub(moneySum(partners, (p) => p.profit_usd), totalExpensesUSD);
   const totalProfitIQD = moneySub(moneySum(partners, (p) => p.profit_iqd), totalExpensesIQD);
-
-  // Each partner's share of expenses (50/50 split)
-  const partnerExpensesIQD = moneyDiv(totalExpensesIQD, 2);
-  const partnerExpensesUSD = moneyDiv(totalExpensesUSD, 2);
 
   return (
     <div className="dashboard">
@@ -141,6 +143,8 @@ export function ProfitDistributionTab({
               </thead>
               <tbody>
                 {partners.map((partner, idx) => {
+                  const partnerExpensesIQD = splitDisplayExpenseShare(totalExpensesIQD, idx, "IQD");
+                  const partnerExpensesUSD = splitDisplayExpenseShare(totalExpensesUSD, idx, "USD");
                   const netIQD = moneySub(moneySub(partner.profit_iqd, partnerExpensesIQD), partner.drawings_iqd);
                   const netUSD = moneySub(moneySub(partner.profit_usd, partnerExpensesUSD), partner.drawings_usd);
                   return (

@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { Document, Image, Page, Text, View } from "@react-pdf/renderer";
 import type { Partner, PartnerTransaction } from "../types";
-import { toMoney } from "../utils/money";
+import { compareMoney, moneyAdd, moneySub, toMoney, type MoneyValue } from "../utils/money";
+import { formatNotesText } from "../utils/notesDisplay";
 import { styles } from "./pdfStyles";
 
 type PrintMode = "all" | "range";
@@ -36,13 +37,14 @@ const toFiniteNumber = (value: unknown, fallback = 0) => {
 const formatEnglishNumber = (value: unknown, fallback = 0) =>
   toFiniteNumber(value, fallback).toLocaleString("en-US");
 
-const formatAmount = (amount: number, currency: StatementCurrency) =>
-  `${formatEnglishNumber(Math.round(toFiniteNumber(amount)))} ${currencyLabel(currency)}`;
+// Format a Decimal/MoneyValue for display. Keeps values as Decimal until the very moment of rendering.
+const formatAmount = (amount: MoneyValue, currency: StatementCurrency) =>
+  `${formatEnglishNumber(Math.round(toFiniteNumber(toMoney(amount).toNumber())))} ${currencyLabel(currency)}`;
 
-const formatDualAmount = (iqd: number, usd: number) => {
+const formatDualAmount = (iqd: MoneyValue, usd: MoneyValue) => {
   const parts = [];
-  if (iqd || !usd) parts.push(formatAmount(iqd, "IQD"));
-  if (usd) parts.push(formatAmount(usd, "USD"));
+  if (compareMoney(iqd, 0) !== 0 || compareMoney(usd, 0) === 0) parts.push(formatAmount(iqd, "IQD"));
+  if (compareMoney(usd, 0) !== 0) parts.push(formatAmount(usd, "USD"));
   return parts.join(" و ");
 };
 
@@ -63,9 +65,22 @@ const formatIssueDate = () => {
   return `\u200e${year}-${month}-${day}\u200e`;
 };
 
-const truncateNotes = (notes: string, maxLength = 92) => {
-  if (notes.length <= maxLength) return notes;
-  return `${notes.slice(0, maxLength).trimEnd()}...`;
+const normalizePdfText = (value: unknown) =>
+  String(value ?? "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+const clipPdfText = (value: unknown, maxLength = 42) => {
+  const text = normalizePdfText(value);
+  if (!text) return "—";
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+};
+
+const formatStatementNote = (notes: string | null | undefined) => {
+  const text = formatNotesText(notes);
+  return text ? clipPdfText(text, 54) : "—";
 };
 
 const isDebit = (tx: PartnerTransaction) =>
@@ -97,7 +112,7 @@ const isInstallmentScheduleRecord = (tx: PartnerTransaction) =>
     (!!tx.notes?.includes("قسط") || tx.type_.includes("قسط"))
   );
 
-const emptyBalances = (): Record<StatementCurrency, number> => ({ IQD: 0, USD: 0 });
+const emptyBalances = (): Record<StatementCurrency, MoneyValue> => ({ IQD: 0, USD: 0 });
 
 const isFinancialAccountKind = (kind: string) =>
   kind === "مستثمر" || kind === "ممول" || kind === "شركة";
@@ -126,16 +141,17 @@ const calculateCustomerPrintSummary = (
   transactions.forEach((tx) => {
     if (tx.type_.startsWith("تحويل")) return;
     const currency = (tx.currency || "IQD") as StatementCurrency;
-    const amount = toMoney(tx.amount).abs().toNumber();
+    // F13: keep Decimal until rendering — do not collapse to JS number here.
+    const amount = toMoney(tx.amount).abs();
     const paidInstallment = tx.id !== undefined && paidTransactionIds.has(tx.id);
 
     if (paidInstallment) {
-      paid[currency] += amount;
+      paid[currency] = moneyAdd(paid[currency], amount);
       return;
     }
 
     if (tx.type_.startsWith("باقي") || tx.type_.startsWith("سحب")) {
-      remaining[currency] += amount;
+      remaining[currency] = moneyAdd(remaining[currency], amount);
       return;
     }
 
@@ -148,14 +164,14 @@ const calculateCustomerPrintSummary = (
       tx.type_.startsWith("تسديد") ||
       tx.type_.startsWith("مقدمة")
     ) {
-      paid[currency] += amount;
+      paid[currency] = moneyAdd(paid[currency], amount);
       return;
     }
   });
 
   const total = {
-    IQD: paid.IQD + remaining.IQD,
-    USD: paid.USD + remaining.USD,
+    IQD: moneyAdd(paid.IQD, remaining.IQD),
+    USD: moneyAdd(paid.USD, remaining.USD),
   };
 
   return { paid, remaining, total };
@@ -168,19 +184,20 @@ const calculateFinancialClientPrintSummary = (transactions: PartnerTransaction[]
   transactions.forEach((tx) => {
     if (tx.type_.startsWith("تحويل")) return;
     const currency = (tx.currency || "IQD") as StatementCurrency;
-    const amount = toMoney(tx.amount).abs().toNumber();
+    // F13: keep Decimal until rendering.
+    const amount = toMoney(tx.amount).abs();
 
     if (isFinancialPrintDeposit(tx)) {
-      received[currency] += amount;
+      received[currency] = moneyAdd(received[currency], amount);
     }
     if (isFinancialPrintWithdrawal(tx)) {
-      delivered[currency] += amount;
+      delivered[currency] = moneyAdd(delivered[currency], amount);
     }
   });
 
   const net = {
-    IQD: received.IQD - delivered.IQD,
-    USD: received.USD - delivered.USD,
+    IQD: moneySub(received.IQD, delivered.IQD),
+    USD: moneySub(received.USD, delivered.USD),
   };
 
   return { received, delivered, net };
@@ -247,11 +264,11 @@ export function PartnerStatementPDF({
       return {
         key: `${tx.id ?? idx}-${tx.date}`,
         seq: idx + 1,
-        date: tx.date,
-        type: getPrintOperationType(tx, partner.kind),
-        amount: formatAmount(toMoney(tx.amount).toNumber(), currency),
+        date: normalizePdfText(tx.date) || "—",
+        type: normalizePdfText(getPrintOperationType(tx, partner.kind)) || "—",
+        amount: formatAmount(toMoney(tx.amount), currency),
         kind: debitRow ? ("debit" as const) : ("credit" as const),
-        notes: tx.notes?.trim() ? truncateNotes(tx.notes.trim()) : "—",
+        notes: formatStatementNote(tx.notes),
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -289,15 +306,15 @@ export function PartnerStatementPDF({
     return Math.max(0, installments.length - paidInstallments);
   }, [installments.length, paidInstallments]);
 
-  const renderNetSummary = (iqd: number, usd: number) => {
+  const renderNetSummary = (iqd: MoneyValue, usd: MoneyValue) => {
     const kindLabel = partner.kind === "ممول" ? "الممول"
       : partner.kind === "شركة" ? "الشركة"
       : "المستثمر";
 
-    const formatVal = (v: number, curr: StatementCurrency) =>
-      `${formatEnglishNumber(Math.round(Math.abs(toFiniteNumber(v))))} ${currencyLabel(curr)}`;
+    const formatVal = (v: MoneyValue, curr: StatementCurrency) =>
+      `${formatEnglishNumber(Math.round(Math.abs(toFiniteNumber(toMoney(v).toNumber()))))} ${currencyLabel(curr)}`;
 
-    if (iqd === 0 && usd === 0) {
+    if (compareMoney(iqd, 0) === 0 && compareMoney(usd, 0) === 0) {
       return (
         <View style={styles.netRow}>
           <Text style={[styles.netLabel, styles.netLabelMuted]}>
@@ -312,10 +329,10 @@ export function PartnerStatementPDF({
 
     const weOweThem = [];
     const theyOweUs = [];
-    if (iqd > 0) weOweThem.push(formatVal(iqd, "IQD"));
-    if (usd > 0) weOweThem.push(formatVal(usd, "USD"));
-    if (iqd < 0) theyOweUs.push(formatVal(iqd, "IQD"));
-    if (usd < 0) theyOweUs.push(formatVal(usd, "USD"));
+    if (compareMoney(iqd, 0) > 0) weOweThem.push(formatVal(iqd, "IQD"));
+    if (compareMoney(usd, 0) > 0) weOweThem.push(formatVal(usd, "USD"));
+    if (compareMoney(iqd, 0) < 0) theyOweUs.push(formatVal(iqd, "IQD"));
+    if (compareMoney(usd, 0) < 0) theyOweUs.push(formatVal(usd, "USD"));
 
     return (
       <View style={styles.netSummaryBox}>
@@ -373,28 +390,28 @@ export function PartnerStatementPDF({
         <View style={styles.metaGrid} wrap={false}>
           <View style={styles.metaCell}>
             <Text style={styles.metaLabel}>اسم الحساب</Text>
-            <Text style={styles.metaValue}>{partner.partner_name}</Text>
+            <Text style={[styles.metaValue, styles.singleLineText]}>{clipPdfText(partner.partner_name, 28)}</Text>
           </View>
           <View style={styles.metaCell}>
             <Text style={styles.metaLabel}>نوع الحساب</Text>
-            <Text style={styles.metaValue}>{partner.kind}</Text>
+            <Text style={[styles.metaValue, styles.singleLineText]}>{clipPdfText(partner.kind, 16)}</Text>
           </View>
           <View style={styles.metaCell}>
             <Text style={styles.metaLabel}>رقم الهاتف</Text>
-            <Text style={styles.metaValue}>{partner.phone || "غير مثبت"}</Text>
+            <Text style={[styles.metaValue, styles.singleLineText]}>{clipPdfText(partner.phone || "غير مثبت", 22)}</Text>
           </View>
           <View style={styles.metaCell}>
             <Text style={styles.metaLabel}>نطاق الكشف</Text>
-            <Text style={styles.metaValue}>{periodLabel}</Text>
+            <Text style={[styles.metaValue, styles.singleLineText]}>{clipPdfText(periodLabel, 32)}</Text>
           </View>
           <View style={styles.metaCell}>
             <Text style={styles.metaLabel}>تاريخ الإصدار</Text>
-            <Text style={styles.metaValue}>{issueDate}</Text>
+            <Text style={[styles.metaValue, styles.singleLineText]}>{clipPdfText(issueDate, 14)}</Text>
           </View>
           <View style={styles.metaCell}>
             <Text style={styles.metaLabel}>الصفحة</Text>
             <Text
-              style={styles.metaValue}
+              style={[styles.metaValue, styles.singleLineText]}
               render={({ pageNumber, totalPages }) => formatPageCount(pageNumber, totalPages)}
             />
           </View>
@@ -485,7 +502,7 @@ export function PartnerStatementPDF({
             >
               {row.amount}
             </Text>
-            <Text style={[styles.td, styles.colNotes]}>{row.notes}</Text>
+            <Text style={[styles.td, styles.colNotes, styles.singleLineText]}>{row.notes}</Text>
           </View>
         ))}
 

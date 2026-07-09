@@ -11,21 +11,13 @@ use rust_decimal_macros::dec;
 use rust_xlsxwriter::{Format, FormatAlign, FormatBorder, Workbook, Worksheet};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{
-    env,
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Mutex,
-    },
-};
+use std::{env, path::PathBuf, sync::Mutex};
 use tauri::{Manager, State};
 
 const MAX_FINANCIAL_AMOUNT: Decimal = dec!(1_000_000_000_000);
 const MONEY_EPSILON: Money = Money(dec!(0.01));
 const MONEY_STRICT_EPSILON: Money = Money(dec!(0.001));
 const SELECTED_BACKGROUND_FILE: &str = "selected-background.json";
-static SPLIT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tauri::command]
 fn open_temp_pdf(path: String) -> Result<(), String> {
@@ -55,18 +47,15 @@ fn open_temp_pdf(path: String) -> Result<(), String> {
 }
 
 fn split_partner_amount_50(amount: Decimal) -> (Decimal, Decimal) {
+    // Audit fix #28: deterministic split. The remainder (at most one smallest unit)
+    // always goes to the first partner so that deleting and rebuilding generated
+    // rows reproduces the exact same amounts every time.
     let half = (amount / dec!(2)).round_dp_with_strategy(0, RoundingStrategy::ToZero);
     let remainder = amount - (half * dec!(2));
     if remainder.is_zero() {
-        return (half, half);
-    }
-    if SPLIT_COUNTER
-        .fetch_add(1, Ordering::Relaxed)
-        .is_multiple_of(2)
-    {
-        (half + remainder, half)
+        (half, half)
     } else {
-        (half, half + remainder)
+        (half + remainder, half)
     }
 }
 
@@ -421,6 +410,7 @@ pub struct Agency {
     pub amount_usd: Money,
     pub amount_iqd: Money,
     pub notes: String,
+    pub payment_status: String,
     pub date: String,
     pub time: String,
 }
@@ -831,21 +821,123 @@ fn ensure_installment_event_schema(conn: &Connection) -> SqlResult<()> {
 
 const PRIMARY_ADMIN_USER_ID: i64 = 1;
 const DEFAULT_ADMIN_USERNAME: &str = "admin";
+const DEFAULT_ADMIN_PASSWORD: &str = "admin";
+const SESSION_LIFETIME_SECS: i64 = 3600; // 1 hour
+const LOGIN_RATE_LIMIT_WINDOW_SECS: i64 = 300; // 5 minutes
+const LOGIN_RATE_LIMIT_MAX_ATTEMPTS: i64 = 5;
 
-fn require_admin_session(conn: &Connection) -> Result<(), String> {
-    let must_change: Result<bool, rusqlite::Error> = conn.query_row(
-        "SELECT COALESCE(must_change_password, 0) FROM users WHERE id = ?1",
-        [PRIMARY_ADMIN_USER_ID],
-        |row| row.get(0),
+fn hash_password_for_init(password: &str) -> SqlResult<String> {
+    hash_password(password).map_err(|e| {
+        rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            e,
+        )))
+    })
+}
+
+fn write_initial_admin_password(conn: &Connection, username: &str, password: &str) {
+    let path = conn.path().map(std::path::PathBuf::from).and_then(|p| {
+        p.parent()
+            .map(|parent| parent.join("initial_admin_password.txt"))
+    });
+
+    let content = format!(
+        "Initial admin credentials:\nUsername: {}\nPassword: {}\nUpdated at: {}\n",
+        username,
+        password,
+        Local::now().format("%Y-%m-%d %H:%M:%S")
     );
 
-    match must_change {
-        Ok(true) => Err("يجب تغيير كلمة المرور الافتراضية قبل استخدام النظام".to_string()),
-        Ok(false) => Ok(()),
-        Err(rusqlite::Error::QueryReturnedNoRows) => {
-            Err("Session invalid: primary admin account not found".to_string())
+    match path {
+        Some(p) => {
+            if let Err(e) = std::fs::write(&p, &content) {
+                eprintln!(
+                    "Failed to write initial_admin_password.txt to {:?}: {} — printing to stderr instead:\n{}",
+                    p, e, content
+                );
+            }
         }
-        Err(_) => Err("Session invalid: primary admin account not found".to_string()),
+        None => {
+            eprintln!(
+                "Could not determine app data dir. Initial admin credentials:\n{}",
+                content
+            );
+        }
+    }
+}
+
+/// Bug 3 (AU3): Generate a 64-char hex session token using OsRng.
+fn generate_session_token() -> String {
+    let mut bytes = [0u8; 32]; // 32 bytes -> 64 hex chars
+    rand_core::OsRng.fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+
+/// Bug 3 (AU3): Delete expired sessions. Should be called at startup.
+fn cleanup_expired_sessions(conn: &Connection) {
+    let now = Local::now().timestamp();
+    let _ = conn.execute("DELETE FROM sessions WHERE expires_at <= ?1", params![now]);
+}
+
+/// Bug 3 (AU3): Verify an admin session token.
+///
+/// Returns the user_id on success.
+///
+/// Behavior:
+/// - If `session_token` is `Some(token)`: look up the session in the DB, verify
+///   `expires_at > now`, verify the user is the primary admin. Returns Ok(user_id)
+///   on success or Err on any failure.
+/// - If `session_token` is `None`: backward-compatible fallback to the legacy
+///   must_change_password gate for the primary admin. This keeps older commands
+///   working until every write command passes a session token.
+fn require_admin_session(conn: &Connection, session_token: Option<&str>) -> Result<i64, String> {
+    match session_token {
+        Some(token) => {
+            let now = Local::now().timestamp();
+            let user_id: i64 = conn
+                .query_row(
+                    "SELECT user_id FROM sessions WHERE token = ?1 AND expires_at > ?2",
+                    params![token, now],
+                    |row| row.get(0),
+                )
+                .map_err(|_| "جلسة غير صالحة أو منتهية الصلاحية".to_string())?;
+
+            // Only the primary admin (or future role-based admins) is allowed.
+            if user_id != PRIMARY_ADMIN_USER_ID {
+                return Err("صلاحيات المدير مطلوبة".to_string());
+            }
+            // Confirm the user still exists.
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM users WHERE id = ?1",
+                    [user_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| format!("Session lookup failed: {e}"))?;
+            if exists == 0 {
+                return Err("حساب المستخدم لم يعد موجوداً".to_string());
+            }
+            Ok(user_id)
+        }
+        None => {
+            // Backward-compat fallback (no session token provided).
+            // TODO(AU3): Once the frontend passes session tokens on every admin call,
+            // replace this branch with `Err("الجلسة مطلوبة".to_string())`.
+            let must_change: Result<bool, rusqlite::Error> = conn.query_row(
+                "SELECT COALESCE(must_change_password, 0) FROM users WHERE id = ?1",
+                [PRIMARY_ADMIN_USER_ID],
+                |row| row.get(0),
+            );
+
+            match must_change {
+                Ok(true) => Err("يجب تغيير كلمة المرور الافتراضية قبل استخدام النظام".to_string()),
+                Ok(false) => Ok(PRIMARY_ADMIN_USER_ID),
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    Err("Session invalid: primary admin account not found".to_string())
+                }
+                Err(_) => Err("Session invalid: primary admin account not found".to_string()),
+            }
+        }
     }
 }
 
@@ -1063,9 +1155,19 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
             amount_usd TEXT NOT NULL DEFAULT '0',
             amount_iqd TEXT NOT NULL DEFAULT '0',
             notes TEXT NOT NULL DEFAULT '',
+            payment_status TEXT NOT NULL DEFAULT 'واصل',
             date TEXT NOT NULL,
             time TEXT NOT NULL
         )",
+            [],
+        )?;
+        let _ = conn.execute("ALTER TABLE agencies ADD COLUMN creation_token TEXT", []);
+        let _ = conn.execute(
+            "ALTER TABLE agencies ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'واصل'",
+            [],
+        );
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_agencies_creation_token ON agencies(creation_token)",
             [],
         )?;
 
@@ -1866,25 +1968,72 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
         );
         let _ = conn.execute("ALTER TABLE users ADD COLUMN last_login TEXT", []);
 
-        // إنشاء المستخدم الافتراضي admin/admin إذا لم يكن حساب المدير الرئيسي موجوداً
+        // Bug 16: Create sessions and login_attempts tables for AU3 (session infra) and AU8 (rate limiting).
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)",
+            [],
+        );
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS login_attempts (
+                username TEXT NOT NULL,
+                attempted_at INTEGER NOT NULL
+            )",
+            [],
+        )?;
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_login_attempts_username_time ON login_attempts(username, attempted_at)",
+            [],
+        );
+
+        // Create the primary admin with deterministic default credentials.
+        // Existing admins are only migrated when they still carry the legacy
+        // first-login flag from the previous random-password flow.
         if let Ok(count) = conn.query_row::<i64, _, _>(
             "SELECT COUNT(*) FROM users WHERE id = ?1",
             [PRIMARY_ADMIN_USER_ID],
             |row| row.get(0),
         ) {
             if count == 0 {
-                let hash = hash_password("admin").unwrap_or_default();
+                let hash = hash_password_for_init(DEFAULT_ADMIN_PASSWORD)?;
                 conn.execute(
-                "INSERT INTO users (id, username, password_hash, display_name, profile_image, must_change_password) VALUES (?1, ?2, ?3, 'مدير النظام', NULL, 0)",
-                params![PRIMARY_ADMIN_USER_ID, DEFAULT_ADMIN_USERNAME, hash],
-            )?;
+                    "INSERT INTO users (id, username, password_hash, display_name, profile_image, must_change_password) VALUES (?1, ?2, ?3, 'مدير النظام', NULL, 0)",
+                    params![PRIMARY_ADMIN_USER_ID, DEFAULT_ADMIN_USERNAME, hash],
+                )?;
+                write_initial_admin_password(conn, DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD);
+            } else if let Ok((primary_username, must_change_password)) = conn
+                .query_row::<(String, bool), _, _>(
+                    "SELECT username, COALESCE(must_change_password, 0) FROM users WHERE id = ?1",
+                    [PRIMARY_ADMIN_USER_ID],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+            {
+                if must_change_password {
+                    let hash = hash_password_for_init(DEFAULT_ADMIN_PASSWORD)?;
+                    conn.execute(
+                        "UPDATE users SET password_hash = ?1, must_change_password = 0, updated_at = strftime('%Y-%m-%d %H:%M', 'now', 'localtime') WHERE id = ?2",
+                        params![hash, PRIMARY_ADMIN_USER_ID],
+                    )?;
+                    write_initial_admin_password(conn, &primary_username, DEFAULT_ADMIN_PASSWORD);
+                }
             }
         }
-        // تعطيل شرط تغيير كلمة المرور الافتراضية لحساب المدير الرئيسي
-        let _ = conn.execute(
-            "UPDATE users SET must_change_password = 0 WHERE id = ?1",
-            [PRIMARY_ADMIN_USER_ID],
-        );
+        // NOTE: Do not reset existing admin passwords after setup; only the legacy
+        // first-login state is converted to the new default.
 
         // إنشاء حسابات الشركاء الافتراضية
         conn.execute(
@@ -2186,8 +2335,14 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
 
         // Version 25: Restore explicit customer-payment profit rows for installments/down payments.
         if version < 25 {
-            let _ = rebuild_customer_payment_profit_recognitions(conn);
-            let _ = recalculate_all_partners(conn);
+            log_migration_step(
+                "إعادة بناء أرباح دفعات الزبائن (v25)",
+                rebuild_customer_payment_profit_recognitions(conn),
+            );
+            log_migration_step(
+                "إعادة احتساب أرصدة الشركاء (v25)",
+                recalculate_all_partners(conn),
+            );
             let _ = conn.execute("INSERT INTO db_version (version) VALUES (25)", []);
         }
 
@@ -2216,11 +2371,168 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
                    )",
                 [],
             );
-            let _ = rebuild_cash_sale_profit_recognitions(conn);
-            let _ = rebuild_all_agency_partner_entries(conn);
-            let _ = rebuild_customer_payment_profit_recognitions(conn);
-            let _ = recalculate_all_partners(conn);
+            // Audit fix #20: rebuild failures are logged, never silently swallowed.
+            log_migration_step(
+                "إعادة بناء أرباح البيع النقدي (v26)",
+                rebuild_cash_sale_profit_recognitions(conn),
+            );
+            log_migration_step(
+                "إعادة بناء حركات الوكالات (v26)",
+                rebuild_all_agency_partner_entries(conn),
+            );
+            log_migration_step(
+                "إعادة بناء أرباح دفعات الزبائن (v26)",
+                rebuild_customer_payment_profit_recognitions(conn),
+            );
+            log_migration_step(
+                "إعادة احتساب أرصدة الشركاء (v26)",
+                recalculate_all_partners(conn),
+            );
             let _ = conn.execute("INSERT INTO db_version (version) VALUES (26)", []);
+        }
+
+        // Version 27: Idempotency token for agency creation requests.
+        if version < 27 {
+            let _ = conn.execute("ALTER TABLE agencies ADD COLUMN creation_token TEXT", []);
+            let _ = conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_agencies_creation_token ON agencies(creation_token)",
+                [],
+            );
+            let _ = conn.execute("INSERT INTO db_version (version) VALUES (27)", []);
+        }
+
+        // Version 28: agency received/unreceived status.
+        if version < 28 {
+            let _ = conn.execute(
+                "ALTER TABLE agencies ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'واصل'",
+                [],
+            );
+            let _ = conn.execute(
+                "UPDATE agencies SET payment_status = 'واصل'
+                 WHERE payment_status IS NULL OR TRIM(payment_status) = ''",
+                [],
+            );
+            let _ = conn.execute("INSERT INTO db_version (version) VALUES (28)", []);
+        }
+
+        // Version 29: agency receivable accounts are a dedicated "وكالة" account kind
+        // and unreceived agencies must not recognize partner profit until received.
+        if version < 29 {
+            let _ = conn.execute(
+                "UPDATE partner_transactions
+                 SET kind = 'وكالة'
+                 WHERE source_type = 'agency'
+                   AND source_role = 'agency_receivable'
+                   AND kind = 'زبون'",
+                [],
+            );
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind)
+                 SELECT TRIM(new_agent_name), TRIM(phone), 0.0, 'وكالة'
+                 FROM agencies
+                 WHERE TRIM(new_agent_name) != ''
+                   AND COALESCE(payment_status, 'واصل') = 'غير واصل'",
+                [],
+            );
+            let agency_ids: Vec<i64> = conn
+                .prepare("SELECT id FROM agencies")
+                .and_then(|mut stmt| {
+                    stmt.query_map([], |row| row.get::<_, i64>(0))?
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .unwrap_or_default();
+            for agency_id in agency_ids {
+                let _ = record_agency_ledger_entries(conn, agency_id);
+            }
+            log_migration_step(
+                "إعادة بناء حركات الوكالات (v29)",
+                rebuild_all_agency_partner_entries(conn),
+            );
+            log_migration_step(
+                "إعادة احتساب أرصدة الشركاء (v29)",
+                recalculate_all_partners(conn),
+            );
+            let _ = conn.execute("INSERT INTO db_version (version) VALUES (29)", []);
+        }
+
+        // Version 30 (Audit fixes): repair data produced by the bugs fixed in the
+        // comprehensive accounting audit.
+        if version < 30 {
+            // Audit fix #1: customer cash-out projection rows were stored with
+            // NEGATIVE amounts, which every reader double-negated (the type prefix
+            // "سحب" already flips the sign). Normalize them to positive amounts.
+            let _ = conn.execute(
+                "UPDATE partner_transactions
+                 SET amount = -amount
+                 WHERE kind = 'شريك'
+                   AND source_type = 'customer_payment'
+                   AND source_role = 'cash_movement'
+                   AND type LIKE 'سحب%'
+                   AND amount < 0",
+                [],
+            );
+            // Audit fix #2: related_source_type mistakenly held the car number
+            // instead of the literal 'car'.
+            let _ = conn.execute(
+                "UPDATE partner_transactions
+                 SET related_source_type = 'car'
+                 WHERE kind = 'شريك'
+                   AND source_type = 'customer_payment'
+                   AND source_role = 'cash_movement'
+                   AND COALESCE(related_source_type, '') != ''
+                   AND related_source_type NOT IN ('car', 'customer_payment_event', 'partner_transaction', 'installment')
+                   AND related_source_type = COALESCE(related_source_id, '')",
+                [],
+            );
+            // Audit fix #17: rebuild sale ledger entries for all sold cars so that
+            // installment/term sales use the installment-method entries (deferred
+            // revenue = unearned profit only).
+            let sold_cars: Vec<String> = conn
+                .prepare("SELECT car_number FROM cars WHERE status = 'مبيوعة'")
+                .and_then(|mut stmt| {
+                    stmt.query_map([], |row| row.get::<_, String>(0))?
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .unwrap_or_default();
+            for car_number in &sold_cars {
+                log_migration_step(
+                    "إعادة بناء قيود بيع السيارة (v30)",
+                    delete_car_sale_ledger_entries(conn, car_number)
+                        .and_then(|_| record_car_sale_ledger_entries(conn, car_number)),
+                );
+            }
+            // Audit fix #5: rebuild profit recognitions with currency-safe math.
+            log_migration_step(
+                "إعادة بناء أرباح دفعات الزبائن (v30)",
+                rebuild_customer_payment_profit_recognitions(conn),
+            );
+            log_migration_step(
+                "إعادة بناء أرباح البيع النقدي (v30)",
+                rebuild_cash_sale_profit_recognitions(conn),
+            );
+            // Audit fixes #12/#21: agency profit is recognized when recorded.
+            let agency_ids_v30: Vec<i64> = conn
+                .prepare("SELECT id FROM agencies")
+                .and_then(|mut stmt| {
+                    stmt.query_map([], |row| row.get::<_, i64>(0))?
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .unwrap_or_default();
+            for agency_id in agency_ids_v30 {
+                log_migration_step(
+                    "إعادة بناء قيود الوكالة (v30)",
+                    record_agency_ledger_entries(conn, agency_id),
+                );
+            }
+            log_migration_step(
+                "إعادة بناء حركات الوكالات (v30)",
+                rebuild_all_agency_partner_entries(conn),
+            );
+            log_migration_step(
+                "إعادة احتساب أرصدة الشركاء (v30)",
+                recalculate_all_partners(conn),
+            );
+            let _ = conn.execute("INSERT INTO db_version (version) VALUES (30)", []);
         }
 
         Ok(())
@@ -2238,6 +2550,20 @@ fn init_db(conn: &Connection) -> SqlResult<()> {
     }
 }
 
+/// Audit fix #20: accounting rebuild steps inside migrations must never fail
+/// silently. Failures are logged so partial rebuilds leave an audit trail.
+fn log_migration_step(step: &str, result: Result<(), String>) {
+    if let Err(e) = result {
+        eprintln!("[fajir-alwadi][migration] فشلت الخطوة '{}': {}", step, e);
+    }
+}
+
+/// Audit note #10: transaction DIRECTION (deposit vs withdrawal) is derived from
+/// the Arabic type prefix. This list is the single source of truth for the sign
+/// convention — the inline SQL CASE expressions in get_financial_summary,
+/// get_partners_totals, recalculate_partner_total and get_cash_register_entries
+/// must always stay in sync with it. Rows whose type matches neither prefix set
+/// are counted as ZERO everywhere (cards AND tabs), so totals stay consistent.
 fn is_deposit_type(tx_type: &str) -> bool {
     tx_type.starts_with("ايداع")
         || tx_type.starts_with("إيداع")
@@ -2272,6 +2598,64 @@ fn normalize_phone_digits(value: &str) -> String {
             _ => Some(ch),
         })
         .collect()
+}
+
+fn normalize_vehicle_identity(value: &str) -> String {
+    value
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect()
+}
+
+fn car_number_exists(db: &Connection, car_number: &str) -> Result<bool, String> {
+    db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM cars WHERE car_number = ?1)",
+        [car_number.trim()],
+        |row| row.get::<_, bool>(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn resolve_unique_car_number(
+    db: &Connection,
+    requested_plate: &str,
+    current_car_number: Option<&str>,
+) -> Result<String, String> {
+    let plate = requested_plate.trim();
+    if plate.is_empty() {
+        return Err("رقم السيارة مطلوب ولا يمكن أن يكون فارغاً".to_string());
+    }
+
+    if let Some(current) = current_car_number
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let old_plate = db.query_row(
+            "SELECT COALESCE(NULLIF(TRIM(car_plate_num), ''), car_number) FROM cars WHERE car_number = ?1",
+            [current],
+            |row| row.get::<_, String>(0),
+        );
+        if let Ok(old_plate) = old_plate {
+            if normalize_vehicle_identity(&old_plate) == normalize_vehicle_identity(plate) {
+                return Ok(current.to_string());
+            }
+        }
+    }
+
+    if !car_number_exists(db, plate)? {
+        return Ok(plate.to_string());
+    }
+
+    for suffix in 2..10_000 {
+        let candidate = format!("{plate}#{suffix}");
+        if !car_number_exists(db, &candidate)? {
+            return Ok(candidate);
+        }
+    }
+
+    Err("تعذر توليد معرف داخلي فريد للسيارة المكررة".to_string())
 }
 
 fn validate_finite_amount(value: Money, field_name: &str) -> Result<(), String> {
@@ -2359,8 +2743,33 @@ fn validate_sale_amounts(
     Ok(())
 }
 
-fn validate_profit_cap_for_car(_db: &Connection, _car_number: &str) -> Result<(), String> {
-    // No-op: profit_recognition rows removed entirely
+fn validate_profit_cap_for_car(db: &Connection, car_number: &str) -> Result<(), String> {
+    // Bug 11 (N6): Enforce the profit cap rule from Instructions.md §7.4:
+    //   Total recognized installment profit must never exceed the full car profit.
+    //   Full Car Profit = Selling Price - Purchase Price - Car Expenses
+    let car_data: Result<(Money, Money), rusqlite::Error> = db.query_row(
+        "SELECT purchase_price, selling_price FROM cars WHERE car_number = ?1",
+        [car_number],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    );
+    let (purchase_price, selling_price) = match car_data {
+        Ok(data) => data,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+        Err(e) => return Err(e.to_string()),
+    };
+
+    let car_expenses = car_expenses_for_profit(db, car_number);
+    let full_profit = selling_price - purchase_price - car_expenses;
+    let recognized = recognized_installment_profit_for_car(db, car_number);
+
+    // The cap only applies when there is a positive full profit. If the car was
+    // sold at a loss (full_profit <= 0), recognized losses are allowed (Bug 1 / N1).
+    if full_profit > Money::zero() && recognized > full_profit {
+        return Err(format!(
+            "تجاوز سقف الأرباح للسيارة {}: الأرباح المعترف بها ({}) تتجاوز الربح الكامل ({})",
+            car_number, recognized, full_profit
+        ));
+    }
     Ok(())
 }
 
@@ -2438,8 +2847,11 @@ fn classify_partner_transaction(kind: &str, type_: &str, tx_id: i64) -> Transact
             affects_profit: 0,
         },
         "شريك" => {
-            if type_ == "ايداع ارباح سيارة" || type_ == "ايداع ارباح وكالة"
-            {
+            // Audit fix #7: match profit types by prefix so variants such as
+            // "ايداع ارباح قسط سيارة" are classified as profit recognition and
+            // never fall through to cash_movement (which would double-count
+            // profit rows inside Qasa/Cash).
+            if type_.starts_with("ايداع ارباح") {
                 TransactionClassification {
                     source_type: "partner_profit".to_string(),
                     source_id: tx_id.to_string(),
@@ -2468,6 +2880,35 @@ fn classify_partner_transaction(kind: &str, type_: &str, tx_id: i64) -> Transact
             affects_profit: 0,
         },
     }
+}
+
+/// Audit fix #7/#20: source types produced by `classify_partner_transaction` for rows
+/// entered manually. Only these rows may be reclassified when edited; rows generated
+/// by accounting flows must keep their original source fields and affects_* flags.
+fn is_reclassifiable_source_type(source_type: &str) -> bool {
+    matches!(
+        source_type,
+        "" | "partner_cash"
+            | "partner_profit"
+            | "manual_transaction"
+            | "investor_transaction"
+            | "funder_transaction"
+            | "company_transaction"
+            | "customer_transaction"
+    )
+}
+
+/// Audit fix #7/#20: a generated partner (شريك) split row — one half of a 50/50
+/// cash movement, profit recognition, or settlement deduction. Editing or deleting
+/// a single half directly would break the 50/50 invariant and the source linkage,
+/// so such rows may only change through their original source transaction.
+fn is_generated_partner_split(kind: &str, source_type: &str, source_role: &str) -> bool {
+    kind == "شريك"
+        && matches!(
+            source_role,
+            "cash_movement" | "profit_recognition" | "partner_cash_payment" | "cash_payment"
+        )
+        && !is_reclassifiable_source_type(source_type)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3061,6 +3502,12 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
     // Issue 1: Handle customer_payment cash_movement rows (kind="شريك", source_type="customer_payment", source_role="cash_movement")
     // These should record Dr cash only. Cr receivable is handled by the original customer row (kind="زبون").
     if kind == "شريك" && source_type == "customer_payment" && source_role == "cash_movement" {
+        // Audit fix #1: customer cash-out projection rows ("سحب نقدي زبون") must not
+        // write ledger entries. The original customer "سحب" row already records
+        // Dr receivable / Cr cash; adding a Dr cash here would corrupt the ledger.
+        if tx_type.starts_with("سحب") {
+            return Ok(());
+        }
         // Look up the original customer payment row to get the customer name for receivable
         let source_id_val: i64 = conn
             .query_row(
@@ -3144,7 +3591,12 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
         return Ok(());
     }
 
-    if kind == "زبون" {
+    if is_borrower_account_kind(&kind) {
+        let account_label = if kind == "وكالة" {
+            "وكالة"
+        } else {
+            "زبون"
+        };
         // Issue 2: For customer payment rows, always record receivable reduction
         // Even if affects_qasa=0, the receivable must still decrease
         if is_deposit {
@@ -3161,8 +3613,8 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
                     &curr,
                     "partner_transaction",
                     &ref_id,
-                    "ايداع زبون",
-                    &format!("إيداع زبون: {}", p_name),
+                    &format!("ايداع {}", account_label),
+                    &format!("إيداع {}: {}", account_label, p_name),
                     Some(&notes),
                 )
                 .map_err(|e| e.to_string())?;
@@ -3179,8 +3631,8 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
                 &curr,
                 "partner_transaction",
                 &ref_id,
-                "ايداع زبون مديونية",
-                &format!("تخفيض مديونية الزبون {}", p_name),
+                &format!("ايداع {} مديونية", account_label),
+                &format!("تخفيض مديونية {} {}", account_label, p_name),
                 Some(&notes),
             )
             .map_err(|e| e.to_string())?;
@@ -3196,8 +3648,8 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
                 &curr,
                 "partner_transaction",
                 &ref_id,
-                "سحب زبون مديونية",
-                &format!("زيادة مديونية الزبون {}", p_name),
+                &format!("سحب {} مديونية", account_label),
+                &format!("زيادة مديونية {} {}", account_label, p_name),
                 Some(&notes),
             )
             .map_err(|e| e.to_string())?;
@@ -3212,8 +3664,8 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
                 &curr,
                 "partner_transaction",
                 &ref_id,
-                "سحب زبون",
-                &format!("سحب نقدي زبون: {}", p_name),
+                &format!("سحب {}", account_label),
+                &format!("سحب نقدي {}: {}", account_label, p_name),
                 Some(&notes),
             )
             .map_err(|e| e.to_string())?;
@@ -3539,8 +3991,9 @@ fn record_partner_ledger_entries(conn: &Connection, tx_id: i64) -> Result<(), St
 fn record_agency_ledger_entries(conn: &Connection, agency_id: i64) -> Result<(), String> {
     reverse_ledger_entries(conn, "agency", &agency_id.to_string())?;
 
-    let agency_info: Result<(String, String, Money, Money, String, String), rusqlite::Error> = conn.query_row(
-        "SELECT old_agent_name, new_agent_name, amount_usd, amount_iqd, date, time FROM agencies WHERE id = ?1",
+    let agency_info: Result<(String, String, Money, Money, String, String, String), rusqlite::Error> = conn.query_row(
+        "SELECT old_agent_name, new_agent_name, amount_usd, amount_iqd, date, time, COALESCE(payment_status, 'واصل')
+         FROM agencies WHERE id = ?1",
         [agency_id],
         |row| {
             Ok((
@@ -3550,32 +4003,51 @@ fn record_agency_ledger_entries(conn: &Connection, agency_id: i64) -> Result<(),
                 row.get(3)?,
                 row.get(4)?,
                 row.get(5)?,
+                row.get(6)?,
             ))
         }
     );
 
-    let (old_agent_name, new_agent_name, amount_usd, amount_iqd, date, time) = match agency_info {
-        Ok(info) => info,
-        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
-        Err(e) => return Err(e.to_string()),
-    };
+    let (old_agent_name, new_agent_name, amount_usd, amount_iqd, date, time, payment_status) =
+        match agency_info {
+            Ok(info) => info,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+            Err(e) => return Err(e.to_string()),
+        };
+    let received = agency_is_received(&payment_status);
 
     let agency_desc = format!("وكالة {} {}", old_agent_name.trim(), new_agent_name.trim());
     let ref_id = agency_id.to_string();
+    let debit_account_type = if received { "cash" } else { "receivable" };
+    let debit_account_id = if received {
+        "قاصه"
+    } else {
+        new_agent_name.trim()
+    };
+    let debit_type = if received {
+        "أرباح وكالة"
+    } else {
+        "باقي وكالة"
+    };
 
+    // Audit fix #21: the revenue credit is ALWAYS recorded (profit is recognized
+    // when the agency is recorded — Instructions.md §13). The debit side is cash
+    // when received, or a receivable while the amount is still owed. Previously the
+    // unpaid case recorded a lone receivable debit with no matching credit, leaving
+    // the ledger unbalanced.
     if amount_usd > Money::zero() {
         record_ledger_entry(
             conn,
             &date,
             &time,
-            "cash",
-            Some("قاصه"),
+            debit_account_type,
+            Some(debit_account_id),
             amount_usd,
             Money::zero(),
             "USD",
             "agency",
             &ref_id,
-            "أرباح وكالة",
+            debit_type,
             &agency_desc,
             None,
         )
@@ -3603,14 +4075,14 @@ fn record_agency_ledger_entries(conn: &Connection, agency_id: i64) -> Result<(),
             conn,
             &date,
             &time,
-            "cash",
-            Some("قاصه"),
+            debit_account_type,
+            Some(debit_account_id),
             amount_iqd,
             Money::zero(),
             "IQD",
             "agency",
             &ref_id,
-            "أرباح وكالة",
+            debit_type,
             &agency_desc,
             None,
         )
@@ -4165,31 +4637,36 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
             || tx_type.starts_with("تسديد")
             || tx_type.starts_with("استلام");
 
-        if kind == "زبون" {
+        if is_borrower_account_kind(&kind) {
+            let account_label = if kind == "وكالة" {
+                "وكالة"
+            } else {
+                "زبون"
+            };
             if is_deposit {
                 if should_create_cash_entry {
                     conn.execute(
                         "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-                     VALUES (?1, ?2, 'cash', ?3, ?4, 0.0, ?5, 'partner_transaction', ?6, 'ايداع زبون', ?7, ?8)",
-                        params![tx_date, tx_time, payment_type, amount, curr, id.to_string(), format!("إيداع زبون: {}", p_name), notes],
+                     VALUES (?1, ?2, 'cash', ?3, ?4, 0.0, ?5, 'partner_transaction', ?6, ?7, ?8, ?9)",
+                        params![tx_date, tx_time, payment_type, amount, curr, id.to_string(), format!("ايداع {}", account_label), format!("إيداع {}: {}", account_label, p_name), notes],
                     )?;
                 }
                 conn.execute(
                     "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-                     VALUES (?1, ?2, 'receivable', ?3, 0.0, ?4, ?5, 'partner_transaction', ?6, 'ايداع زبون مديونية', ?7, ?8)",
-                    params![tx_date, tx_time, p_name, amount, curr, id.to_string(), format!("تخفيض مديونية الزبون {}", p_name), notes],
+                     VALUES (?1, ?2, 'receivable', ?3, 0.0, ?4, ?5, 'partner_transaction', ?6, ?7, ?8, ?9)",
+                    params![tx_date, tx_time, p_name, amount, curr, id.to_string(), format!("ايداع {} مديونية", account_label), format!("تخفيض مديونية {} {}", account_label, p_name), notes],
                 )?;
             } else if tx_type.starts_with("سحب") {
                 conn.execute(
                     "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-                     VALUES (?1, ?2, 'receivable', ?3, ?4, 0.0, ?5, 'partner_transaction', ?6, 'سحب زبون مديونية', ?7, ?8)",
-                    params![tx_date, tx_time, p_name, amount, curr, id.to_string(), format!("زيادة مديونية الزبون {}", p_name), notes],
+                     VALUES (?1, ?2, 'receivable', ?3, ?4, 0.0, ?5, 'partner_transaction', ?6, ?7, ?8, ?9)",
+                    params![tx_date, tx_time, p_name, amount, curr, id.to_string(), format!("سحب {} مديونية", account_label), format!("زيادة مديونية {} {}", account_label, p_name), notes],
                 )?;
                 if should_create_cash_entry {
                     conn.execute(
                         "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-                     VALUES (?1, ?2, 'cash', ?3, 0.0, ?4, ?5, 'partner_transaction', ?6, 'سحب زبون', ?7, ?8)",
-                        params![tx_date, tx_time, payment_type, amount, curr, id.to_string(), format!("سحب نقدي زبون: {}", p_name), notes],
+                     VALUES (?1, ?2, 'cash', ?3, 0.0, ?4, ?5, 'partner_transaction', ?6, ?7, ?8, ?9)",
+                        params![tx_date, tx_time, payment_type, amount, curr, id.to_string(), format!("سحب {}", account_label), format!("سحب نقدي {}: {}", account_label, p_name), notes],
                     )?;
                 }
             }
@@ -4323,7 +4800,9 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
     }
 
     // 5. Agencies & Agency Transactions
-    let mut ag_stmt = conn.prepare("SELECT id, old_agent_name, new_agent_name, amount_usd, amount_iqd, date, time FROM agencies")?;
+    let mut ag_stmt = conn.prepare(
+        "SELECT id, old_agent_name, new_agent_name, amount_usd, amount_iqd, date, time, COALESCE(payment_status, 'واصل') FROM agencies",
+    )?;
     let ag_rows = ag_stmt.query_map([], |row| {
         Ok((
             row.get::<_, i64>(0)?,
@@ -4333,35 +4812,53 @@ fn migrate_existing_data_to_ledger(conn: &Connection) -> SqlResult<()> {
             row.get::<_, Money>(4)?,
             row.get::<_, String>(5)?,
             row.get::<_, String>(6)?,
+            row.get::<_, String>(7)?,
         ))
     })?;
     for ag in ag_rows {
-        let (id, old_name, new_name, amount_usd, amount_iqd, ag_date, ag_time) = ag?;
+        let (id, old_name, new_name, amount_usd, amount_iqd, ag_date, ag_time, payment_status) =
+            ag?;
+        let received = agency_is_received(&payment_status);
+        let debit_account_type = if received { "cash" } else { "receivable" };
+        let debit_account_id = if received {
+            "قاصه"
+        } else {
+            new_name.trim()
+        };
+        let debit_type = if received {
+            "أرباح وكالة"
+        } else {
+            "باقي وكالة"
+        };
 
         if amount_usd > Money::zero() {
             conn.execute(
                 "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-                 VALUES (?1, ?2, 'cash', 'قاصه', ?3, 0.0, 'USD', 'agency', ?4, 'أرباح وكالة', ?5, NULL)",
-                params![ag_date, ag_time, amount_usd, id.to_string(), format!("إيداع أرباح وكالة من {} إلى {}", old_name, new_name)],
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0.0, 'USD', 'agency', ?6, ?7, ?8, NULL)",
+                params![ag_date, ag_time, debit_account_type, debit_account_id, amount_usd, id.to_string(), debit_type, format!("إيداع أرباح وكالة من {} إلى {}", old_name, new_name)],
             )?;
-            conn.execute(
-                "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-                 VALUES (?1, ?2, 'revenue', 'agency', 0.0, ?3, 'USD', 'agency', ?4, 'أرباح وكالة إيراد', ?5, NULL)",
-                params![ag_date, ag_time, amount_usd, id.to_string(), format!("إيراد أرباح وكالة من {} إلى {}", old_name, new_name)],
-            )?;
+            if received {
+                conn.execute(
+                    "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
+                     VALUES (?1, ?2, 'revenue', 'agency', 0.0, ?3, 'USD', 'agency', ?4, 'أرباح وكالة إيراد', ?5, NULL)",
+                    params![ag_date, ag_time, amount_usd, id.to_string(), format!("إيراد أرباح وكالة من {} إلى {}", old_name, new_name)],
+                )?;
+            }
         }
 
         if amount_iqd > Money::zero() {
             conn.execute(
                 "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-                 VALUES (?1, ?2, 'cash', 'قاصه', ?3, 0.0, 'IQD', 'agency', ?4, 'أرباح وكالة', ?5, NULL)",
-                params![ag_date, ag_time, amount_iqd, id.to_string(), format!("إيداع أرباح وكالة من {} إلى {}", old_name, new_name)],
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0.0, 'IQD', 'agency', ?6, ?7, ?8, NULL)",
+                params![ag_date, ag_time, debit_account_type, debit_account_id, amount_iqd, id.to_string(), debit_type, format!("إيداع أرباح وكالة من {} إلى {}", old_name, new_name)],
             )?;
-            conn.execute(
-                "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
-                 VALUES (?1, ?2, 'revenue', 'agency', 0.0, ?3, 'IQD', 'agency', ?4, 'أرباح وكالة إيراد', ?5, NULL)",
-                params![ag_date, ag_time, amount_iqd, id.to_string(), format!("إيراد أرباح وكالة من {} إلى {}", old_name, new_name)],
-            )?;
+            if received {
+                conn.execute(
+                    "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
+                     VALUES (?1, ?2, 'revenue', 'agency', 0.0, ?3, 'IQD', 'agency', ?4, 'أرباح وكالة إيراد', ?5, NULL)",
+                    params![ag_date, ag_time, amount_iqd, id.to_string(), format!("إيراد أرباح وكالة من {} إلى {}", old_name, new_name)],
+                )?;
+            }
         }
     }
 
@@ -4419,7 +4916,7 @@ fn ensure_sales_cogs_entries(conn: &Connection) -> SqlResult<()> {
             reference_type, reference_id, type_, description, notes
         )
         SELECT
-            COALESCE(NULLIF(c.sale_date, ''), '2026-06-12'),
+            COALESCE(NULLIF(c.sale_date, ''), date('now', 'localtime')),
             COALESCE(NULLIF(c.sale_time, ''), '00:00'),
             'expense',
             c.car_number,
@@ -4433,6 +4930,7 @@ fn ensure_sales_cogs_entries(conn: &Connection) -> SqlResult<()> {
             NULL
         FROM cars c
         WHERE c.status = 'مبيوعة'
+          AND COALESCE(c.payment_type, 'كاش') = 'كاش'
           AND (c.purchase_price + COALESCE((SELECT SUM(ce.amount) FROM car_expenses ce WHERE ce.car_number = c.car_number), 0.0)) > 0
           AND NOT EXISTS (
               SELECT 1
@@ -4473,8 +4971,9 @@ fn record_car_purchase_ledger_entries(db: &Connection, car_number: &str) -> Resu
         Err(e) => return Err(e.to_string()),
     };
 
+    // Audit fix #22: fall back to the current date, never a hardcoded magic date.
     let p_date = if purchase_date.is_empty() {
-        "2026-06-12".to_string()
+        now_datetime().0
     } else {
         purchase_date
     };
@@ -4638,8 +5137,9 @@ fn record_car_sale_ledger_entries(db: &Connection, car_number: &str) -> Result<(
         return Ok(());
     }
 
+    // Audit fix #22: fall back to the current date, never a hardcoded magic date.
     let s_date = if sale_date.is_empty() {
-        "2026-06-12".to_string()
+        now_datetime().0
     } else {
         sale_date
     };
@@ -4649,13 +5149,7 @@ fn record_car_sale_ledger_entries(db: &Connection, car_number: &str) -> Result<(
     let _amount_paid = amount_paid_opt.unwrap_or(selling_price);
     let _amount_remaining = amount_remaining_opt.unwrap_or(Money::zero());
 
-    let expenses_sum: Money = db
-        .query_row(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
-            [car_number],
-            |row| row.get(0),
-        )
-        .unwrap_or(Money::zero());
+    let expenses_sum: Money = car_expenses_for_profit(db, car_number);
     let total_cogs = purchase_price + expenses_sum;
     let _total_profit = selling_price - total_cogs;
 
@@ -4694,7 +5188,50 @@ fn record_car_sale_ledger_entries(db: &Connection, car_number: &str) -> Result<(
             &format!("استلام نقدي بيع سيارة {} ({})", car_name, car_number),
             None,
         )?;
+        if total_cogs > Money::zero() {
+            record_ledger_entry(
+                db,
+                &s_date,
+                &s_time,
+                "expense",
+                Some(car_number),
+                total_cogs,
+                Money::zero(),
+                &currency,
+                "car",
+                car_number,
+                "تكلفة المبيعات",
+                &format!("تكلفة بيع سيارة {} ({})", car_name, car_number),
+                None,
+            )?;
+
+            record_ledger_entry(
+                db,
+                &s_date,
+                &s_time,
+                "inventory",
+                Some(car_number),
+                Money::zero(),
+                total_cogs,
+                &currency,
+                "car",
+                car_number,
+                "تخفيض المخزون بيع سيارة",
+                &format!("إخراج سيارة {} ({}) من المخزون", car_name, car_number),
+                None,
+            )?;
+        }
     } else {
+        // Audit fix #17: classic installment-method entries. The deferred revenue
+        // account holds only the UNEARNED PROFIT (never the full selling price), so
+        // the per-payment recognition entries (Dr deferred_revenue / Cr revenue for
+        // the profit portion) drive the account to exactly zero once the full car
+        // profit has been recognized — no permanent cost-portion residual remains.
+        //
+        //   Dr receivable       selling_price
+        //   Cr inventory        total_cogs
+        //   Cr deferred_revenue full_profit            (profitable sale)
+        //   Dr expense (loss)   |full_profit|          (loss sale — recognized at once)
         record_ledger_entry(
             db,
             &s_date,
@@ -4714,59 +5251,63 @@ fn record_car_sale_ledger_entries(db: &Connection, car_number: &str) -> Result<(
             None,
         )?;
 
-        record_ledger_entry(
-            db,
-            &s_date,
-            &s_time,
-            "deferred_revenue",
-            Some(car_number),
-            Money::zero(),
-            selling_price,
-            &sale_currency,
-            "car",
-            car_number,
-            "إيراد مؤجل بيع سيارة",
-            &format!(
-                "إيراد مؤجل بيع سيارة {} ({}) إلى {}",
-                car_name, car_number, buyer_name
-            ),
-            None,
-        )?;
-    }
+        if total_cogs > Money::zero() {
+            record_ledger_entry(
+                db,
+                &s_date,
+                &s_time,
+                "inventory",
+                Some(car_number),
+                Money::zero(),
+                total_cogs,
+                &currency,
+                "car",
+                car_number,
+                "تخفيض المخزون بيع سيارة",
+                &format!("إخراج سيارة {} ({}) من المخزون", car_name, car_number),
+                None,
+            )?;
+        }
 
-    if total_cogs > Money::zero() {
-        record_ledger_entry(
-            db,
-            &s_date,
-            &s_time,
-            "expense",
-            Some(car_number),
-            total_cogs,
-            Money::zero(),
-            &currency,
-            "car",
-            car_number,
-            "تكلفة المبيعات",
-            &format!("تكلفة بيع سيارة {} ({})", car_name, car_number),
-            None,
-        )?;
+        let full_profit = selling_price - total_cogs;
+        if full_profit > Money::zero() {
+            record_ledger_entry(
+                db,
+                &s_date,
+                &s_time,
+                "deferred_revenue",
+                Some(car_number),
+                Money::zero(),
+                full_profit,
+                &sale_currency,
+                "car",
+                car_number,
+                "إيراد مؤجل بيع سيارة",
+                &format!(
+                    "ربح مؤجل بيع سيارة {} ({}) إلى {}",
+                    car_name, car_number, buyer_name
+                ),
+                None,
+            )?;
+        } else if full_profit < Money::zero() {
+            // Losses must reduce net profit immediately (Instructions.md §5, §24.1).
+            record_ledger_entry(
+                db,
+                &s_date,
+                &s_time,
+                "expense",
+                Some(car_number),
+                -full_profit,
+                Money::zero(),
+                &sale_currency,
+                "car",
+                car_number,
+                "خسارة بيع سيارة",
+                &format!("خسارة بيع سيارة {} ({})", car_name, car_number),
+                None,
+            )?;
+        }
     }
-
-    record_ledger_entry(
-        db,
-        &s_date,
-        &s_time,
-        "inventory",
-        Some(car_number),
-        Money::zero(),
-        total_cogs,
-        &currency,
-        "car",
-        car_number,
-        "تخفيض المخزون بيع سيارة",
-        &format!("إخراج سيارة {} ({}) من المخزون", car_name, car_number),
-        None,
-    )?;
 
     Ok(())
 }
@@ -4856,12 +5397,17 @@ fn add_car(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
 
     let buyer_phone = buyer_phone.map(|phone| normalize_phone_digits(&phone));
-    let car_number = num.trim().to_string();
+    let requested_plate = num.trim().to_string();
     let old_num = old_num.unwrap_or_default();
     let old_num = old_num.trim();
+    let car_number = resolve_unique_car_number(
+        &db,
+        &requested_plate,
+        (!old_num.is_empty()).then_some(old_num),
+    )?;
 
     // الاستعلام عن وقت الشراء ووقت البيع الحاليين لحفظهما قبل حذف أو استبدال السجل، وكذلك الاسم ورقم الشاصي والشركاء القديمين للتحديث
     let query_num = if !old_num.is_empty() {
@@ -4993,16 +5539,13 @@ fn add_car(
     }
     // New car: no existing ledger to delete
 
-    // Preserve existing car_plate_num if not provided, or use car_number for new cars
-    let plate_num = existing_plate_num
-        .map(|s| {
-            if s.trim().is_empty() {
-                car_number.clone()
-            } else {
-                s
-            }
-        })
-        .unwrap_or_else(|| car_number.clone());
+    let plate_num = if requested_plate.trim().is_empty() {
+        existing_plate_num
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| car_number.clone())
+    } else {
+        requested_plate.clone()
+    };
 
     // INSERT with main fields — use ON CONFLICT to avoid silently overwriting columns not in the INSERT list
     db.execute(
@@ -5072,11 +5615,6 @@ fn add_car(
                 ).map_err(|e| e.to_string())?;
             }
         }
-    }
-
-    // Profit cap validation: block sold-cost changes that would make recognized profit exceed full profit
-    if sold_cost_changed {
-        validate_profit_cap_for_car(&db, &car_number)?;
     }
 
     let clean_name = name.trim();
@@ -5188,14 +5726,13 @@ fn add_car(
         } else {
             "company_purchase_liability"
         };
-        let expenses_sum: Money = db
-            .query_row(
-                "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
-                [car_number.as_str()],
-                |row| row.get(0),
-            )
-            .unwrap_or(Money::zero());
-        let total_amount = purchase + expenses_sum;
+        // Bug 8 (N3) + Bug 13 (N8): Funder/company finances the PURCHASE PRICE
+        // ONLY, matching the ledger entry (Instructions.md §15 / §16). Car
+        // expenses are paid by the partners separately, not by the funder.
+        // Previously this added `expenses_sum` (direct car_expenses SQL) which
+        // inflated the funder liability above the actual financed amount, and
+        // bypassed the `car_expenses_for_profit` fallback used everywhere else.
+        let total_amount = purchase;
         if let Some(f_name) = &financer_name {
             let f_name = f_name.trim();
             if !f_name.is_empty() {
@@ -5309,7 +5846,8 @@ fn add_car(
             // Effect 2: Profit recognition (does not increase Qasa/Cash)
             rebuild_cash_sale_profit_recognition(&db, &car_number)?;
         } else {
-            // لا نوزع الأرباح هنا لأن السيارة بيعت بالتقسيط أو بموعد تسليم والأرباح لم تقبض بالكامل بعد
+            // لا نوزع الأرباح هنا لأن السيارة بيعت بالتقسيط أو بموعد تسليم والأرباح لم تقبض بالكامل بعد.
+            // خسارة بيع التقسيط، إن وجدت، يعاد إثباتها بعد قيود البيع حتى تتطابق تقارير الشركاء مع دفتر الأستاذ.
         }
     }
 
@@ -5362,6 +5900,16 @@ fn add_car(
     }
     if should_rebuild_sale_ledger && !effective_skip_sale {
         record_car_sale_ledger_entries(&db, car_number.as_str())?;
+    }
+    if should_rebuild_sale_ledger && !effective_skip_sale && payment_type.as_deref() != Some("كاش")
+    {
+        rebuild_installment_sale_loss_recognition(&db, &car_number)?;
+    }
+    if sold_cost_changed && payment_type.as_deref() != Some("كاش") {
+        rebuild_customer_payment_profit_recognitions_for_car(&db, &car_number)?;
+        validate_profit_cap_for_car(&db, &car_number)?;
+    } else if sold_cost_changed {
+        validate_profit_cap_for_car(&db, &car_number)?;
     }
 
     db.commit().map_err(|e| e.to_string())?;
@@ -5446,7 +5994,7 @@ fn sell_car_with_accounting(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
 
     let car_exists: bool = db
         .query_row(
@@ -5673,6 +6221,10 @@ fn sell_car_with_accounting(
     // STEP 6: Record car sale ledger entries only (old entries already deleted above)
     // ============================================================
     record_car_sale_ledger_entries(&db, &car_number)?;
+    if is_installments_or_due {
+        rebuild_installment_sale_loss_recognition(&db, &car_number)?;
+        rebuild_customer_payment_profit_recognitions_for_car(&db, &car_number)?;
+    }
 
     // ============================================================
     // STEP 7: Recalculate and commit
@@ -5733,7 +6285,7 @@ fn get_cars(state: State<AppState>) -> Result<Vec<Car>, String> {
                     COALESCE(car_plate_num, car_number),
                     COALESCE(car_model, car_name), COALESCE(car_year, ''),
                     purchase_type, financer_name, commission_type, commission_value
-             FROM cars ORDER BY car_name",
+             FROM cars ORDER BY rowid ASC",
         )
         .map_err(|e| e.to_string())?;
 
@@ -5798,14 +6350,12 @@ fn get_cars(state: State<AppState>) -> Result<Vec<Car>, String> {
             .map_err(|e| e.to_string())?;
         car.car_partners = Some(partners);
 
-        // Fetch sum of expenses for this car
-        let mut exp_stmt = db
-            .prepare("SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1")
-            .map_err(|e| e.to_string())?;
-        let expenses_sum: Money = exp_stmt
-            .query_row([&car.car_number], |row| row.get(0))
-            .unwrap_or(Money::zero());
-        car.expenses_sum = Some(expenses_sum);
+        // Fetch sum of expenses for this car.
+        // Audit fixes #5/#25: use the exact same cost basis as the backend profit
+        // calculation (car_expenses_for_profit): expenses in the car's purchase
+        // currency only, with the legacy expenses_at_sale snapshot as fallback, so
+        // the UI profit always matches the recognized backend profit.
+        car.expenses_sum = Some(car_expenses_for_profit(&db, &car.car_number));
 
         cars_with_partners.push(car);
     }
@@ -5824,79 +6374,22 @@ fn delete_car(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
     let car_number = num.trim();
 
     let admin = admin_name.unwrap_or_else(|| "الإدارة".to_string());
 
     // Get car details before deleting it
-    let (car_name, chassis_number, status): (String, Option<String>, String) = db
+    let (car_name, chassis_number): (String, Option<String>) = db
         .query_row(
-            "SELECT car_name, chassis_number, status FROM cars WHERE car_number = ?1",
+            "SELECT car_name, chassis_number FROM cars WHERE car_number = ?1",
             [car_number],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|_| format!("السيارة رقم {} غير موجودة", car_number))?;
     let chassis_str = chassis_number.unwrap_or_default();
     let clean_name = car_name.trim();
     let clean_chassis = chassis_str.trim();
-
-    let has_partner_rows: bool = db
-        .query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM partner_transactions
-                WHERE (source_type IN ('car_purchase', 'car_sale') AND source_id = ?1)
-                   OR (related_source_type = 'car' AND related_source_id = ?1)
-                   OR (source_type = 'car_expense' AND source_id IN (
-                       SELECT CAST(id AS TEXT) FROM car_expenses WHERE car_number = ?1
-                   ))
-            )",
-            [car_number],
-            |row| row.get(0),
-        )
-        .unwrap_or(false);
-    let has_ledger_rows: bool = db
-        .query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM financial_ledger
-                WHERE (reference_type = 'car' AND reference_id = ?1)
-                   OR (reference_type = 'car_expense' AND reference_id IN (
-                       SELECT CAST(id AS TEXT) FROM car_expenses WHERE car_number = ?1
-                   ))
-                   OR (reference_type = 'expense' AND reference_id IN (
-                       SELECT CAST(id AS TEXT) FROM expenses WHERE car_number = ?1
-                   ))
-            )",
-            [car_number],
-            |row| row.get(0),
-        )
-        .unwrap_or(false);
-    let has_car_expenses: bool = db
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM car_expenses WHERE car_number = ?1)",
-            [car_number],
-            |row| row.get(0),
-        )
-        .unwrap_or(false);
-    let has_linked_expenses: bool = db
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM expenses WHERE car_number = ?1)",
-            [car_number],
-            |row| row.get(0),
-        )
-        .unwrap_or(false);
-
-    if status == "مبيوعة"
-        || has_partner_rows
-        || has_ledger_rows
-        || has_car_expenses
-        || has_linked_expenses
-    {
-        return Err(format!(
-            "لا يمكن حذف السيارة {} لأن لها تاريخ مالي مرتبط. استخدم التعديل أو قيود التسوية بدل حذف السجل المحاسبي.",
-            car_number
-        ));
-    }
 
     // تسجيل عملية الحذف في سجل التدقيق (ليس في دفتر الأستاذ المالي)
     let deletion_desc = format!(
@@ -5913,6 +6406,76 @@ fn delete_car(
         Some(&format!("تم حذف السيارة {} ({})", clean_name, car_number)),
     )?;
 
+    // Audit fix #6: the sale tag must be matched as a complete token (end of the
+    // note or followed by a space), otherwise deleting car "123" would also match
+    // rows tagged for car "1234" because '%..._123%' is a prefix of '..._1234'.
+    let sale_tag_end = format!("%#بيع_سيارة_{}", car_number);
+    let sale_tag_mid = format!("%#بيع_سيارة_{} %", car_number);
+    let _ = db.execute(
+        "DELETE FROM transaction_splits
+         WHERE transaction_id IN (
+             SELECT id FROM partner_transactions
+             WHERE (source_type IN ('car_purchase', 'car_sale') AND source_id = ?1)
+                OR (related_source_type = 'car' AND related_source_id = ?1)
+                OR (source_type = 'car_expense' AND source_id IN (
+                    SELECT CAST(id AS TEXT) FROM car_expenses WHERE car_number = ?1
+                ))
+                OR COALESCE(notes, '') LIKE ?2
+                OR COALESCE(notes, '') LIKE ?3
+         )",
+        params![car_number, sale_tag_end.as_str(), sale_tag_mid.as_str()],
+    );
+    let _ = db.execute(
+        "DELETE FROM transaction_splits
+         WHERE transaction_id IN (
+             SELECT id FROM partner_transactions
+             WHERE source_type IN ('customer_payment', 'funder_payment', 'company_payment')
+               AND related_source_type = 'car'
+               AND related_source_id = ?1
+         )",
+        [car_number],
+    );
+
+    db.execute(
+        "DELETE FROM financial_ledger
+         WHERE (reference_type = 'car' AND reference_id = ?1)
+            OR (reference_type = 'car_expense' AND reference_id IN (
+                SELECT CAST(id AS TEXT) FROM car_expenses WHERE car_number = ?1
+            ))
+            OR (reference_type = 'expense' AND reference_id IN (
+                SELECT CAST(id AS TEXT) FROM expenses WHERE car_number = ?1
+            ))
+            OR (reference_type = 'partner_transaction' AND reference_id IN (
+                SELECT CAST(id AS TEXT) FROM partner_transactions
+                WHERE (source_type IN ('car_purchase', 'car_sale') AND source_id = ?1)
+                   OR (related_source_type = 'car' AND related_source_id = ?1)
+                   OR (source_type = 'car_expense' AND source_id IN (
+                       SELECT CAST(id AS TEXT) FROM car_expenses WHERE car_number = ?1
+                   ))
+                   OR COALESCE(notes, '') LIKE ?2
+                   OR COALESCE(notes, '') LIKE ?3
+            ))",
+        params![car_number, sale_tag_end.as_str(), sale_tag_mid.as_str()],
+    )
+    .map_err(|e| e.to_string())?;
+
+    db.execute(
+        "DELETE FROM customer_installment_payment_events WHERE sale_id = ?1",
+        [car_number],
+    )
+    .map_err(|e| e.to_string())?;
+    db.execute(
+        "DELETE FROM partner_transactions
+         WHERE (source_type IN ('car_purchase', 'car_sale') AND source_id = ?1)
+            OR (related_source_type = 'car' AND related_source_id = ?1)
+            OR (source_type = 'car_expense' AND source_id IN (
+                SELECT CAST(id AS TEXT) FROM car_expenses WHERE car_number = ?1
+            ))
+            OR COALESCE(notes, '') LIKE ?2
+            OR COALESCE(notes, '') LIKE ?3",
+        params![car_number, sale_tag_end.as_str(), sale_tag_mid.as_str()],
+    )
+    .map_err(|e| e.to_string())?;
     db.execute("DELETE FROM cars WHERE car_number = ?1", [car_number])
         .map_err(|e| e.to_string())?;
     db.execute(
@@ -5927,6 +6490,7 @@ fn delete_car(
     .map_err(|e| e.to_string())?;
     db.execute("DELETE FROM expenses WHERE car_number = ?1", [car_number])
         .map_err(|e| e.to_string())?;
+    recalculate_all_partners(&db)?;
 
     db.commit().map_err(|e| e.to_string())?;
     Ok(())
@@ -5975,7 +6539,7 @@ fn update_sold_car_with_accounting(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
 
     // Load existing car data
     let old_car: Result<(String, Money, String, String, Money, String, Option<String>, Option<Money>, Option<Money>, Option<i32>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>), rusqlite::Error> = db.query_row(
@@ -6428,6 +6992,9 @@ fn update_sold_car_with_accounting(
     // STEP 5: Rebuild sale ledger entries
     // ============================================================
     record_car_sale_ledger_entries(&db, &car_number)?;
+    if is_installments_or_due {
+        rebuild_installment_sale_loss_recognition(&db, &car_number)?;
+    }
     rebuild_customer_payment_profit_recognitions_for_car(&db, &car_number)?;
 
     // ============================================================
@@ -6517,9 +7084,10 @@ fn save_and_sell_car_with_accounting(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
 
-    let car_number = num.trim().to_string();
+    let requested_plate = num.trim().to_string();
+    let car_number = resolve_unique_car_number(&db, &requested_plate, None)?;
     let clean_name = name.trim();
     let clean_chassis = chassis.trim();
     let clean_buyer_phone = resolve_existing_customer_phone(&db, &buyer_name, &buyer_phone);
@@ -6550,7 +7118,7 @@ fn save_and_sell_car_with_accounting(
             first_payment_date, purchase_time, sale_time
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
-            car_number, car_number, clean_chassis,
+            car_number.as_str(), requested_plate.as_str(), clean_chassis,
             model.trim(), year.trim(), clean_name, color.trim(), details.trim(),
             purchase, curr, sale_curr,
             selling,
@@ -6805,6 +7373,10 @@ fn save_and_sell_car_with_accounting(
     // STEP 7: Record sale ledger entries
     // ============================================================
     record_car_sale_ledger_entries(&db, &car_number)?;
+    if is_installments_or_due {
+        rebuild_installment_sale_loss_recognition(&db, &car_number)?;
+        rebuild_customer_payment_profit_recognitions_for_car(&db, &car_number)?;
+    }
 
     // ============================================================
     // STEP 8: Recalculate and commit
@@ -6826,7 +7398,7 @@ fn add_partner(
     kind: String,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
     let name = name.trim();
     let phone = normalize_phone_digits(&phone);
     let kind = kind.trim();
@@ -6882,10 +7454,10 @@ fn get_partners(state: State<AppState>) -> Result<Vec<Partner>, String> {
     let mut stmt = db
         .prepare(
             "SELECT p.partner_name, p.phone, p.total_amount, p.kind,
-                    COALESCE((SELECT SUM(amount) FROM partner_transactions WHERE partner_name = p.partner_name AND kind = p.kind AND type LIKE 'سحب%'), '0') AS total_withdrawals,
+                    COALESCE((SELECT SUM(amount) FROM partner_transactions WHERE partner_name = p.partner_name AND kind = p.kind AND type LIKE 'سحب%' AND COALESCE(is_reversed, 0) = 0), '0') AS total_withdrawals,
                     COALESCE(p.iqd_balance, '0'),
                     COALESCE(p.usd_balance, '0')
-             FROM partners p ORDER BY p.partner_name",
+             FROM partners p ORDER BY p.rowid ASC",
         )
         .map_err(|e| e.to_string())?;
 
@@ -6908,13 +7480,26 @@ fn get_partners(state: State<AppState>) -> Result<Vec<Partner>, String> {
     Ok(partners)
 }
 
+#[allow(dead_code)]
+fn customer_balance_for_currency(
+    db: &Connection,
+    partner_name: Option<&str>,
+    currency: &str,
+) -> Money {
+    borrower_balance_for_currency(db, partner_name, Some("زبون"), currency)
+}
+
 #[tauri::command]
 fn get_unified_accounts(state: State<AppState>) -> Result<Vec<UnifiedAccount>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    let mut stmt = db.prepare(
-        "SELECT partner_name, phone, kind FROM partners WHERE kind = 'ممول' OR kind = 'شركة' OR kind = 'مستثمر' OR kind = 'زبون' ORDER BY partner_name"
-    ).map_err(|e| e.to_string())?;
+    let mut stmt = db
+        .prepare(
+            "SELECT partner_name, phone, kind FROM partners
+         WHERE kind = 'ممول' OR kind = 'شركة' OR kind = 'مستثمر' OR kind = 'زبون' OR kind = 'وكالة'
+         ORDER BY rowid ASC",
+        )
+        .map_err(|e| e.to_string())?;
 
     let partners_list = stmt
         .query_map([], |row| {
@@ -6933,28 +7518,11 @@ fn get_unified_accounts(state: State<AppState>) -> Result<Vec<UnifiedAccount>, S
     let mut accounts = Vec::new();
 
     for (name, phone, kind) in partners_list {
-        let (iqd_balance, usd_balance) = if kind == "زبون" {
-            // Customer: balance = sum of unpaid remaining rows only
-            // Paid rows (واصل, تسديد, etc) never create negative balance
-            let iqd: Money = db
-                .query_row(
-                    "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-                 WHERE partner_name = ?1 AND kind = 'زبون' AND COALESCE(currency, 'IQD') = 'IQD'
-                 AND (type LIKE 'باقي%' OR type LIKE 'سحب%') AND type NOT LIKE 'تحويل%'",
-                    params![name],
-                    |row| row.get(0),
-                )
-                .unwrap_or(Money::zero());
-            let usd: Money = db
-                .query_row(
-                    "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-                 WHERE partner_name = ?1 AND kind = 'زبون' AND COALESCE(currency, 'IQD') = 'USD'
-                 AND (type LIKE 'باقي%' OR type LIKE 'سحب%') AND type NOT LIKE 'تحويل%'",
-                    params![name],
-                    |row| row.get(0),
-                )
-                .unwrap_or(Money::zero());
-            (iqd, usd)
+        let (iqd_balance, usd_balance) = if is_borrower_account_kind(&kind) {
+            (
+                borrower_balance_for_currency(&db, Some(&name), Some(&kind), "IQD"),
+                borrower_balance_for_currency(&db, Some(&name), Some(&kind), "USD"),
+            )
         } else {
             // Non-customer: use partner_transactions logic
             let mut tx_stmt = db.prepare(
@@ -7031,25 +7599,30 @@ fn delete_partner(state: State<AppState>, name: String, kind: String) -> Result<
     }
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
 
     // Bug Q: Block deleting customer only when customer-account logic still shows debt.
     // Some legacy receivable ledger rows can remain after all installments are marked "واصل".
     // In that case the account is settled and deletion should clean those stale receivable rows.
-    if kind == "زبون" {
+    if is_borrower_account_kind(&kind) {
+        let account_label = if kind == "وكالة" {
+            "وكالة"
+        } else {
+            "زبون"
+        };
         let customer_remaining: Money = db
             .query_row(
                 "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
                  WHERE partner_name = ?1
-                   AND kind = 'زبون'
+                   AND kind = ?2
                    AND (type LIKE 'باقي%' OR type LIKE 'سحب%')
                    AND type NOT LIKE 'تحويل%'",
-                [&name],
+                params![&name, &kind],
                 |row| row.get(0),
             )
             .unwrap_or(Money::zero());
         if customer_remaining.abs() > MONEY_STRICT_EPSILON {
-            return Err("لا يمكن حذف حساب زبون لديه رصيد مستحق".to_string());
+            return Err(format!("لا يمكن حذف حساب {} لديه رصيد مستحق", account_label));
         }
 
         let receivable: Money = db
@@ -7161,28 +7734,21 @@ fn recalculate_partner_total(
     kind: &str,
 ) -> Result<(), String> {
     let (iqd_balance, usd_balance) = {
-        if kind == "زبون" {
-            // Customer: balance = sum of unpaid remaining rows only
-            // Paid rows (واصل, تسديد, etc) never create negative balance
-            let iqd_balance: Money = db
-                .query_row(
-                    "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-                 WHERE partner_name = ?1 AND kind = 'زبون' AND COALESCE(currency, 'IQD') = 'IQD'
-                 AND (type LIKE 'باقي%' OR type LIKE 'سحب%') AND type NOT LIKE 'تحويل%'",
-                    params![partner_name.trim()],
-                    |row| row.get(0),
-                )
-                .unwrap_or(Money::zero());
-            let usd_balance: Money = db
-                .query_row(
-                    "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
-                 WHERE partner_name = ?1 AND kind = 'زبون' AND COALESCE(currency, 'IQD') = 'USD'
-                 AND (type LIKE 'باقي%' OR type LIKE 'سحب%') AND type NOT LIKE 'تحويل%'",
-                    params![partner_name.trim()],
-                    |row| row.get(0),
-                )
-                .unwrap_or(Money::zero());
-            (iqd_balance, usd_balance)
+        if is_borrower_account_kind(kind) {
+            (
+                borrower_balance_for_currency(
+                    db,
+                    Some(partner_name.trim()),
+                    Some(kind.trim()),
+                    "IQD",
+                ),
+                borrower_balance_for_currency(
+                    db,
+                    Some(partner_name.trim()),
+                    Some(kind.trim()),
+                    "USD",
+                ),
+            )
         } else if kind == "شريك" {
             // Partner: use affects_partner_cash = 1 only
             let deposits_iqd: Money = db
@@ -7382,7 +7948,7 @@ fn recalculate_all_partners(db: &Connection) -> Result<(), String> {
 
 fn ledger_account_type_for_kind(kind: &str) -> Option<&'static str> {
     match kind {
-        "زبون" => Some("receivable"),
+        "زبون" | "وكالة" => Some("receivable"),
         "ممول" => Some("funder"),
         "شركة" => Some("payable"),
         "مستثمر" => Some("investor"),
@@ -7418,7 +7984,7 @@ fn update_partner(
 
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let tx = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&tx)?;
+    require_admin_session(&tx, None)?;
 
     // Block kind change if ledger history exists
     if old_kind != kind {
@@ -7521,7 +8087,7 @@ fn add_partner_transaction(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
 
     let is_financier_repayment = kind.trim() == "ممول" && type_.trim().starts_with("سحب");
     let tx_payment_type = if is_financier_repayment {
@@ -7607,6 +8173,23 @@ fn distribute_financier_repayment_to_partners(
     }
 
     let commission_amount = parse_financier_commission(amount, notes)?;
+
+    // Audit fix #3: make the commission expense idempotent. If a commission expense
+    // already exists for this repayment transaction, remove it (with its ledger
+    // entries and partner deduction rows) before re-creating it, so edits never
+    // accumulate duplicate commission expenses that double-reduce net profit.
+    if let Some(existing_exp_id) = find_financier_commission_expense_id(db, tx_id)? {
+        delete_partner_transactions_by_source_with_ledger(
+            db,
+            "expense",
+            &existing_exp_id.to_string(),
+            Some("cash_payment"),
+        )?;
+        delete_ledger_entries(db, "expense", &existing_exp_id.to_string())?;
+        db.execute("DELETE FROM expenses WHERE id = ?1", [existing_exp_id])
+            .map_err(|e| e.to_string())?;
+    }
+
     if commission_amount > Money::zero() {
         let current_time = db
             .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
@@ -9372,7 +9955,7 @@ fn update_customer_sale_down_payment(
 
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
 
     let (row_customer, row_currency, related_source_id, source_id, existing_notes): (
         String,
@@ -9551,10 +10134,22 @@ fn car_expenses_for_profit(db: &Connection, car_number: &str) -> Money {
     // expenses_at_sale is only a legacy snapshot kept on the cars row; it must not
     // override or hide real car_expenses rows, and the two must never be treated as
     // mutually exclusive (that would understate car cost and inflate profit).
+    //
+    // Audit fix #5: only expenses recorded in the SAME currency as the car's
+    // purchase currency are part of the car cost. Summing IQD and USD amounts
+    // together corrupts profit, profit ratio, and the profit cap.
+    let car_currency: String = db
+        .query_row(
+            "SELECT COALESCE(currency, 'IQD') FROM cars WHERE car_number = ?1",
+            [car_number],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "IQD".to_string());
     let recorded_expenses: Money = db
         .query_row(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses WHERE car_number = ?1",
-            [car_number],
+            "SELECT COALESCE(SUM(amount), 0.0) FROM car_expenses
+             WHERE car_number = ?1 AND COALESCE(currency, 'IQD') = ?2",
+            params![car_number, car_currency],
             |row| row.get(0),
         )
         .unwrap_or(Money::zero());
@@ -9572,6 +10167,14 @@ fn car_expenses_for_profit(db: &Connection, car_number: &str) -> Money {
 }
 
 fn recognized_installment_profit_for_car(db: &Connection, car_number: &str) -> Money {
+    // Audit fix #5: the profit cap must compare amounts in the sale currency only.
+    let sale_currency: String = db
+        .query_row(
+            "SELECT COALESCE(sale_currency, 'IQD') FROM cars WHERE car_number = ?1",
+            [car_number],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "IQD".to_string());
     db.query_row(
         "SELECT COALESCE(SUM(amount), 0.0)
          FROM partner_transactions
@@ -9581,8 +10184,9 @@ fn recognized_installment_profit_for_car(db: &Connection, car_number: &str) -> M
            AND affects_profit = 1
            AND related_source_type = 'car'
            AND related_source_id = ?1
+           AND COALESCE(currency, 'IQD') = ?2
            AND COALESCE(is_reversed, 0) = 0",
-        [car_number],
+        params![car_number, sale_currency],
         |row| row.get(0),
     )
     .unwrap_or(Money::zero())
@@ -9729,25 +10333,96 @@ fn rebuild_cash_sale_profit_recognitions(db: &Connection) -> Result<(), String> 
     Ok(())
 }
 
+fn rebuild_installment_sale_loss_recognition(
+    db: &Connection,
+    car_number: &str,
+) -> Result<(), String> {
+    let car_number = car_number.trim();
+    delete_partner_transactions_by_source_with_ledger(
+        db,
+        "car_sale",
+        car_number,
+        Some("profit_recognition"),
+    )?;
+
+    let car_data: Result<(String, String, Money, Money, String, String), rusqlite::Error> = db
+        .query_row(
+            "SELECT status, COALESCE(payment_type, 'كاش'), purchase_price, selling_price,
+                    COALESCE(sale_currency, 'IQD'), COALESCE(sale_date, '')
+             FROM cars WHERE car_number = ?1",
+            [car_number],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        );
+    let (status, payment_type, purchase_price, selling_price, sale_currency, sale_date) =
+        match car_data {
+            Ok(data) => data,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+            Err(e) => return Err(e.to_string()),
+        };
+
+    if status != "مبيوعة" || payment_type == "كاش" {
+        return Ok(());
+    }
+
+    let full_profit = selling_price - purchase_price - car_expenses_for_profit(db, car_number);
+    if full_profit >= Money::zero() {
+        return Ok(());
+    }
+
+    distribute_signed_profit_recognition_50_with_related(
+        db,
+        full_profit,
+        &sale_currency,
+        &sale_date,
+        "قاصه",
+        "سحب خسارة سيارة",
+        &format!("إثبات خسارة بيع سيارة {} عند البيع", car_number),
+        "car_sale",
+        car_number,
+        Some("car"),
+        Some(car_number),
+    )
+}
+
 fn calculate_customer_payment_profit(
     db: &Connection,
     payment_tx_id: i64,
     car_number: &str,
     payment_amount: Money,
+    payment_currency: &str,
 ) -> Result<Money, String> {
-    let (purchase_price, selling_price): (Money, Money) = db
+    let (purchase_price, selling_price, sale_currency): (Money, Money, String) = db
         .query_row(
-            "SELECT purchase_price, selling_price FROM cars WHERE car_number = ?1",
+            "SELECT purchase_price, selling_price, COALESCE(sale_currency, 'IQD')
+             FROM cars WHERE car_number = ?1",
             [car_number],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .map_err(|e| e.to_string())?;
     if payment_amount <= Money::zero() || selling_price <= Money::zero() {
         return Ok(Money::zero());
     }
+    // Audit fix #5: the profit ratio is defined in the sale currency. A payment in a
+    // different currency cannot be mixed into the same profit pool without a fixed
+    // exchange rate, so no profit is recognized for it (conservative, never corrupts
+    // totals). Scheduled installment payments already enforce currency equality.
+    if payment_currency.trim() != sale_currency {
+        return Ok(Money::zero());
+    }
 
     let full_profit = selling_price - purchase_price - car_expenses_for_profit(db, car_number);
     if full_profit <= Money::zero() {
+        // Installment losses are recognized once at sale time so financial_ledger
+        // and partner profit distribution use the same recognition date.
         return Ok(Money::zero());
     }
 
@@ -9761,9 +10436,10 @@ fn calculate_customer_payment_profit(
                AND affects_profit = 1
                AND related_source_type = 'car'
                AND related_source_id = ?1
+               AND COALESCE(currency, 'IQD') = ?3
                AND COALESCE(source_id, '') != ?2
                AND COALESCE(is_reversed, 0) = 0",
-            params![car_number, payment_tx_id.to_string()],
+            params![car_number, payment_tx_id.to_string(), sale_currency],
             |row| row.get(0),
         )
         .unwrap_or(Money::zero());
@@ -9804,8 +10480,10 @@ fn create_customer_payment_profit_recognition(
     }
 
     let payment_profit =
-        calculate_customer_payment_profit(db, payment_tx_id, car_number, payment_amount)?;
-    if payment_profit <= Money::zero() {
+        calculate_customer_payment_profit(db, payment_tx_id, car_number, payment_amount, currency)?;
+    // Bug 1 (N1): Allow negative payment_profit (installment loss) to flow through.
+    // We only short-circuit on exactly zero (no effect).
+    if payment_profit.is_zero() {
         return Ok(());
     }
 
@@ -9853,6 +10531,19 @@ fn create_customer_payment_accounting_effects(
     }
 
     let source_id = payment_tx_id.to_string();
+
+    // Bug 9 (N4): Determine whether this is a customer "سحب" (cash OUT to customer).
+    // For "سحب" we record a NEGATIVE-direction cash_movement (deduct from partners).
+    let (src_type_name, _src_role): (String, String) = db
+        .query_row(
+            "SELECT COALESCE(type, ''), COALESCE(source_role, '')
+             FROM partner_transactions WHERE id = ?1",
+            [payment_tx_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .unwrap_or_else(|_| (String::new(), String::new()));
+    let is_customer_withdrawal = src_type_name.starts_with("سحب");
+
     let cash_exists: bool = db
         .query_row(
             "SELECT COUNT(*) > 0 FROM partner_transactions
@@ -9873,8 +10564,11 @@ fn create_customer_payment_accounting_effects(
             ),
             None => format!("دفعة زبون: {} (رقم حركة دفعة: {})", notes, payment_tx_id),
         };
-        let cash_movement_type = db
-            .query_row(
+        let cash_movement_type = if is_customer_withdrawal {
+            // Bug 9 (N4): "سحب نقدي زبون" reverses cash flow direction.
+            "سحب نقدي زبون"
+        } else {
+            db.query_row(
                 "SELECT COALESCE(type, ''), COALESCE(source_role, '')
                  FROM partner_transactions WHERE id = ?1",
                 [payment_tx_id],
@@ -9890,38 +10584,105 @@ fn create_customer_payment_accounting_effects(
                     "ايداع مقدمة سيارة"
                 }
             })
-            .unwrap_or("ايداع مقدمة سيارة");
+            .unwrap_or("ايداع مقدمة سيارة")
+        };
 
-        distribute_to_partners_50_with_effects_and_related(
-            db,
-            amount,
-            currency,
-            date,
-            payment_type,
-            cash_movement_type,
-            &cash_note,
-            "customer_payment",
-            &source_id,
-            "cash_movement",
-            true,
-            true,
-            false,
-            car_num.as_deref().map(|_| "car"),
-            car_num.as_deref(),
-        )?;
+        if is_customer_withdrawal {
+            // Bug 9 (N4) + Audit fixes #1/#2: Deduct cash from partners.
+            // The shares are stored as POSITIVE amounts with a "سحب..." type.
+            // Every reader (Qasa/Cash cards, cash register tab, partner balance)
+            // derives the sign from the type prefix ("سحب" => minus), so storing a
+            // negative amount here caused a double negation that INCREASED cash on
+            // a customer cash-out. The ledger side (Dr receivable / Cr cash) is
+            // owned by the original customer "سحب" row, so these projection rows
+            // must not write ledger entries of their own.
+            let partners: Vec<String> = db
+                .prepare(
+                    "SELECT partner_name FROM partners WHERE kind = 'شريك' ORDER BY partner_name",
+                )
+                .map_err(|e| e.to_string())?
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            if partners.len() != 2 {
+                return Err(format!(
+                    "يجب أن يكون هناك شريكان بالضبط، وجد {}",
+                    partners.len()
+                ));
+            }
+            let time_str = db
+                .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .unwrap_or_else(|_| "00:00".to_string());
+            let (share1, share2) = split_partner_amount_50(amount.0);
+            // Audit fix #2: related_source_type must be the literal 'car' (or empty),
+            // never the car number itself.
+            let related_type = if car_num.is_some() { "car" } else { "" };
+            for (partner_name, share) in [(&partners[0], share1), (&partners[1], share2)] {
+                db.execute(
+                    "INSERT INTO partner_transactions (
+                        partner_name, kind, type, amount, date, time, notes, currency, payment_type,
+                        source_type, source_id, source_role, affects_qasa, affects_partner_cash,
+                        affects_profit, related_source_type, related_source_id
+                     )
+                     VALUES (?1, 'شريك', ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+                             ?9, ?10, 'cash_movement', 1, 1, 0, ?11, ?12)",
+                    params![
+                        partner_name.trim(),
+                        cash_movement_type,
+                        Money(share),
+                        date.trim(),
+                        &time_str,
+                        cash_note,
+                        currency,
+                        payment_type,
+                        "customer_payment",
+                        &source_id,
+                        related_type,
+                        car_num.as_deref().unwrap_or(""),
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        } else {
+            distribute_to_partners_50_with_effects_and_related(
+                db,
+                amount,
+                currency,
+                date,
+                payment_type,
+                cash_movement_type,
+                &cash_note,
+                "customer_payment",
+                &source_id,
+                "cash_movement",
+                true,
+                true,
+                false,
+                car_num.as_deref().map(|_| "car"),
+                car_num.as_deref(),
+            )?;
+        }
     }
 
-    if let Some(cn) = car_num.as_deref() {
-        create_customer_payment_profit_recognition(
-            db,
-            payment_tx_id,
-            amount,
-            currency,
-            date,
-            payment_type,
-            notes,
-            cn,
-        )?;
+    // Bug 9 (N4): Only create profit recognition for actual payments (not "سحب" withdrawals).
+    // A "سحب" by the customer is a cash-out, not a payment, so it must NOT trigger
+    // installment profit recognition.
+    if !is_customer_withdrawal {
+        if let Some(cn) = car_num.as_deref() {
+            create_customer_payment_profit_recognition(
+                db,
+                payment_tx_id,
+                amount,
+                currency,
+                date,
+                payment_type,
+                notes,
+                cn,
+            )?;
+        }
     }
 
     Ok(())
@@ -10134,10 +10895,29 @@ fn apply_partner_transaction_splits(
         return Ok(());
     }
 
+    // Audit fix #3: partner-cash deductions generated for funder/company settlements
+    // must never be duplicated. Skip re-creation when active split rows already
+    // exist for the same source (edits first delete the old splits explicitly).
+    let partner_split_exists = |split_source_type: &str| -> bool {
+        db.query_row(
+            "SELECT COUNT(*) > 0 FROM partner_transactions
+             WHERE source_type = ?1 AND source_id = ?2
+               AND source_role = 'partner_cash_payment' AND kind = 'شريك'
+               AND COALESCE(is_reversed, 0) = 0",
+            params![split_source_type, tx_id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap_or(false)
+    };
+
     // === 2. Company Cash Withdrawal (سحب شركة) ===
-    let is_company_cash_withdrawal =
-        kind == "شركة" && type_.starts_with("سحب") && notes.unwrap_or("").contains("سحب نقدي");
-    if is_company_cash_withdrawal {
+    // Audit fix #15: prefer the explicit type ("سحب نقدي") over free-text notes.
+    // The notes marker is kept only for backward compatibility with rows created
+    // before the type-based flag existed.
+    let is_company_cash_withdrawal = kind == "شركة"
+        && type_.starts_with("سحب")
+        && (type_.contains("نقدي") || notes.unwrap_or("").contains("سحب نقدي"));
+    if is_company_cash_withdrawal && !partner_split_exists("company_payment") {
         let partner_note = format!("تسديد شركة: {} ({})", partner_name, tx_id);
         deduct_from_partners_5050_with_effects(
             db,
@@ -10163,22 +10943,24 @@ fn apply_partner_transaction_splits(
     // === 4. Funder Repayment (سحب ممول) ===
     let is_financier_repayment = kind == "ممول" && type_.starts_with("سحب");
     if is_financier_repayment {
-        let partner_note = format!("تسديد ممول: {} ({})", partner_name, tx_id);
-        deduct_from_partners_5050_with_effects(
-            db,
-            amount,
-            currency,
-            date,
-            "قاصه",
-            "سحب تسديد",
-            &partner_note,
-            "funder_payment",
-            &tx_id.to_string(),
-            "partner_cash_payment",
-            true,
-            true,
-            false,
-        )?;
+        if !partner_split_exists("funder_payment") {
+            let partner_note = format!("تسديد ممول: {} ({})", partner_name, tx_id);
+            deduct_from_partners_5050_with_effects(
+                db,
+                amount,
+                currency,
+                date,
+                "قاصه",
+                "سحب تسديد",
+                &partner_note,
+                "funder_payment",
+                &tx_id.to_string(),
+                "partner_cash_payment",
+                true,
+                true,
+                false,
+            )?;
+        }
         distribute_financier_repayment_to_partners(
             db,
             partner_name,
@@ -10191,13 +10973,17 @@ fn apply_partner_transaction_splits(
     }
 
     // === 5. Customer Payments (دفعات الزبائن) — Two separate effects ===
+    // Bug 9 (N4): "سحب" type transactions on customers must also flow through
+    // `create_customer_payment_accounting_effects`, but with reversed cash
+    // direction (deduct from partners rather than deposit).
     let is_customer_payment = kind == "زبون"
         && (type_.starts_with("ايداع")
             || type_.starts_with("إيداع")
             || type_.starts_with("مقدمة")
             || type_.starts_with("استلام")
             || type_.starts_with("إستلام")
-            || type_.starts_with("تسديد"));
+            || type_.starts_with("تسديد")
+            || type_.starts_with("سحب"));
     if is_customer_payment {
         let notes_str = notes.unwrap_or("");
         create_customer_payment_accounting_effects(
@@ -10240,6 +11026,10 @@ fn parse_financier_commission(amount: Money, notes: Option<&str>) -> Result<Mone
         let percent = clean
             .parse::<Money>()
             .map_err(|_| "صيغة عمولة الممول غير صحيحة".to_string())?;
+        // Audit fix #14: reject negative commission values explicitly.
+        if percent < Money::zero() {
+            return Err("عمولة الممول لا يمكن أن تكون سالبة".to_string());
+        }
         return Ok((amount * percent) / Money(dec!(100)));
     }
     let clean: String = raw_commission
@@ -10255,9 +11045,14 @@ fn parse_financier_commission(amount: Money, notes: Option<&str>) -> Result<Mone
     {
         return Err("صيغة عمولة الممول غير صحيحة".to_string());
     }
-    clean
+    let parsed = clean
         .parse::<Money>()
-        .map_err(|_| "صيغة عمولة الممول غير صحيحة".to_string())
+        .map_err(|_| "صيغة عمولة الممول غير صحيحة".to_string())?;
+    // Audit fix #14: reject negative commission values explicitly.
+    if parsed < Money::zero() {
+        return Err("عمولة الممول لا يمكن أن تكون سالبة".to_string());
+    }
+    Ok(parsed)
 }
 
 fn find_financier_commission_expense_id(
@@ -10374,7 +11169,7 @@ fn pay_customer_installment(
     let payment_type = payment_type.unwrap_or_else(|| "قاصه".to_string());
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
     pay_customer_installment_core(
         &db,
         installment_id,
@@ -10396,7 +11191,7 @@ fn reverse_customer_installment_payment(
 ) -> Result<(), String> {
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
     reverse_customer_installment_payment_core(&db, installment_id)?;
     db.commit().map_err(|e| e.to_string())?;
     Ok(())
@@ -10409,7 +11204,7 @@ fn recalculate_installment_schedule(
 ) -> Result<(), String> {
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
     recalculate_installment_schedule_for_car(&db, car_number.trim())?;
     db.commit().map_err(|e| e.to_string())?;
     Ok(())
@@ -10521,7 +11316,7 @@ fn set_customer_installment_status(
     let payment_type = payment_type.unwrap_or_else(|| "قاصه".to_string());
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
     if paid {
         pay_customer_installment_core(
             &db,
@@ -10536,6 +11331,63 @@ fn set_customer_installment_status(
     } else {
         reverse_customer_installment_payment_core(&db, installment_id)?;
     }
+    db.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn set_agency_receivable_status_core(
+    db: &Connection,
+    transaction_id: i64,
+    paid: bool,
+) -> Result<(), String> {
+    let agency_id_raw: String = match db.query_row(
+        "SELECT COALESCE(source_id, '')
+         FROM partner_transactions
+         WHERE id = ?1
+           AND kind = 'وكالة'
+           AND source_type = 'agency'
+           AND source_role = 'agency_receivable'",
+        [transaction_id],
+        |row| row.get(0),
+    ) {
+        Ok(value) => value,
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            return Err("تعذر العثور على مديونية الوكالة المرتبطة بهذه الحركة".to_string());
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+
+    let agency_id = agency_id_raw
+        .trim()
+        .parse::<i64>()
+        .map_err(|_| "تعذر تحديد الوكالة المرتبطة بهذه الحركة".to_string())?;
+    let payment_status = if paid { "واصل" } else { "غير واصل" };
+    let updated = db
+        .execute(
+            "UPDATE agencies SET payment_status = ?1 WHERE id = ?2",
+            params![payment_status, agency_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if updated == 0 {
+        return Err("تعذر العثور على الوكالة المرتبطة بهذه الحركة".to_string());
+    }
+
+    record_agency_ledger_entries(db, agency_id)?;
+    rebuild_agency_partner_entries(db, agency_id)?;
+    recalculate_all_partners(db)?;
+    Ok(())
+}
+
+#[tauri::command]
+fn set_agency_receivable_status(
+    state: State<AppState>,
+    transaction_id: i64,
+    paid: bool,
+) -> Result<(), String> {
+    let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.transaction().map_err(|e| e.to_string())?;
+    require_admin_session(&db, None)?;
+    set_agency_receivable_status_core(&db, transaction_id, paid)?;
     db.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -10564,6 +11416,8 @@ fn pay_financier_from_partners(
     let currency = currency.unwrap_or_else(|| "IQD".to_string());
     validate_currency(&currency)?;
     let commission_amount = commission_amount.unwrap_or(Money::zero());
+    // Audit fix #14: a negative commission is a data-entry error, not "no commission".
+    validate_non_negative_amount(commission_amount, "العمولة")?;
     if commission_amount > Money::zero() {
         validate_positive_amount(commission_amount, "العمولة")?;
     }
@@ -10573,7 +11427,7 @@ fn pay_financier_from_partners(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
     let financier_name = financier_name.trim();
     let financier_kind = financier_kind.trim();
     let date = date.trim();
@@ -10783,15 +11637,58 @@ fn update_partner_transaction(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
 
     let pre_car_number = find_car_number_for_transaction(&db, id);
+
+    // Audit fix #7/#20: refuse to edit generated 50/50 split rows directly.
+    let (existing_kind, existing_source_type, existing_source_role): (String, String, String) = db
+        .query_row(
+            "SELECT kind, COALESCE(source_type, ''), COALESCE(source_role, '')
+             FROM partner_transactions WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|_| "الحركة غير موجودة".to_string())?;
+    if is_generated_partner_split(&existing_kind, &existing_source_type, &existing_source_role) {
+        return Err(
+            "لا يمكن تعديل حركة مولّدة تلقائياً من حركة أصلية؛ عدّل الحركة الأصلية بدلاً من ذلك"
+                .to_string(),
+        );
+    }
 
     // 1. Reverse old ledger entries for this partner transaction
     reverse_ledger_entries(&db, "partner_transaction", &id.to_string())?;
 
     delete_customer_payment_partner_splits(&db, id)?;
     delete_customer_payment_profit_splits(&db, id)?;
+
+    // Audit fix #3: also remove generated funder/company settlement deductions and
+    // the commission expense linked to this transaction, so re-applying splits below
+    // rebuilds them exactly once (no duplicates, no orphans).
+    delete_partner_transactions_by_source_with_ledger(
+        &db,
+        "funder_payment",
+        &id.to_string(),
+        Some("partner_cash_payment"),
+    )?;
+    delete_partner_transactions_by_source_with_ledger(
+        &db,
+        "company_payment",
+        &id.to_string(),
+        Some("partner_cash_payment"),
+    )?;
+    if let Some(exp_id) = find_financier_commission_expense_id(&db, id)? {
+        delete_partner_transactions_by_source_with_ledger(
+            &db,
+            "expense",
+            &exp_id.to_string(),
+            Some("cash_payment"),
+        )?;
+        delete_ledger_entries(&db, "expense", &exp_id.to_string())?;
+        db.execute("DELETE FROM expenses WHERE id = ?1", [exp_id])
+            .map_err(|e| e.to_string())?;
+    }
 
     // Clean up linked split transactions using source fields instead of notes LIKE
     let linked_ids: Vec<i64> = {
@@ -10849,12 +11746,17 @@ fn update_partner_transaction(
     )
     .map_err(|e| e.to_string())?;
 
-    // Issue 3: Recalculate source/affects classification after update
-    let classification = classify_partner_transaction(kind.trim(), type_.trim(), id);
-    db.execute(
-        "UPDATE partner_transactions SET source_type = ?1, source_id = ?2, source_role = ?3, affects_qasa = ?4, affects_partner_cash = ?5, affects_profit = ?6 WHERE id = ?7",
-        params![classification.source_type, classification.source_id, classification.source_role, classification.affects_qasa, classification.affects_partner_cash, classification.affects_profit, id],
-    ).map_err(|e| e.to_string())?;
+    // Issue 3 + Audit fix #7: recalculate classification ONLY for manually
+    // classifiable rows. Rows that carry a generated source (customer payments,
+    // schedule rows, sale down payments, ...) keep their source fields and
+    // affects_* flags so the source linkage is never destroyed by an edit.
+    if is_reclassifiable_source_type(&existing_source_type) {
+        let classification = classify_partner_transaction(kind.trim(), type_.trim(), id);
+        db.execute(
+            "UPDATE partner_transactions SET source_type = ?1, source_id = ?2, source_role = ?3, affects_qasa = ?4, affects_partner_cash = ?5, affects_profit = ?6 WHERE id = ?7",
+            params![classification.source_type, classification.source_id, classification.source_role, classification.affects_qasa, classification.affects_partner_cash, classification.affects_profit, id],
+        ).map_err(|e| e.to_string())?;
+    }
 
     // Write new ledger entries
     record_partner_ledger_entries(&db, id)?;
@@ -10874,135 +11776,11 @@ fn update_partner_transaction(
         payment_type.as_deref().unwrap_or("قاصه"),
     )?;
 
-    // Handle commission expense updating/deleting for financier repayments
-    let is_financier_repayment = kind.trim() == "ممول" && type_.trim().starts_with("سحب");
-
-    if is_financier_repayment {
-        let commission_amount = parse_financier_commission(amount, notes.as_deref())?;
-        let existing_expense_id = find_financier_commission_expense_id(&db, id)?;
-
-        if commission_amount > Money::zero() {
-            let expense_notes = format!(
-                "عمولة تسديد الممول {} (رقم الحركة: {})",
-                partner_name.trim(),
-                id
-            );
-            match existing_expense_id {
-                Some(exp_id) => {
-                    // Reverse old ledger entries for this expense
-                    reverse_ledger_entries(&db, "expense", &exp_id.to_string())?;
-
-                    db.execute(
-                        "UPDATE expenses
-                         SET amount = ?1,
-                             date = ?2,
-                             notes = ?3,
-                             currency = ?4,
-                             source_type = 'funder_commission',
-                             source_id = ?5,
-                             source_role = 'commission_expense'
-                         WHERE id = ?6",
-                        params![
-                            commission_amount,
-                            date.trim(),
-                            Some(expense_notes.clone()),
-                            currency.as_deref().unwrap_or("IQD"),
-                            id.to_string(),
-                            exp_id
-                        ],
-                    )
-                    .map_err(|e| e.to_string())?;
-
-                    // Record new ledger entries for this expense
-                    record_ledger_entry(
-                        &db,
-                        date.trim(),
-                        &time_str,
-                        "expense",
-                        Some("عمولة تسديد تمويل"),
-                        commission_amount,
-                        Money::zero(),
-                        currency.as_deref().unwrap_or("IQD"),
-                        "expense",
-                        &exp_id.to_string(),
-                        "مصروف عام",
-                        &expense_notes,
-                        None,
-                    )?;
-
-                    record_ledger_entry(
-                        &db,
-                        date.trim(),
-                        &time_str,
-                        "cash",
-                        Some("قاصه"),
-                        Money::zero(),
-                        commission_amount,
-                        currency.as_deref().unwrap_or("IQD"),
-                        "expense",
-                        &exp_id.to_string(),
-                        "دفع مصروف",
-                        &format!("دفع مصروف: عمولة تسديد الممول {}", partner_name.trim()),
-                        None,
-                    )?;
-                }
-                None => {
-                    let exp_id = insert_financier_commission_expense(
-                        &db,
-                        partner_name.trim(),
-                        commission_amount,
-                        date.trim(),
-                        &time_str,
-                        currency.as_deref().unwrap_or("IQD"),
-                        id,
-                    )?;
-
-                    record_ledger_entry(
-                        &db,
-                        date.trim(),
-                        &time_str,
-                        "expense",
-                        Some("عمولة تسديد تمويل"),
-                        commission_amount,
-                        Money::zero(),
-                        currency.as_deref().unwrap_or("IQD"),
-                        "expense",
-                        &exp_id.to_string(),
-                        "مصروف عام",
-                        &expense_notes,
-                        None,
-                    )?;
-
-                    record_ledger_entry(
-                        &db,
-                        date.trim(),
-                        &time_str,
-                        "cash",
-                        Some("قاصه"),
-                        Money::zero(),
-                        commission_amount,
-                        currency.as_deref().unwrap_or("IQD"),
-                        "expense",
-                        &exp_id.to_string(),
-                        "دفع مصروف",
-                        &format!("دفع مصروف: عمولة تسديد الممول {}", partner_name.trim()),
-                        None,
-                    )?;
-                }
-            }
-        } else if let Some(exp_id) = existing_expense_id {
-            reverse_ledger_entries(&db, "expense", &exp_id.to_string())?;
-            db.execute("DELETE FROM expenses WHERE id = ?1", [exp_id])
-                .map_err(|e| e.to_string())?;
-        }
-    } else {
-        // If it was modified to not be a financier repayment, delete its linked expense if any
-        if let Some(exp_id) = find_financier_commission_expense_id(&db, id)? {
-            reverse_ledger_entries(&db, "expense", &exp_id.to_string())?;
-            db.execute("DELETE FROM expenses WHERE id = ?1", [exp_id])
-                .map_err(|e| e.to_string())?;
-        }
-    }
+    // Audit fix #3: the commission expense lifecycle is now handled in exactly one
+    // place. The pre-cleanup above removed any existing commission expense (with its
+    // ledger entries and partner deduction rows), and apply_partner_transaction_splits
+    // -> distribute_financier_repayment_to_partners recreated it idempotently when the
+    // updated transaction is still a financier repayment carrying a commission.
 
     recalculate_partner_total(&db, partner_name.trim(), kind.trim())?;
 
@@ -11031,25 +11809,64 @@ fn delete_partner_transaction(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
 
     let pre_car_number = find_car_number_for_transaction(&db, id);
 
-    // Determine the source_type of the original transaction to find linked rows properly
-    let original_source_type: Option<String> = db
+    // Audit fix #7/#20: refuse to delete a single generated 50/50 split row directly.
+    let existing_row: Option<(String, String, String)> = db
         .query_row(
-            "SELECT source_type FROM partner_transactions WHERE id = ?1",
+            "SELECT kind, COALESCE(source_type, ''), COALESCE(source_role, '')
+             FROM partner_transactions WHERE id = ?1",
             [id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
-        .unwrap_or(None);
+        .ok();
+    if let Some((ref k, ref st, ref sr)) = existing_row {
+        if is_generated_partner_split(k, st, sr) {
+            return Err(
+                "لا يمكن حذف حركة مولّدة تلقائياً من حركة أصلية؛ احذف الحركة الأصلية بدلاً من ذلك"
+                    .to_string(),
+            );
+        }
+    }
+
+    // Determine the source_type of the original transaction to find linked rows properly
+    let original_source_type: Option<String> = existing_row
+        .as_ref()
+        .map(|(_, st, _)| st.clone())
+        .filter(|st| !st.is_empty());
 
     // Delete corresponding commission expense if it exists
+    // Audit fix #3: also remove the partner deduction rows generated for the
+    // commission expense, so they never remain as orphans reducing partner cash.
     if let Some(exp_id) = find_financier_commission_expense_id(&db, id)? {
+        delete_partner_transactions_by_source_with_ledger(
+            &db,
+            "expense",
+            &exp_id.to_string(),
+            Some("cash_payment"),
+        )?;
         delete_ledger_entries(&db, "expense", &exp_id.to_string())?;
         db.execute("DELETE FROM expenses WHERE id = ?1", [exp_id])
             .map_err(|e| e.to_string())?;
     }
+
+    // Audit fix #3: remove generated funder/company settlement deductions tied to
+    // this transaction (they carry a different source_type than the original row,
+    // so the generic linked-row cleanup below cannot find them).
+    delete_partner_transactions_by_source_with_ledger(
+        &db,
+        "funder_payment",
+        &id.to_string(),
+        Some("partner_cash_payment"),
+    )?;
+    delete_partner_transactions_by_source_with_ledger(
+        &db,
+        "company_payment",
+        &id.to_string(),
+        Some("partner_cash_payment"),
+    )?;
 
     // Clean up linked split transactions using source fields instead of notes LIKE
     let linked_ids: Vec<i64> = if let Some(ref st) = original_source_type {
@@ -11167,16 +11984,19 @@ fn get_cash_register_entries(
     if let Some(pt) = &payment_type {
         if pt == "الكاش" || pt == "قاصه" || pt == "قاصة" {
             // Phase 3: Use affects_qasa / affects_partner_cash flags
+            // Audit fix #9: the tab must select exactly the same rows the Qasa/Cash
+            // cards aggregate, so both always show identical totals (acceptance
+            // rules 28.1/28.2). Transfers are excluded by PREFIX to match the cards.
             let query = if pt == "الكاش" {
                 "SELECT id, date, COALESCE(time, '00:00'), type, amount, partner_name, notes, COALESCE(currency, 'IQD'), kind
-                 FROM partner_transactions
-                 WHERE affects_partner_cash = 1 AND kind = 'شريك' AND type NOT LIKE '%تحويل%'
-                 ORDER BY date ASC, time ASC, id ASC"
+                  FROM partner_transactions
+                  WHERE affects_partner_cash = 1 AND kind = 'شريك' AND type NOT LIKE 'تحويل%'
+                  ORDER BY date ASC, time ASC, id ASC"
             } else {
                 "SELECT id, date, COALESCE(time, '00:00'), type, amount, partner_name, notes, COALESCE(currency, 'IQD'), kind
-                 FROM partner_transactions
-                 WHERE affects_qasa = 1 AND kind IN ('شريك', 'مستثمر') AND type NOT LIKE '%تحويل%'
-                 ORDER BY date ASC, time ASC, id ASC"
+                  FROM partner_transactions
+                  WHERE affects_qasa = 1 AND kind IN ('شريك', 'مستثمر') AND type NOT LIKE 'تحويل%'
+                  ORDER BY date ASC, time ASC, id ASC"
             };
 
             let mut stmt = db.prepare(query).map_err(|e| e.to_string())?;
@@ -11208,9 +12028,10 @@ fn get_cash_register_entries(
                 } else if is_withdrawal {
                     -raw_amount
                 } else {
-                    // Phase 3 path: rows with affects_qasa/affects_partner_cash are already
-                    // known cash movements by flag. Default to positive if not a known withdrawal.
-                    raw_amount
+                    // Audit fix #9: rows whose type matches no known deposit/withdrawal
+                    // prefix are counted as ZERO by the Qasa/Cash card queries. Skip
+                    // them here as well so the tab total always equals the card total.
+                    continue;
                 };
 
                 // Phase 3: Show original transaction type for clear audit trail
@@ -11275,6 +12096,8 @@ fn get_cash_register_entries(
             )
           )",
     );
+    // Audit fix #24: order chronologically so the running balance is meaningful
+    // even when entries are recorded with back-dated dates.
     query.push_str(" ORDER BY date ASC, time ASC, id ASC");
 
     let mut stmt = db.prepare(&query).map_err(|e| e.to_string())?;
@@ -11369,7 +12192,7 @@ fn car_expense_partner_note(
 /// - Enforces profit cap.
 /// - Rebuilds sale ledger entries (COGS, receivable, deferred_revenue, revenue, inventory).
 /// - For cash sales: rebuilds partner profit_recognition splits to reflect updated costs.
-/// - For installment/due sales: only rebuilds ledger; does NOT touch customer payments or splits.
+/// - For installment/due sales: rebuilds loss recognition and payment profit splits without touching customer payments.
 fn rebuild_sold_car_accounting_after_cost_change(
     db: &Connection,
     car_number: &str,
@@ -11389,10 +12212,7 @@ fn rebuild_sold_car_accounting_after_cost_change(
         return Ok(());
     }
 
-    // 1. Enforce profit cap before any changes
-    validate_profit_cap_for_car(db, car_number)?;
-
-    // 2. Rebuild sale ledger entries (COGS, receivable, deferred_revenue, revenue, inventory credit)
+    // 1. Rebuild sale ledger entries (COGS, receivable, deferred_revenue, revenue, inventory credit)
     delete_car_sale_ledger_entries(db, car_number)?;
     record_car_sale_ledger_entries(db, car_number)?;
 
@@ -11477,6 +12297,13 @@ fn rebuild_sold_car_accounting_after_cost_change(
         // Rebuild profit recognitions for installments/term sales at new cost/profit ratio
         rebuild_customer_payment_profit_recognitions_for_car(db, car_number)?;
     }
+
+    // Audit fix #19: enforce the profit cap AFTER rebuilding. The rebuild recomputes
+    // recognized profit with the new cost basis (clamped by the cap), so a legitimate
+    // post-sale expense can no longer be rejected because of stale recognitions.
+    // The validation now acts as a consistency assertion on the rebuilt state.
+    validate_profit_cap_for_car(db, car_number)?;
+
     recalculate_all_partners(db)?;
 
     Ok(())
@@ -11506,7 +12333,7 @@ fn add_expense(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
     let (_current_date, current_time) = now_datetime();
 
     if let Some(ref car_num) = car_number {
@@ -11603,9 +12430,14 @@ fn add_expense(
     }
 
     // مصروف عام
+    // Bug 14 (H12): General expenses must NOT carry a car_number — passing
+    // &car_number here (which would be Some("") when the caller omitted it)
+    // would link this general expense to whatever value happened to be in
+    // car_number, causing confusion in car-expense queries that filter by
+    // `car_number IS NULL OR car_number = ''`. Pass None instead.
     db.execute(
         "INSERT INTO expenses (description, amount, date, time, notes, currency, car_number)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
         (
             description.trim(),
             amount,
@@ -11613,7 +12445,6 @@ fn add_expense(
             &current_time,
             notes.as_deref(),
             &currency_val,
-            &car_number,
         ),
     )
     .map_err(|e| e.to_string())?;
@@ -11712,7 +12543,7 @@ fn delete_expense(state: State<AppState>, id: i64) -> Result<(), String> {
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
 
     // Delete partner transactions WITH their ledger entries (prevents orphan ledger rows)
     delete_partner_transactions_by_source_with_ledger(
@@ -11759,7 +12590,7 @@ fn update_expense(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
     let (_, current_time) = now_datetime();
 
     // 1. Delete old partner transactions WITH their ledger entries
@@ -11774,12 +12605,15 @@ fn update_expense(
     delete_ledger_entries(&db, "expense", &id.to_string())?;
 
     // 3. تحديث جدول المصروفات
+    // Audit fix #27: also refresh the `time` column so the time-aware profit
+    // period filters see the updated timestamp, not a stale one.
     db.execute(
-        "UPDATE expenses SET description = ?1, amount = ?2, date = ?3, notes = ?4, currency = ?5 WHERE id = ?6",
+        "UPDATE expenses SET description = ?1, amount = ?2, date = ?3, time = ?4, notes = ?5, currency = ?6 WHERE id = ?7",
         params![
             description.trim(),
             amount,
             date.trim(),
+            &current_time,
             notes.as_deref().map(|s| s.trim()),
             &currency_val,
             id
@@ -11868,7 +12702,7 @@ fn add_car_expense_record(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
     let (_, current_time) = now_datetime();
 
     db.execute(
@@ -11952,18 +12786,11 @@ fn add_car_expense_record(
         > 0;
 
     if is_sold {
-        let payment_type: String = db
-            .query_row(
-                "SELECT COALESCE(payment_type, '') FROM cars WHERE car_number = ?1",
-                [car_number.trim()],
-                |row| row.get(0),
-            )
-            .unwrap_or_default();
-
-        // Installment/term sales: rebuild ledger at new cost ratio.
-        if payment_type != "كاش" {
-            rebuild_sold_car_accounting_after_cost_change(&db, car_number.trim())?;
-        }
+        // Audit fix #4: ALL sold cars (cash AND installment/term) must be rebuilt so
+        // the recognized profit reflects the new car cost (Instructions.md §5.1/§23).
+        // Previously cash sales were skipped here, leaving the cash-sale
+        // profit_recognition rows overstated after adding a post-sale expense.
+        rebuild_sold_car_accounting_after_cost_change(&db, car_number.trim())?;
     }
 
     db.commit().map_err(|e| e.to_string())?;
@@ -12010,7 +12837,7 @@ fn delete_car_expense_record(state: State<AppState>, id: i64) -> Result<(), Stri
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
 
     // 1. جلب معلومات المصروف
     let row_result = db.query_row(
@@ -12065,6 +12892,87 @@ fn now_datetime() -> (String, String) {
     (date, time)
 }
 
+fn normalize_agency_payment_status(status: &str) -> &'static str {
+    if status.trim() == "غير واصل" {
+        "غير واصل"
+    } else {
+        "واصل"
+    }
+}
+
+fn agency_is_received(status: &str) -> bool {
+    normalize_agency_payment_status(status) == "واصل"
+}
+
+fn is_borrower_account_kind(kind: &str) -> bool {
+    matches!(kind.trim(), "زبون" | "وكالة")
+}
+
+fn borrower_balance_for_currency(
+    db: &Connection,
+    partner_name: Option<&str>,
+    kind: Option<&str>,
+    currency: &str,
+) -> Money {
+    // Audit fix #21: paid types are matched by PREFIX (consistent with
+    // Instructions.md §10.2 and the rest of the system), not by an exact-match
+    // list, so any manual payment like "ايداع دفعة" correctly reduces the
+    // customer balance. Rows generated by the installment schedule / sale down
+    // payment / payment events stay excluded to prevent double counting.
+    db.query_row(
+        "SELECT
+            COALESCE(SUM(CASE
+                WHEN (type LIKE 'باقي%' OR type LIKE 'سحب%')
+                     AND type NOT LIKE 'تحويل%' THEN amount
+                ELSE 0
+            END), 0.0)
+            - COALESCE(SUM(CASE
+                WHEN (type LIKE 'ايداع%' OR type LIKE 'إيداع%' OR type LIKE 'مقدمة%'
+                      OR type LIKE 'استلام%' OR type LIKE 'إستلام%' OR type LIKE 'تسديد%'
+                      OR type LIKE 'واصل%')
+                     AND type NOT LIKE 'تحويل%'
+                     AND COALESCE(source_type, '') NOT IN ('customer_installment_schedule', 'customer_sale_payment')
+                     AND COALESCE(related_source_type, '') <> 'customer_payment_event'
+                THEN amount
+                ELSE 0
+            END), 0.0)
+         FROM partner_transactions
+         WHERE kind IN ('زبون', 'وكالة')
+           AND (?1 IS NULL OR partner_name = ?1)
+           AND (?2 IS NULL OR kind = ?2)
+           AND COALESCE(currency, 'IQD') = ?3
+           AND COALESCE(is_reversed, 0) = 0",
+        params![partner_name, kind, currency],
+        |row| row.get(0),
+    )
+    .unwrap_or(Money::zero())
+}
+
+fn ensure_agency_account(db: &Connection, new_agent_name: &str, phone: &str) -> Result<(), String> {
+    let name = new_agent_name.trim();
+    if name.is_empty() {
+        return Err("اسم الوكيل الجديد مطلوب لإنشاء حساب الوكالة".to_string());
+    }
+
+    let phone = normalize_phone_digits(phone);
+    db.execute(
+        "INSERT OR IGNORE INTO partners (partner_name, phone, total_amount, kind)
+         VALUES (?1, ?2, 0.0, 'وكالة')",
+        params![name, phone.as_str()],
+    )
+    .map_err(|e| e.to_string())?;
+
+    if !phone.trim().is_empty() {
+        db.execute(
+            "UPDATE partners SET phone = ?1 WHERE partner_name = ?2 AND kind = 'وكالة'",
+            params![phone.as_str(), name],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
 fn agency_profit_note(old_agent_name: &str, new_agent_name: &str) -> String {
     format!(
         "ايداع ارباح وكالة {} {} رئيسي",
@@ -12075,6 +12983,66 @@ fn agency_profit_note(old_agent_name: &str, new_agent_name: &str) -> String {
     .replace("  ", " ")
 }
 
+#[allow(clippy::too_many_arguments)]
+fn insert_agency_customer_receivable(
+    db: &Connection,
+    agency_id: i64,
+    new_agent_name: &str,
+    phone: &str,
+    car_number: &str,
+    amount: Money,
+    currency: &str,
+    date: &str,
+    time: &str,
+    agency_notes: &str,
+) -> Result<(), String> {
+    if amount <= Money::zero() {
+        return Ok(());
+    }
+
+    let customer_name = new_agent_name.trim();
+    ensure_agency_account(db, customer_name, phone)?;
+
+    let note = if agency_notes.trim().is_empty() {
+        format!(
+            "غير واصل وكالة {} رقم السيارة {}",
+            customer_name,
+            car_number.trim()
+        )
+    } else {
+        format!(
+            "غير واصل وكالة {} رقم السيارة {} - {}",
+            customer_name,
+            car_number.trim(),
+            agency_notes.trim()
+        )
+    }
+    .trim()
+    .replace("  ", " ");
+
+    db.execute(
+        "INSERT INTO partner_transactions (
+            partner_name, kind, type, amount, date, time, notes, currency, payment_type,
+            source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit,
+            related_source_type, related_source_id
+         )
+         VALUES (?1, 'وكالة', 'باقي وكالة', ?2, ?3, ?4, ?5, ?6, 'قاصه',
+            'agency', ?7, 'agency_receivable', 0, 0, 0, 'agency', ?7)",
+        params![
+            customer_name,
+            amount,
+            date.trim(),
+            time.trim(),
+            note,
+            currency,
+            agency_id.to_string(),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    recalculate_partner_total(db, customer_name, "وكالة")
+}
+
 fn distribute_agency_partner_effects(
     db: &Connection,
     amount: Money,
@@ -12083,22 +13051,10 @@ fn distribute_agency_partner_effects(
     note: &str,
     source_type: &str,
     source_id: &str,
+    received: bool,
 ) -> Result<(), String> {
-    distribute_to_partners_50_with_effects(
-        db,
-        amount,
-        currency,
-        date,
-        "قاصه",
-        "ايداع ارباح وكالة",
-        note,
-        source_type,
-        source_id,
-        "cash_movement",
-        true,
-        true,
-        false,
-    )?;
+    // Audit fix #12 (Instructions.md §13): agency profit is recognized when the
+    // agency is RECORDED, regardless of whether the cash was received yet.
     distribute_to_partners_50_with_effects(
         db,
         amount,
@@ -12113,7 +13069,29 @@ fn distribute_agency_partner_effects(
         false,
         false,
         true,
-    )
+    )?;
+
+    // The CASH movement is created only when the money actually arrived
+    // (Qasa/Cash must reflect real cash only). While unpaid, the receivable row
+    // created by insert_agency_customer_receivable tracks the amount owed.
+    if received {
+        distribute_to_partners_50_with_effects(
+            db,
+            amount,
+            currency,
+            date,
+            "قاصه",
+            "ايداع ارباح وكالة",
+            note,
+            source_type,
+            source_id,
+            "cash_movement",
+            true,
+            true,
+            false,
+        )?;
+    }
+    Ok(())
 }
 
 fn distribute_agency_withdrawal_partner_effects(
@@ -12160,21 +13138,63 @@ fn distribute_agency_withdrawal_partner_effects(
     )
 }
 
+#[allow(clippy::type_complexity)]
 fn rebuild_agency_partner_entries(db: &Connection, agency_id: i64) -> Result<(), String> {
-    let agency_info: Result<(String, String, Money, Money, String), rusqlite::Error> = db.query_row(
-        "SELECT old_agent_name, new_agent_name, amount_usd, amount_iqd, date FROM agencies WHERE id = ?1",
+    let agency_info: Result<
+        (
+            String,
+            String,
+            String,
+            String,
+            Money,
+            Money,
+            String,
+            String,
+            String,
+            String,
+        ),
+        rusqlite::Error,
+    > = db.query_row(
+        "SELECT old_agent_name, new_agent_name, phone, car_number, amount_usd, amount_iqd,
+                date, time, notes, COALESCE(payment_status, 'واصل')
+         FROM agencies WHERE id = ?1",
         [agency_id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+                row.get(8)?,
+                row.get(9)?,
+            ))
+        },
     );
 
-    let (old_agent_name, new_agent_name, amount_usd, amount_iqd, date) = match agency_info {
+    let (
+        old_agent_name,
+        new_agent_name,
+        phone,
+        car_number,
+        amount_usd,
+        amount_iqd,
+        date,
+        time,
+        notes,
+        payment_status,
+    ) = match agency_info {
         Ok(info) => info,
         Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
         Err(e) => return Err(e.to_string()),
     };
+    let received = agency_is_received(&payment_status);
 
     // Delete ALL old partner rows for this agency
-    // Handles legacy cash_movement, profit_recognition, and current agency_profit rows
+    // Handles legacy cash_movement, profit_recognition, receivable, and current agency_profit rows
     delete_partner_transactions_by_source_with_ledger(db, "agency", &agency_id.to_string(), None)?;
 
     let note = agency_profit_note(&old_agent_name, &new_agent_name);
@@ -12188,7 +13208,22 @@ fn rebuild_agency_partner_entries(db: &Connection, agency_id: i64) -> Result<(),
             &note,
             "agency",
             &agency_id.to_string(),
+            received,
         )?;
+        if !received {
+            insert_agency_customer_receivable(
+                db,
+                agency_id,
+                &new_agent_name,
+                &phone,
+                &car_number,
+                amount_usd,
+                "USD",
+                &date,
+                &time,
+                &notes,
+            )?;
+        }
     }
 
     if amount_iqd > Money::zero() {
@@ -12200,7 +13235,22 @@ fn rebuild_agency_partner_entries(db: &Connection, agency_id: i64) -> Result<(),
             &note,
             "agency",
             &agency_id.to_string(),
+            received,
         )?;
+        if !received {
+            insert_agency_customer_receivable(
+                db,
+                agency_id,
+                &new_agent_name,
+                &phone,
+                &car_number,
+                amount_iqd,
+                "IQD",
+                &date,
+                &time,
+                &notes,
+            )?;
+        }
     }
 
     Ok(())
@@ -12259,6 +13309,7 @@ fn rebuild_agency_transaction_partner_entries(db: &Connection, tx_id: i64) -> Re
             &note,
             "agency_transaction",
             &tx_id.to_string(),
+            true,
         )?;
     } else {
         distribute_agency_withdrawal_partner_effects(
@@ -12311,8 +13362,8 @@ fn get_agencies(state: State<AppState>) -> Result<Vec<Agency>, String> {
     let mut stmt = db
         .prepare(
             "SELECT id, old_agent_name, car_type, car_number, car_model, color, new_agent_name, phone,
-                    amount_usd, amount_iqd, notes, date, time
-             FROM agencies ORDER BY id DESC",
+                    amount_usd, amount_iqd, notes, COALESCE(payment_status, 'واصل'), date, time
+             FROM agencies ORDER BY id ASC",
         )
         .map_err(|e| e.to_string())?;
 
@@ -12330,8 +13381,9 @@ fn get_agencies(state: State<AppState>) -> Result<Vec<Agency>, String> {
                 amount_usd: row.get(8)?,
                 amount_iqd: row.get(9)?,
                 notes: row.get(10)?,
-                date: row.get(11)?,
-                time: row.get(12)?,
+                payment_status: row.get(11)?,
+                date: row.get(12)?,
+                time: row.get(13)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -12355,10 +13407,38 @@ fn add_agency(
     amount_usd: Money,
     amount_iqd: Money,
     notes: String,
+    payment_status: Option<String>,
+    creation_token: Option<String>,
 ) -> Result<i64, String> {
+    // Audit fix #13: validate agency amounts before any write.
+    validate_required_text(&old_agent_name, "اسم الوكيل القديم")?;
+    validate_required_text(&new_agent_name, "اسم الوكيل الجديد")?;
+    validate_non_negative_amount(amount_usd, "مبلغ الدولار")?;
+    validate_non_negative_amount(amount_iqd, "مبلغ الدينار")?;
+    if amount_usd <= Money::zero() && amount_iqd <= Money::zero() {
+        return Err("يجب إدخال مبلغ وكالة أكبر من صفر بالدينار أو الدولار".to_string());
+    }
+
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
+    let creation_token = creation_token
+        .map(|token| token.trim().to_string())
+        .filter(|token| !token.is_empty());
+    let payment_status =
+        normalize_agency_payment_status(payment_status.as_deref().unwrap_or("واصل"));
+
+    if let Some(token) = creation_token.as_deref() {
+        match db.query_row(
+            "SELECT id FROM agencies WHERE creation_token = ?1 LIMIT 1",
+            [token],
+            |row| row.get::<_, i64>(0),
+        ) {
+            Ok(existing_id) => return Ok(existing_id),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {}
+            Err(err) => return Err(err.to_string()),
+        }
+    }
 
     let (date, time): (String, String) = db
         .query_row(
@@ -12369,9 +13449,9 @@ fn add_agency(
         .unwrap_or_else(|_| now_datetime());
 
     db.execute(
-        "INSERT INTO agencies (old_agent_name, car_type, car_number, car_model, color, new_agent_name, phone, amount_usd, amount_iqd, notes, date, time)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        (
+        "INSERT INTO agencies (old_agent_name, car_type, car_number, car_model, color, new_agent_name, phone, amount_usd, amount_iqd, notes, payment_status, date, time, creation_token)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        params![
             old_agent_name.trim(),
             car_type.trim(),
             car_number.trim(),
@@ -12382,9 +13462,11 @@ fn add_agency(
             amount_usd,
             amount_iqd,
             notes.trim(),
+            payment_status,
             date.clone(),
             time,
-        ),
+            creation_token.as_deref(),
+        ],
     )
     .map_err(|e| e.to_string())?;
 
@@ -12414,17 +13496,29 @@ fn update_agency(
     amount_usd: Money,
     amount_iqd: Money,
     notes: String,
+    payment_status: Option<String>,
 ) -> Result<(), String> {
+    // Audit fix #13: validate agency amounts before any write.
+    validate_required_text(&old_agent_name, "اسم الوكيل القديم")?;
+    validate_required_text(&new_agent_name, "اسم الوكيل الجديد")?;
+    validate_non_negative_amount(amount_usd, "مبلغ الدولار")?;
+    validate_non_negative_amount(amount_iqd, "مبلغ الدينار")?;
+    if amount_usd <= Money::zero() && amount_iqd <= Money::zero() {
+        return Err("يجب إدخال مبلغ وكالة أكبر من صفر بالدينار أو الدولار".to_string());
+    }
+
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
 
     // Phase 14: Delete all partner rows by agency_id (cash_movement + profit_recognition)
     delete_partner_transactions_by_source_with_ledger(&db, "agency", &id.to_string(), None)?;
 
     // تحديث جدول الوكالات بالبيانات الجديدة
+    let payment_status =
+        normalize_agency_payment_status(payment_status.as_deref().unwrap_or("واصل"));
     db.execute(
-        "UPDATE agencies SET old_agent_name = ?1, car_type = ?2, car_number = ?3, car_model = ?4, color = ?5, new_agent_name = ?6, phone = ?7, amount_usd = ?8, amount_iqd = ?9, notes = ?10 WHERE id = ?11",
+        "UPDATE agencies SET old_agent_name = ?1, car_type = ?2, car_number = ?3, car_model = ?4, color = ?5, new_agent_name = ?6, phone = ?7, amount_usd = ?8, amount_iqd = ?9, notes = ?10, payment_status = ?11 WHERE id = ?12",
         (
             old_agent_name.trim(),
             car_type.trim(),
@@ -12436,6 +13530,7 @@ fn update_agency(
             amount_usd,
             amount_iqd,
             notes.trim(),
+            payment_status,
             id,
         ),
     )
@@ -12454,7 +13549,7 @@ fn update_agency(
 fn delete_agency(state: State<AppState>, id: i64) -> Result<(), String> {
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
 
     // Issue 9: Delete only by source fields, not by names/notes
     // 1. Delete agency base profit rows with their ledger entries
@@ -12539,9 +13634,17 @@ fn add_agency_transaction(
     notes: Option<String>,
     currency: Option<String>,
 ) -> Result<(), String> {
+    // Audit fix #13: validate agency transaction inputs before any write.
+    validate_required_text(&type_, "نوع الحركة")?;
+    validate_positive_amount(amount, "المبلغ")?;
+    validate_required_text(&date, "التاريخ")?;
+    if let Some(ref curr) = currency {
+        validate_currency(curr)?;
+    }
+
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
 
     let time: String = db
         .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
@@ -12583,7 +13686,7 @@ fn add_agency_transaction(
 fn delete_agency_transaction(state: State<AppState>, id: i64) -> Result<(), String> {
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
 
     // Issue 9: Delete only by source fields, not by names/notes
     // 1. Delete ledger entries for this transaction
@@ -12865,7 +13968,7 @@ fn get_partners_totals(state: State<AppState>, kind: String) -> Result<(Money, M
     let filter_kind = match kind.as_str() {
         "partners-financial" => vec!["شريك", "مستثمر", "ممول", "شركة"],
         "partners-only" => vec!["شريك"],
-        "customers-only" => vec!["مستثمر", "ممول", "شركة", "زبون"],
+        "customers-only" => vec!["مستثمر", "ممول", "شركة", "زبون", "وكالة"],
         _ => vec![kind.as_str()],
     };
 
@@ -12873,7 +13976,13 @@ fn get_partners_totals(state: State<AppState>, kind: String) -> Result<(Money, M
     let mut usd_total = Money::zero();
 
     for k in &filter_kind {
-        // Task 7: Use affects_* flags for partner/investor, keep debt logic for customers
+        if is_borrower_account_kind(k) {
+            iqd_total += borrower_balance_for_currency(&db, None, Some(k), "IQD");
+            usd_total += borrower_balance_for_currency(&db, None, Some(k), "USD");
+            continue;
+        }
+
+        // Task 7: Use affects_* flags for partner/investor, with customer debt handled above.
         let (sql, use_param): (&str, bool) = if *k == "شريك" {
             (
                 "SELECT
@@ -12908,17 +14017,6 @@ fn get_partners_totals(state: State<AppState>, kind: String) -> Result<(Money, M
              FROM partner_transactions
              WHERE kind = 'مستثمر' AND type NOT LIKE 'تحويل%'
              GROUP BY currency",
-                false,
-            )
-        } else if *k == "زبون" {
-            // Customer: balance = sum of unpaid remaining rows across all customers
-            (
-                "SELECT COALESCE(SUM(amount), 0.0), COALESCE(currency, 'IQD')
-             FROM partner_transactions
-             WHERE kind = 'زبون'
-             AND (type LIKE 'باقي%' OR type LIKE 'سحب%')
-             AND type NOT LIKE 'تحويل%'
-             GROUP BY COALESCE(currency, 'IQD')",
                 false,
             )
         } else {
@@ -12984,37 +14082,38 @@ fn calculate_analytical_profit(
     } else {
         start_time.trim()
     };
-    let pt_date_filter = if let Some(end) = end_date {
-        format!("(pt.date >= '{}' AND pt.date <= '{}')", start_date, end)
-    } else {
-        format!(
-            "(pt.date > '{}' OR (pt.date = '{}' AND COALESCE(pt.time, '00:00') >= '{}'))",
-            start_date, start_date, effective_time
-        )
-    };
 
-    let profit_sql = format!(
-        "SELECT COALESCE(SUM(pt.amount), 0.0), COALESCE(pt.currency, 'IQD')
-         FROM partner_transactions pt
-         WHERE pt.kind = 'شريك'
-           AND pt.source_role = 'profit_recognition'
-           AND COALESCE(pt.affects_profit, 0) = 1
-           AND COALESCE(pt.is_reversed, 0) = 0
-           AND {}
-         GROUP BY COALESCE(pt.currency, 'IQD')",
-        pt_date_filter
-    );
-    let mut profit_stmt = db.prepare(&profit_sql).map_err(|e| e.to_string())?;
-    let profit_rows: Vec<(Money, String)> = profit_stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(|e| e.to_string())?
+    // Bug 10 (N5): Use bound parameters (?1, ?2, ?3) instead of `format!()`-interpolating
+    // user-supplied date/time strings into the SQL string. This prevents SQL injection
+    // even if a malicious date string is passed in.
+    //
+    // Audit fix #11: a single unified query. The start bound is always time-aware
+    // (a "00:00" start time is equivalent to `date >= start`), and the optional end
+    // date is ALWAYS honored — previously a provided end date was silently ignored
+    // whenever the time-aware branch was used.
+    let sql = "SELECT COALESCE(SUM(pt.amount), 0.0), COALESCE(pt.currency, 'IQD')
+               FROM partner_transactions pt
+               WHERE pt.kind = 'شريك'
+                 AND pt.source_role = 'profit_recognition'
+                 AND COALESCE(pt.affects_profit, 0) = 1
+                 AND COALESCE(pt.is_reversed, 0) = 0
+                 AND (pt.date > ?1 OR (pt.date = ?1 AND COALESCE(pt.time, '00:00') >= ?2))
+                 AND (?3 IS NULL OR pt.date <= ?3)
+               GROUP BY COALESCE(pt.currency, 'IQD')";
+    let mut stmt = db.prepare(sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![start_date, effective_time, end_date], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut profit_stmt: Vec<(Money, String)> = rows
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
-    drop(profit_stmt);
+    drop(stmt);
 
     let mut profit_iqd = Money::zero();
     let mut profit_usd = Money::zero();
-    for (recognized_profit, currency) in profit_rows {
+    for (recognized_profit, currency) in profit_stmt.drain(..) {
         if currency == "IQD" {
             profit_iqd += recognized_profit;
         } else {
@@ -13022,6 +14121,52 @@ fn calculate_analytical_profit(
         }
     }
 
+    Ok((profit_iqd, profit_usd))
+}
+
+fn calculate_partner_analytical_profit(
+    db: &Connection,
+    partner_name: &str,
+    start_date: &str,
+    end_date: Option<&str>,
+    start_time: &str,
+) -> Result<(Money, Money), String> {
+    let effective_time = if start_time.trim().is_empty() {
+        "00:00"
+    } else {
+        start_time.trim()
+    };
+
+    let mut stmt = db
+        .prepare(
+            "SELECT COALESCE(SUM(pt.amount), 0.0), COALESCE(pt.currency, 'IQD')
+             FROM partner_transactions pt
+             WHERE pt.kind = 'شريك'
+               AND pt.partner_name = ?1
+               AND pt.source_role = 'profit_recognition'
+               AND COALESCE(pt.affects_profit, 0) = 1
+               AND COALESCE(pt.is_reversed, 0) = 0
+               AND (pt.date > ?2 OR (pt.date = ?2 AND COALESCE(pt.time, '00:00') >= ?3))
+               AND (?4 IS NULL OR pt.date <= ?4)
+             GROUP BY COALESCE(pt.currency, 'IQD')",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(
+            params![partner_name, start_date, effective_time, end_date],
+            |row| Ok((row.get::<_, Money>(0)?, row.get::<_, String>(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    let mut profit_iqd = Money::zero();
+    let mut profit_usd = Money::zero();
+    for row in rows {
+        let (amount, currency) = row.map_err(|e| e.to_string())?;
+        if currency == "USD" {
+            profit_usd += amount;
+        } else {
+            profit_iqd += amount;
+        }
+    }
     Ok((profit_iqd, profit_usd))
 }
 
@@ -13087,6 +14232,10 @@ fn current_profit_period_start(
     current_date: &str,
     current_time: &str,
 ) -> Result<(String, String), String> {
+    // Audit note #26: the 'manual-reset:' notes prefix is the storage format for
+    // profit-period reset markers in profit_distributions. It acts as a typed tag
+    // (deterministic machine-written prefix), not free user text, and is only ever
+    // READ here — it is never used to delete or mutate accounting records.
     let month_start = profit_period_month_start(current_date, current_time);
     let latest_reset = db
         .query_row(
@@ -13138,26 +14287,27 @@ fn get_profit_distribution_summary(
 
     drop(stmt);
 
-    // Calculate total analytical profit for the period, split 50/50 per partner
-    let end_ref: Option<&str> = if use_time { None } else { Some(&end) };
-    let (total_profit_iqd, total_profit_usd) =
-        calculate_analytical_profit(&db, &start, end_ref, effective_start_time)?;
-    let half_iqd = total_profit_iqd / Money::from_i64(2);
-    let half_usd = total_profit_usd / Money::from_i64(2);
-
     let mut partners = Vec::new();
     for name in partners_list {
-        let profit_iqd = half_iqd;
-        let profit_usd = half_usd;
+        let (profit_iqd, profit_usd) = calculate_partner_analytical_profit(
+            &db,
+            &name,
+            &start,
+            Some(&end),
+            effective_start_time,
+        )?;
 
         // Query IQD drawings (only type = 'سحب شريك', excluding expenses)
+        // Audit fix #11: use the same time-aware start bound as the profit query so
+        // drawings and profit cover exactly the same period.
         let drawings_iqd: Money = db
             .query_row(
                 "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
              WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'IQD'
                AND type = 'سحب شريك'
-               AND date >= ?2 AND date <= ?3",
-                params![&name, &start, &end],
+               AND (date > ?2 OR (date = ?2 AND COALESCE(time, '00:00') >= ?3))
+               AND date <= ?4",
+                params![&name, &start, effective_start_time, &end],
                 |row| row.get(0),
             )
             .unwrap_or(Money::zero());
@@ -13168,8 +14318,9 @@ fn get_profit_distribution_summary(
                 "SELECT COALESCE(SUM(amount), 0.0) FROM partner_transactions
              WHERE kind = 'شريك' AND partner_name = ?1 AND COALESCE(currency, 'IQD') = 'USD'
                AND type = 'سحب شريك'
-               AND date >= ?2 AND date <= ?3",
-                params![&name, &start, &end],
+               AND (date > ?2 OR (date = ?2 AND COALESCE(time, '00:00') >= ?3))
+               AND date <= ?4",
+                params![&name, &start, effective_start_time, &end],
                 |row| row.get(0),
             )
             .unwrap_or(Money::zero());
@@ -13184,56 +14335,31 @@ fn get_profit_distribution_summary(
     }
 
     // Phase 9: Only general expenses (not linked to a car)
-    // Issue 8: Use time-aware filtering for consistency
-    let expenses_iqd: Money = if use_time {
-        db.query_row(
+    // Issue 8 + Audit fix #11: one unified time-aware query that also honors the
+    // end date (a "00:00" start time is equivalent to `date >= start`).
+    let expenses_iqd: Money = db
+        .query_row(
             "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
              WHERE COALESCE(currency, 'IQD') = 'IQD'
                AND (car_number IS NULL OR car_number = '')
-               AND (
-                 date > ?1
-                 OR (date = ?1 AND COALESCE(time, '00:00') >= ?2)
-               )",
-            params![&start, effective_start_time],
+               AND (date > ?1 OR (date = ?1 AND COALESCE(time, '00:00') >= ?2))
+               AND date <= ?3",
+            params![&start, effective_start_time, &end],
             |row| row.get(0),
         )
-        .unwrap_or(Money::zero())
-    } else {
-        db.query_row(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
-             WHERE COALESCE(currency, 'IQD') = 'IQD'
-               AND (car_number IS NULL OR car_number = '')
-               AND date >= ?1 AND date <= ?2",
-            params![&start, &end],
-            |row| row.get(0),
-        )
-        .unwrap_or(Money::zero())
-    };
+        .unwrap_or(Money::zero());
 
-    let expenses_usd: Money = if use_time {
-        db.query_row(
+    let expenses_usd: Money = db
+        .query_row(
             "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
              WHERE COALESCE(currency, 'IQD') = 'USD'
                AND (car_number IS NULL OR car_number = '')
-               AND (
-                 date > ?1
-                 OR (date = ?1 AND COALESCE(time, '00:00') >= ?2)
-               )",
-            params![&start, effective_start_time],
+               AND (date > ?1 OR (date = ?1 AND COALESCE(time, '00:00') >= ?2))
+               AND date <= ?3",
+            params![&start, effective_start_time, &end],
             |row| row.get(0),
         )
-        .unwrap_or(Money::zero())
-    } else {
-        db.query_row(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM expenses
-             WHERE COALESCE(currency, 'IQD') = 'USD'
-               AND (car_number IS NULL OR car_number = '')
-               AND date >= ?1 AND date <= ?2",
-            params![&start, &end],
-            |row| row.get(0),
-        )
-        .unwrap_or(Money::zero())
-    };
+        .unwrap_or(Money::zero());
 
     let mut undistributed_iqd = Money::zero();
     let mut undistributed_usd = Money::zero();
@@ -13505,7 +14631,26 @@ fn delete_background(file_path: String) -> Result<(), String> {
 
 #[tauri::command]
 fn open_whatsapp(phone: String, text: String) -> Result<(), String> {
-    let url = format!("whatsapp://send?phone={}&text={}", phone, text);
+    // Bug 15 (T5): Validate and URL-encode phone & text before formatting the URL.
+    // Phone numbers may legitimately contain digits, '+', spaces, and hyphens.
+    // Anything else is rejected to prevent injection of URL metacharacters.
+    let phone_trimmed = phone.trim();
+    if !phone_trimmed
+        .chars()
+        .all(|c| c.is_ascii_digit() || c == '+' || c == ' ' || c == '-')
+    {
+        return Err("رقم الهاتف يحتوي على أحرف غير صالحة".to_string());
+    }
+    if phone_trimmed.is_empty() {
+        return Err("رقم الهاتف مطلوب".to_string());
+    }
+
+    let encoded_phone = urlencoding::encode(phone_trimmed);
+    let encoded_text = urlencoding::encode(&text);
+    let url = format!(
+        "whatsapp://send?phone={}&text={}",
+        encoded_phone, encoded_text
+    );
     open::that(&url).map_err(|e| format!("فشل فتح واتساب: {e}"))
 }
 
@@ -13806,6 +14951,13 @@ fn distribute_to_partners_50_with_effects_and_related(
     Ok(())
 }
 
+/// Inserts one signed (positive OR negative) partner profit-recognition share.
+///
+/// Ledger note (Audit fix #16): these rows intentionally write NO financial_ledger
+/// entries. For cash sales the sale entries (revenue/COGS) already carry the full
+/// profit or loss; for installment sales the loss is recognized in the ledger at
+/// sale time ("خسارة بيع سيارة"), and positive recognitions are handled by
+/// record_partner_ledger_entries. Writing entries here would double-count.
 #[allow(clippy::too_many_arguments)]
 fn insert_signed_profit_recognition_share_with_related(
     db: &Connection,
@@ -13981,7 +15133,7 @@ fn settle_company_through_funder(
 
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, None)?;
     let time_str = db
         .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
             row.get::<_, String>(0)
@@ -13989,6 +15141,9 @@ fn settle_company_through_funder(
         .unwrap_or_else(|_| "00:00".to_string());
 
     // 1. Create company withdrawal with special note
+    // Audit fix #8: source_id must be a unique identifier (the row's own id), never a
+    // name-based value. Two settlements for the same company previously shared one
+    // source_id, so source-based deletes/updates could hit unrelated settlements.
     let note = format!(
         "تسديد {} من قبل {}",
         company_name.trim(),
@@ -13997,7 +15152,7 @@ fn settle_company_through_funder(
     let company_note = note.clone();
     db.execute(
         "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit)
-         VALUES (?1, 'شركة', 'سحب', ?2, ?3, ?4, ?5, ?6, 'نقدا', 'company_funder_settlement', ?7, 'company_account_movement', 0, 0, 0)",
+         VALUES (?1, 'شركة', 'سحب', ?2, ?3, ?4, ?5, ?6, 'نقدا', 'company_funder_settlement', '', 'company_account_movement', 0, 0, 0)",
         params![
             company_name.trim(),
             amount,
@@ -14005,19 +15160,23 @@ fn settle_company_through_funder(
             &time_str,
             &company_note,
             curr,
-            format!("settlement_{}", company_name.trim()),
         ],
     )
     .map_err(|e| e.to_string())?;
     let company_tx_id = db.last_insert_rowid();
+    db.execute(
+        "UPDATE partner_transactions SET source_id = ?1 WHERE id = ?2",
+        params![company_tx_id.to_string(), company_tx_id],
+    )
+    .map_err(|e| e.to_string())?;
     record_partner_ledger_entries(&db, company_tx_id)?;
     recalculate_partner_total(&db, company_name.trim(), "شركة")?;
 
     // 2. Create funder deposit (funder pays out to cover the company)
     let funder_note = note.clone();
     db.execute(
-        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit)
-         VALUES (?1, 'ممول', 'ايداع', ?2, ?3, ?4, ?5, ?6, 'قاصه', 'company_funder_settlement', ?7, 'funder_account_movement', 0, 0, 0)",
+        "INSERT INTO partner_transactions (partner_name, kind, type, amount, date, time, notes, currency, payment_type, source_type, source_id, source_role, affects_qasa, affects_partner_cash, affects_profit, related_source_type, related_source_id)
+         VALUES (?1, 'ممول', 'ايداع', ?2, ?3, ?4, ?5, ?6, 'قاصه', 'company_funder_settlement', '', 'funder_account_movement', 0, 0, 0, 'partner_transaction', ?7)",
         params![
             funder_name.trim(),
             amount,
@@ -14025,11 +15184,16 @@ fn settle_company_through_funder(
             &time_str,
             &funder_note,
             curr,
-            format!("settlement_{}", funder_name.trim()),
+            company_tx_id.to_string(),
         ],
     )
     .map_err(|e| e.to_string())?;
     let funder_tx_id = db.last_insert_rowid();
+    db.execute(
+        "UPDATE partner_transactions SET source_id = ?1 WHERE id = ?2",
+        params![funder_tx_id.to_string(), funder_tx_id],
+    )
+    .map_err(|e| e.to_string())?;
     record_partner_ledger_entries(&db, funder_tx_id)?;
     recalculate_partner_total(&db, funder_name.trim(), "ممول")?;
 
@@ -14053,6 +15217,53 @@ pub struct LoginResult {
     pub user: Option<UserInfo>,
     pub error: Option<String>,
     pub password_change_required: bool,
+    /// Bug 3 (AU3): Session token for authenticated admin operations.
+    /// Populated on successful login. The frontend should pass this to admin
+    /// commands that accept `session_token: Option<String>`.
+    pub session_token: Option<String>,
+}
+
+/// Bug 6 (AU8): Returns the count of failed login attempts for the given username
+/// within the rate-limiting window. Returns 0 on any error.
+fn count_recent_login_attempts(conn: &Connection, username: &str) -> i64 {
+    let now = Local::now().timestamp();
+    let since = now - LOGIN_RATE_LIMIT_WINDOW_SECS;
+    conn.query_row(
+        "SELECT COUNT(*) FROM login_attempts WHERE username = ?1 AND attempted_at >= ?2",
+        params![username, since],
+        |row| row.get(0),
+    )
+    .unwrap_or(0)
+}
+
+/// Bug 6 (AU8): Record a failed login attempt.
+fn record_failed_login_attempt(conn: &Connection, username: &str) {
+    let now = Local::now().timestamp();
+    let _ = conn.execute(
+        "INSERT INTO login_attempts (username, attempted_at) VALUES (?1, ?2)",
+        params![username, now],
+    );
+}
+
+/// Bug 6 (AU8): Clear all failed login attempts for a username after a successful login.
+fn clear_login_attempts(conn: &Connection, username: &str) {
+    let _ = conn.execute(
+        "DELETE FROM login_attempts WHERE username = ?1",
+        params![username],
+    );
+}
+
+/// Bug 3 (AU3): Create a new session for the given user_id and return the token.
+fn create_session(conn: &Connection, user_id: i64) -> Result<String, String> {
+    let token = generate_session_token();
+    let now = Local::now().timestamp();
+    let expires_at = now + SESSION_LIFETIME_SECS;
+    conn.execute(
+        "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?1, ?2, ?3, ?4)",
+        params![token, user_id, now, expires_at],
+    )
+    .map_err(|e| format!("فشل إنشاء الجلسة: {e}"))?;
+    Ok(token)
 }
 
 #[tauri::command]
@@ -14064,6 +15275,21 @@ fn login(
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let username = username.trim();
     let password = password.trim();
+
+    // Bug 6 (AU8): Rate-limit login attempts. If there have been >= 5 failed
+    // attempts for this username in the last 5 minutes, refuse the attempt.
+    let recent_failures = count_recent_login_attempts(&db, username);
+    if recent_failures >= LOGIN_RATE_LIMIT_MAX_ATTEMPTS {
+        return Ok(LoginResult {
+            success: false,
+            user: None,
+            error: Some(
+                "تم قفل الحساب مؤقتاً بسبب محاولات فاشلة متعددة، حاول بعد 5 دقائق".to_string(),
+            ),
+            password_change_required: false,
+            session_token: None,
+        });
+    }
 
     let result = db.query_row(
         "SELECT id, username, display_name, profile_image, password_hash, COALESCE(must_change_password, 0) FROM users WHERE username = ?1",
@@ -14080,14 +15306,40 @@ fn login(
         },
     );
 
+    // Bug 4 (AU4): Use a single generic error message for both "no such user" and
+    // "wrong password" to prevent user enumeration.
+    const GENERIC_LOGIN_ERROR: &str = "اسم المستخدم أو كلمة المرور غير صحيحة";
+
     match result {
         Ok((id, uname, display_name, profile_image, stored_hash, must_change_password)) => {
+            // Bug 5 (AU5): Track whether the stored hash was a legacy SHA-256 hash.
+            // If so, re-hash with Argon2 after successful verification.
+            let is_legacy_sha256 = PasswordHash::new(&stored_hash).is_err();
             if verify_password(password, &stored_hash) {
                 // تحديث آخر تسجيل دخول
                 let _ = db.execute(
                     "UPDATE users SET last_login = strftime('%Y-%m-%d %H:%M', 'now', 'localtime') WHERE id = ?1",
                     [id],
                 );
+
+                // Bug 5 (AU5): Re-hash the password with Argon2 if the stored hash was
+                // legacy SHA-256 (TODO: remove SHA-256 fallback entirely once all
+                // hashes have been migrated).
+                if is_legacy_sha256 {
+                    if let Ok(new_hash) = hash_password(password) {
+                        let _ = db.execute(
+                            "UPDATE users SET password_hash = ?1, updated_at = strftime('%Y-%m-%d %H:%M', 'now', 'localtime') WHERE id = ?2",
+                            params![new_hash, id],
+                        );
+                    }
+                }
+
+                // Bug 6 (AU8): Clear failed login attempts on successful login.
+                clear_login_attempts(&db, username);
+
+                // Bug 3 (AU3): Create a session token for this user.
+                let session_token = create_session(&db, id).ok();
+
                 Ok(LoginResult {
                     success: true,
                     user: Some(UserInfo {
@@ -14098,24 +15350,45 @@ fn login(
                     }),
                     error: None,
                     password_change_required: must_change_password,
+                    session_token,
                 })
             } else {
+                // Bug 6 (AU8): Record the failed attempt.
+                record_failed_login_attempt(&db, username);
                 Ok(LoginResult {
                     success: false,
                     user: None,
-                    error: Some("كلمة المرور غير صحيحة".to_string()),
+                    error: Some(GENERIC_LOGIN_ERROR.to_string()),
                     password_change_required: false,
+                    session_token: None,
                 })
             }
         }
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(LoginResult {
-            success: false,
-            user: None,
-            error: Some("اسم المستخدم غير موجود".to_string()),
-            password_change_required: false,
-        }),
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            // Bug 6 (AU8): Record the failed attempt even when the username doesn't
+            // exist (so an attacker can't enumerate usernames by observing whether
+            // the attempt count increases).
+            record_failed_login_attempt(&db, username);
+            Ok(LoginResult {
+                success: false,
+                user: None,
+                error: Some(GENERIC_LOGIN_ERROR.to_string()),
+                password_change_required: false,
+                session_token: None,
+            })
+        }
         Err(e) => Err(e.to_string()),
     }
+}
+
+/// Bug 3 (AU3): Logout command. Deletes the session token from the database.
+#[tauri::command]
+fn logout(state: State<AppState>, session_token: Option<String>) -> Result<(), String> {
+    if let Some(token) = session_token {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let _ = db.execute("DELETE FROM sessions WHERE token = ?1", params![token]);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -14148,21 +15421,24 @@ fn add_user(
     password: String,
     display_name: String,
     profile_image: Option<String>,
+    // Bug 3 (AU3): Optional session token. The frontend may pass this to enforce
+    // real session verification. If None, the legacy fallback is used.
+    session_token: Option<String>,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, session_token.as_deref())?;
     let username = username.trim();
+    let password = password.trim();
     let display_name = display_name.trim();
 
     if username.is_empty() {
         return Err("اسم المستخدم مطلوب".to_string());
     }
-    if password.len() < 3 {
-        return Err("كلمة المرور يجب أن تكون 3 أحرف على الأقل".to_string());
+    if password.is_empty() {
+        return Err("كلمة المرور مطلوبة".to_string());
     }
 
-    let hash =
-        hash_password(password.trim()).map_err(|e| format!("فشل تشفير كلمة المرور: {}", e))?;
+    let hash = hash_password(password).map_err(|e| format!("فشل تشفير كلمة المرور: {}", e))?;
 
     db.execute(
         "INSERT INTO users (username, password_hash, display_name, profile_image) VALUES (?1, ?2, ?3, ?4)",
@@ -14180,9 +15456,10 @@ fn update_user(
     username: String,
     display_name: String,
     profile_image: Option<String>,
+    session_token: Option<String>,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, session_token.as_deref())?;
     let username = username.trim();
     let display_name = display_name.trim();
 
@@ -14204,16 +15481,22 @@ fn update_user(
 }
 
 #[tauri::command]
-fn change_password(state: State<AppState>, id: i64, new_password: String) -> Result<(), String> {
+fn change_password(
+    state: State<AppState>,
+    id: i64,
+    new_password: String,
+    // Bug 3 (AU3): Optional session token.
+    session_token: Option<String>,
+) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, session_token.as_deref())?;
+    let new_password = new_password.trim();
 
-    if new_password.trim().len() < 3 {
-        return Err("كلمة المرور يجب أن تكون 3 أحرف على الأقل".to_string());
+    if new_password.is_empty() {
+        return Err("كلمة المرور مطلوبة".to_string());
     }
 
-    let hash =
-        hash_password(new_password.trim()).map_err(|e| format!("فشل تشفير كلمة المرور: {}", e))?;
+    let hash = hash_password(new_password).map_err(|e| format!("فشل تشفير كلمة المرور: {}", e))?;
     let affected = db.execute(
         "UPDATE users SET password_hash = ?1, must_change_password = 0, updated_at = strftime('%Y-%m-%d %H:%M', 'now', 'localtime') WHERE id = ?2",
         params![hash, id],
@@ -14228,9 +15511,14 @@ fn change_password(state: State<AppState>, id: i64, new_password: String) -> Res
 }
 
 #[tauri::command]
-fn delete_user(state: State<AppState>, id: i64) -> Result<(), String> {
+fn delete_user(
+    state: State<AppState>,
+    id: i64,
+    // Bug 3 (AU3): Optional session token.
+    session_token: Option<String>,
+) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    require_admin_session(&db)?;
+    require_admin_session(&db, session_token.as_deref())?;
 
     // Prevent deleting the protected primary admin user, even after username changes.
     if id == PRIMARY_ADMIN_USER_ID {
@@ -14544,8 +15832,13 @@ fn write_section_sheet(
 }
 
 #[tauri::command]
-fn export_database_to_excel(state: State<AppState>) -> Result<String, String> {
+fn export_database_to_excel(
+    state: State<AppState>,
+    // Bug 3 (AU3): Optional session token.
+    session_token: Option<String>,
+) -> Result<String, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
+    require_admin_session(&db, session_token.as_deref())?;
     let exported_at: String = db
         .query_row(
             "SELECT strftime('%Y-%m-%d %H:%M', 'now', 'localtime')",
@@ -14699,6 +15992,9 @@ pub fn run() {
 
             init_db(&conn).map_err(|e| format!("تعذر تهيئة قاعدة البيانات: {e}"))?;
 
+            // Bug 16: Clean up expired sessions left over from previous runs.
+            cleanup_expired_sessions(&conn);
+
             let db_path_clone = db_path.clone();
             std::thread::spawn(move || {
                 run_backup_loop(db_path_clone);
@@ -14754,6 +16050,7 @@ pub fn run() {
             get_selected_background,
             set_selected_background,
             login,
+            logout,
             get_users,
             add_user,
             update_user,
@@ -14767,6 +16064,7 @@ pub fn run() {
             recalculate_installment_schedule,
             get_customer_installments,
             set_customer_installment_status,
+            set_agency_receivable_status,
             settle_company_through_funder,
         ]);
 
@@ -14791,15 +16089,19 @@ mod strict_accounting_invariants {
 
     #[test]
     fn test_distribute_to_partners_50_odd() {
-        let mut p1_total = Decimal::ZERO;
-        let mut p2_total = Decimal::ZERO;
+        // Audit fix #28: the split is DETERMINISTIC — the remainder (at most one
+        // smallest unit) always goes to the first partner, so rebuilding generated
+        // rows reproduces identical amounts every time.
         for _ in 0..1000 {
             let (p1, p2) = split_partner_amount_50(dec!(10000001));
             assert_eq!(p1 + p2, dec!(10000001));
-            p1_total += p1;
-            p2_total += p2;
+            // Per-split fairness: the two halves never differ by more than 1 unit.
+            assert!((p1 - p2).abs() <= dec!(1));
+            // Determinism: the same input always produces the same output.
+            assert_eq!((p1, p2), split_partner_amount_50(dec!(10000001)));
+            assert_eq!(p1, dec!(5000001));
+            assert_eq!(p2, dec!(5000000));
         }
-        assert!((p1_total - p2_total).abs() <= dec!(1));
     }
 
     #[test]
@@ -14874,6 +16176,49 @@ mod strict_accounting_invariants {
     }
 
     #[test]
+    fn test_init_db_default_admin_password_is_admin() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let (password_hash, must_change_password): (String, bool) = conn
+            .query_row(
+                "SELECT password_hash, COALESCE(must_change_password, 0) FROM users WHERE id = ?1",
+                [PRIMARY_ADMIN_USER_ID],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        assert!(verify_password(DEFAULT_ADMIN_PASSWORD, &password_hash));
+        assert!(!must_change_password);
+    }
+
+    #[test]
+    fn test_init_db_migrates_legacy_initial_admin_to_default_password() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let legacy_hash = hash_password("legacy-random-password").unwrap();
+        conn.execute(
+            "UPDATE users SET password_hash = ?1, must_change_password = 1 WHERE id = ?2",
+            params![legacy_hash, PRIMARY_ADMIN_USER_ID],
+        )
+        .unwrap();
+
+        init_db(&conn).unwrap();
+
+        let (password_hash, must_change_password): (String, bool) = conn
+            .query_row(
+                "SELECT password_hash, COALESCE(must_change_password, 0) FROM users WHERE id = ?1",
+                [PRIMARY_ADMIN_USER_ID],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        assert!(verify_password(DEFAULT_ADMIN_PASSWORD, &password_hash));
+        assert!(!must_change_password);
+    }
+
+    #[test]
     fn test_admin_session_survives_primary_admin_username_change() {
         let conn = Connection::open_in_memory().unwrap();
         init_db(&conn).unwrap();
@@ -14884,7 +16229,7 @@ mod strict_accounting_invariants {
         )
         .unwrap();
 
-        assert!(require_admin_session(&conn).is_ok());
+        assert!(require_admin_session(&conn, None).is_ok());
     }
 
     #[test]
@@ -15388,6 +16733,40 @@ mod strict_accounting_invariants {
         assert_eq!(rows[0].2, Money(dec!(1000000)));
         assert_eq!(rows[1].2, Money(dec!(1000000)));
         assert_eq!(unpaid_balance(&conn, "احمد", "IQD"), Money(dec!(5000000)));
+    }
+
+    #[test]
+    fn test_customer_balance_zero_after_all_event_installments_paid() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        seed_event_sourced_installment_car(&conn, "EV_FULL", "احمد", "IQD");
+
+        while let Some((installment_id, _, amount)) = installment_rows(&conn, "EV_FULL")
+            .into_iter()
+            .find(|(_, tx_type, _)| tx_type.starts_with("باقي"))
+        {
+            pay_customer_installment_core(
+                &conn,
+                installment_id,
+                "احمد",
+                amount,
+                "2026-01-01",
+                None,
+                "IQD",
+                "قاصه",
+            )
+            .unwrap();
+        }
+
+        assert_eq!(unpaid_balance(&conn, "احمد", "IQD"), Money::zero());
+        assert_eq!(
+            customer_balance_for_currency(&conn, Some("احمد"), "IQD"),
+            Money::zero()
+        );
+        assert_eq!(
+            customer_balance_for_currency(&conn, None, "IQD"),
+            Money::zero()
+        );
     }
 
     #[test]
@@ -15902,12 +17281,216 @@ mod strict_accounting_invariants {
             "ايداع ارباح وكالة",
             "agency",
             "1",
+            true,
         )
         .unwrap();
         let (with_rows_iqd, with_rows_usd) =
             calculate_analytical_profit(&conn, "2026-01-01", None, "").unwrap();
         assert_eq!(with_rows_iqd, Money(dec!(1000000)));
         assert_eq!(with_rows_usd, Money::zero());
+    }
+
+    #[test]
+    fn test_agency_creation_token_is_unique_but_optional() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let insert_agency = |plate: &str, token: Option<&str>| {
+            conn.execute(
+                "INSERT INTO agencies (
+                    old_agent_name, car_type, car_number, car_model, color, new_agent_name,
+                    phone, amount_usd, amount_iqd, notes, date, time, creation_token
+                 ) VALUES (
+                    'Old Agent', 'Sedan', ?1, '2026', 'Red', 'New Agent',
+                    '07700000000', '0', '1000000', 'Notes', '2026-06-29', '07:30', ?2
+                 )",
+                params![plate, token],
+            )
+        };
+
+        insert_agency("TOKEN-1", Some("agency-create-1")).unwrap();
+        assert!(insert_agency("TOKEN-2", Some("agency-create-1")).is_err());
+        insert_agency("NO-TOKEN-1", None).unwrap();
+        insert_agency("NO-TOKEN-2", None).unwrap();
+    }
+
+    #[test]
+    fn test_unreceived_agency_recognizes_profit_without_cash_movement() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        reset_to_two_test_partners(&conn);
+
+        conn.execute(
+            "INSERT INTO agencies (
+                old_agent_name, car_type, car_number, car_model, color, new_agent_name,
+                phone, amount_usd, amount_iqd, notes, payment_status, date, time
+             ) VALUES (
+                'Old Agent', 'Sedan', 'AG-UNRECEIVED', '2026', 'Red', 'New Agent',
+                '07700000000', '0', '1000000', 'Agency note', 'غير واصل', '2026-06-29', '07:30'
+             )",
+            [],
+        )
+        .unwrap();
+        let agency_id = conn.last_insert_rowid();
+
+        record_agency_ledger_entries(&conn, agency_id).unwrap();
+        rebuild_agency_partner_entries(&conn, agency_id).unwrap();
+
+        let agency_ref = agency_id.to_string();
+        let agency_account_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM partners WHERE partner_name = 'New Agent' AND kind = 'وكالة'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(agency_account_count, 1);
+        assert_eq!(
+            borrower_balance_for_currency(&conn, Some("New Agent"), Some("وكالة"), "IQD"),
+            Money(dec!(1000000))
+        );
+
+        let cash_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM partner_transactions
+                 WHERE source_type = 'agency' AND source_id = ?1 AND source_role = 'cash_movement'",
+                [agency_ref.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cash_rows, 0);
+
+        // Audit fix #12 (Instructions.md §13): agency profit is recognized when the
+        // agency is RECORDED, even while the payment status is "غير واصل".
+        let profit_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM partner_transactions
+                 WHERE source_type = 'agency' AND source_id = ?1 AND source_role = 'profit_recognition'",
+                [agency_ref.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(profit_rows, 2);
+
+        let receivable_ledger: Money = conn
+            .query_row(
+                "SELECT COALESCE(SUM(debit - credit), 0.0)
+                 FROM financial_ledger
+                 WHERE reference_type = 'agency' AND reference_id = ?1
+                   AND account_type = 'receivable' AND account_id = 'New Agent'",
+                [agency_ref.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(receivable_ledger, Money(dec!(1000000)));
+
+        // Audit fix #21: revenue is credited at record time (Dr receivable / Cr revenue),
+        // keeping the ledger balanced instead of a lone receivable debit.
+        let revenue_ledger: Money = conn
+            .query_row(
+                "SELECT COALESCE(SUM(credit - debit), 0.0)
+                 FROM financial_ledger
+                 WHERE reference_type = 'agency' AND reference_id = ?1
+                   AND account_type = 'revenue'",
+                [agency_ref.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(revenue_ledger, Money(dec!(1000000)));
+
+        let (profit_iqd_before_received, profit_usd_before_received) =
+            calculate_analytical_profit(&conn, "2026-01-01", None, "").unwrap();
+        assert_eq!(profit_iqd_before_received, Money(dec!(1000000)));
+        assert_eq!(profit_usd_before_received, Money::zero());
+
+        let cash_ledger: Money = conn
+            .query_row(
+                "SELECT COALESCE(SUM(debit - credit), 0.0)
+                 FROM financial_ledger
+                 WHERE reference_type = 'agency' AND reference_id = ?1
+                   AND account_type = 'cash'",
+                [agency_ref.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cash_ledger, Money::zero());
+
+        let agency_receivable_tx_id: i64 = conn
+            .query_row(
+                "SELECT id FROM partner_transactions
+                 WHERE source_type = 'agency' AND source_id = ?1 AND source_role = 'agency_receivable'
+                 LIMIT 1",
+                [agency_ref.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        set_agency_receivable_status_core(&conn, agency_receivable_tx_id, true).unwrap();
+
+        assert_eq!(
+            borrower_balance_for_currency(&conn, Some("New Agent"), Some("وكالة"), "IQD"),
+            Money::zero()
+        );
+
+        let receivable_rows_after_received: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM partner_transactions
+                 WHERE source_type = 'agency' AND source_id = ?1 AND source_role = 'agency_receivable'",
+                [agency_ref.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(receivable_rows_after_received, 0);
+
+        let profit_rows_after_received: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM partner_transactions
+                 WHERE source_type = 'agency' AND source_id = ?1 AND source_role = 'profit_recognition'
+                   AND kind = 'شريك' AND type = 'ايداع ارباح وكالة'",
+                [agency_ref.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(profit_rows_after_received, 2);
+
+        let (profit_iqd_after_received, profit_usd_after_received) =
+            calculate_analytical_profit(&conn, "2026-01-01", None, "").unwrap();
+        assert_eq!(profit_iqd_after_received, Money(dec!(1000000)));
+        assert_eq!(profit_usd_after_received, Money::zero());
+
+        let cash_rows_after_received: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM partner_transactions
+                 WHERE source_type = 'agency' AND source_id = ?1 AND source_role = 'cash_movement'
+                   AND kind = 'شريك' AND type = 'ايداع ارباح وكالة'",
+                [agency_ref.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cash_rows_after_received, 2);
+
+        let cash_ledger_after_received: Money = conn
+            .query_row(
+                "SELECT COALESCE(SUM(debit - credit), 0.0)
+                 FROM financial_ledger
+                 WHERE reference_type = 'agency' AND reference_id = ?1
+                   AND account_type = 'cash'",
+                [agency_ref.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cash_ledger_after_received, Money(dec!(1000000)));
+
+        let receivable_ledger_after_received: Money = conn
+            .query_row(
+                "SELECT COALESCE(SUM(debit - credit), 0.0)
+                 FROM financial_ledger
+                 WHERE reference_type = 'agency' AND reference_id = ?1
+                   AND account_type = 'receivable' AND account_id = 'New Agent'",
+                [agency_ref.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(receivable_ledger_after_received, Money::zero());
     }
 
     #[test]
@@ -15923,6 +17506,7 @@ mod strict_accounting_invariants {
             "ايداع ارباح وكالة",
             "agency_transaction",
             "deposit-1",
+            true,
         )
         .unwrap();
         distribute_agency_withdrawal_partner_effects(

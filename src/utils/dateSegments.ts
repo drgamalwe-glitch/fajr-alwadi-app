@@ -42,7 +42,7 @@ export const bumpYearLastTwo = (
   year: number,
   delta: number,
   minYear = 2000,
-  maxYear = 2026,
+  maxYear = new Date().getFullYear() + 1,
 ) => {
   const prefix = Math.floor(year / 100);
   let suffix = year % 100;

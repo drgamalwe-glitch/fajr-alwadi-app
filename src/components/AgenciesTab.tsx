@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { callTauri } from "../api/tauri";
 import type { Agency, AgencyTransaction } from "../types";
-import { ActionButton, NumberInput, PriceDisplay, PriceInput, TextInput } from "@/components/ui";
+import { ActionButton, PriceDisplay, PriceInput, TextInput } from "@/components/ui";
 import { YearScrollField } from "./YearScrollField";
 import { PAGE_SIZE } from "../constants";
 import { handlePaginationKeyDown, handlePaginationWheel } from "../utils/pagination";
@@ -11,6 +11,7 @@ import { compareMoney, moneySum } from "../utils/money";
 
 import { toEnglishDigits } from "../utils/numberInput";
 import { todayIsoDate, formatDisplayDate } from "../utils/dateSegments";
+import { formatNotesText } from "../utils/notesDisplay";
 import { GoldFxButton } from "./ui/GoldFxButton";
 
 interface AgenciesTabProps {
@@ -29,6 +30,16 @@ const AGENCIES_TABS: { id: "list" | "details"; label: string }[] = [
 
 const normalizeAgencyPlate = (value: string | null | undefined) =>
   toEnglishDigits(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+
+const AGENCY_PAYMENT_STATUSES = ["واصل", "غير واصل"] as const;
+
+const normalizeAgencyPaymentStatus = (value: string | null | undefined): Agency["payment_status"] =>
+  value === "غير واصل" ? "غير واصل" : "واصل";
+
+const normalizeAgency = (agency: Agency): Agency => ({
+  ...agency,
+  payment_status: normalizeAgencyPaymentStatus(agency.payment_status),
+});
 
 export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClose, onAddAgencyChange, onDirtyChange, requestCloseRef }: AgenciesTabProps) {
   const [agencies, setAgencies] = useState<Agency[]>([]);
@@ -53,6 +64,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   const [deleteAgencyConfirm, setDeleteAgencyConfirm] = useState<Agency | null>(null);
 
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const agencySaveInFlightRef = useRef(false);
 
   const selectedAgencyPlate = normalizeAgencyPlate(selectedAgency?.car_number);
   const isDuplicateAgencyPlate = useMemo(() => {
@@ -72,7 +84,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
     setLoading(true);
     try {
       const data = await callTauri<Agency[]>("get_agencies");
-      setAgencies(data ?? []);
+      setAgencies((data ?? []).map(normalizeAgency));
     } catch (err) {
       console.error("Failed to fetch agencies:", err);
     } finally {
@@ -94,6 +106,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
       amount_usd: 0,
       amount_iqd: 0,
       notes: "",
+      payment_status: "واصل",
       date: today,
       time: "",
     };
@@ -103,6 +116,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   }, []);
 
   const handleSaveAgency = async () => {
+    if (agencySaveInFlightRef.current) return;
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
@@ -136,6 +150,8 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
         return;
       }
 
+      agencySaveInFlightRef.current = true;
+      setSaving(true);
       try {
         if (selectedAgency.id < 0) {
           const newId = await callTauri<number>("add_agency", {
@@ -149,6 +165,8 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
             amountIqd: Number(selectedAgency.amount_iqd) || 0,
             amountUsd: Number(selectedAgency.amount_usd) || 0,
             notes: selectedAgency.notes,
+            paymentStatus: normalizeAgencyPaymentStatus(selectedAgency.payment_status),
+            creationToken: String(Math.abs(selectedAgency.id)),
           });
           selectedAgency.id = newId;
         } else {
@@ -164,6 +182,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
             amountIqd: Number(selectedAgency.amount_iqd) || 0,
             amountUsd: Number(selectedAgency.amount_usd) || 0,
             notes: selectedAgency.notes,
+            paymentStatus: normalizeAgencyPaymentStatus(selectedAgency.payment_status),
           });
         }
         await fetchAgencies();
@@ -173,6 +192,9 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
       } catch (err) {
         console.error("Agency save failed:", err);
         alert("فشل حفظ الوكالة: " + (err instanceof Error ? err.message : String(err)));
+      } finally {
+        agencySaveInFlightRef.current = false;
+        setSaving(false);
       }
     }
   };
@@ -198,6 +220,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   };
 
   const handleAgencySaveConfirmSave = async () => {
+    if (agencySaveInFlightRef.current) return;
     if (isDuplicateAgencyPlate) {
       const input = document.getElementById("agency-car-number") as HTMLElement | null;
       input?.classList.add("input--error");
@@ -266,7 +289,8 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
       a.old_agent_name.toLowerCase().includes(q) ||
       a.new_agent_name.toLowerCase().includes(q) ||
       a.car_number.toLowerCase().includes(q) ||
-      a.phone.toLowerCase().includes(q)
+      a.phone.toLowerCase().includes(q) ||
+      a.notes.toLowerCase().includes(q)
     );
   }, [agencies, agenciesSearch]);
 
@@ -287,8 +311,9 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   }, [sortedAgencies, currentPage]);
 
   const loadAgency = useCallback(async (agency: Agency) => {
-    setSelectedAgency(agency);
-    initialAgencyRef.current = JSON.stringify(agency);
+    const normalized = normalizeAgency(agency);
+    setSelectedAgency(normalized);
+    initialAgencyRef.current = JSON.stringify(normalized);
     setAgenciesTab("details");
   }, []);
 
@@ -373,7 +398,8 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
       a.old_agent_name.toLowerCase().includes(q) ||
       a.new_agent_name.toLowerCase().includes(q) ||
       a.car_number.toLowerCase().includes(q) ||
-      a.phone.toLowerCase().includes(q)
+      a.phone.toLowerCase().includes(q) ||
+      a.notes.toLowerCase().includes(q)
     );
   }, [agencies, agenciesSearch]);
 
@@ -508,11 +534,9 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                   <tr>
                     <th className="col-seq">ت</th>
                     <th className="col-date">التاريخ</th>
-                    <th className="col-old-agent">الوكيل القديم</th>
                     <th className="col-car-num">رقم السيارة</th>
-                    <th className="col-model">الموديل</th>
                     <th className="col-new-agent">الوكيل الجديد</th>
-                    <th className="col-phone">رقم الهاتف</th>
+                    <th className="col-notes">الملاحظات</th>
                     <th className="col-money">المبلغ</th>
                     <th className="col-delete"></th>
                   </tr>
@@ -520,10 +544,12 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                 <tbody>
                   {pageAgencies.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="empty-cell">لا توجد وكالات مسجلة</td>
+                      <td colSpan={7} className="empty-cell">لا توجد وكالات مسجلة</td>
                     </tr>
                   ) : (
                     pageAgencies.map((agency, idx) => {
+                      const paymentStatus = normalizeAgencyPaymentStatus(agency.payment_status);
+                      const amountColor = paymentStatus === "واصل" ? "var(--green)" : "var(--red)";
                       return (
                         <tr
                           key={agency.id}
@@ -533,24 +559,28 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                         >
                           <td className="cell-num col-seq">{currentPage * PAGE_SIZE + idx + 1}</td>
                           <td className="col-date">{formatDisplayDate(agency.date)}</td>
-                          <td className="col-old-agent cell-bold">{agency.old_agent_name}</td>
-                          <td className="col-car-num">{agency.car_number || "—"}</td>
-                          <td className="col-model">{agency.car_model || "—"}</td>
-                          <td className="col-new-agent cell-bold">{agency.new_agent_name}</td>
-                          <td className="col-phone">{agency.phone || "—"}</td>
-                          <td className="col-money cell-bold">
-                            <div style={{ display: "flex", gap: "10px" }}>
+                          <td className="col-car-num" title={agency.car_number || ""}>
+                            <span className="agency-cell-clip">{agency.car_number || "—"}</span>
+                          </td>
+                          <td className="col-new-agent cell-bold" title={agency.new_agent_name || ""}>
+                            <span className="agency-cell-clip">{agency.new_agent_name}</span>
+                          </td>
+                          <td className="col-notes" title={formatNotesText(agency.notes) || ""}>
+                            <span className="agency-cell-clip">{formatNotesText(agency.notes) || "—"}</span>
+                          </td>
+                          <td className="col-money cell-bold" title="مبلغ الوكالة">
+                            <div className="agency-amounts" style={{ color: amountColor }}>
                               {compareMoney(agency.amount_usd, 0) > 0 && (
-                                <span style={{ color: "var(--green)", fontSize: "var(--fs-xs)", direction: "ltr", display: "inline-block" }}>
+                                <span className="agency-amount" dir="ltr">
                                   <PriceDisplay amount={agency.amount_usd} currency="USD" noColor />
                                 </span>
                               )}
                               {compareMoney(agency.amount_iqd, 0) > 0 && (
-                                <span style={{ color: "var(--gold)", fontSize: "var(--fs-xs)", direction: "ltr", display: "inline-block" }}>
+                                <span className="agency-amount" dir="ltr">
                                   <PriceDisplay amount={agency.amount_iqd} noColor />
                                 </span>
                               )}
-                              {compareMoney(agency.amount_usd, 0) <= 0 && compareMoney(agency.amount_iqd, 0) <= 0 && <span style={{ color: "rgba(255,255,255,0.3)" }}>—</span>}
+                              {compareMoney(agency.amount_usd, 0) <= 0 && compareMoney(agency.amount_iqd, 0) <= 0 && <span className="agency-amount agency-amount--empty">—</span>}
                             </div>
                           </td>
                           <td className="col-delete">
@@ -574,11 +604,9 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                     <tr key={`empty-${i}`} style={{ pointerEvents: "none" }} className="customers-tr opacity-25">
                       <td className="col-seq">&nbsp;</td>
                       <td className="col-date">&nbsp;</td>
-                      <td className="col-old-agent">&nbsp;</td>
                       <td className="col-car-num">&nbsp;</td>
-                      <td className="col-model">&nbsp;</td>
                       <td className="col-new-agent">&nbsp;</td>
-                      <td className="col-phone">&nbsp;</td>
+                      <td className="col-notes">&nbsp;</td>
                       <td className="col-money">&nbsp;</td>
                       <td className="col-delete">&nbsp;</td>
                     </tr>
@@ -589,116 +617,152 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
           </section>
         </>
       ) : agenciesTab === "details" && selectedAgency ? (
-        <div className="agency-unified-details" onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (!isDuplicateAgencyPlate) void handleSaveAgency(); } }}>
-
-          {/* ── صف 1: الوكيلان والهاتف ── */}
-          <div className="agency-section">
-            <div className="agency-fields-row">
-              <div className="agency-field agency-field--lg">
-                <label className="agency-label">الوكيل القديم</label>
-                <TextInput
-                  id="agency-old-agent"
-                  inputSize="sm"
-                  value={selectedAgency.old_agent_name}
-                  onChange={(e) => { setSelectedAgency({ ...selectedAgency, old_agent_name: e.target.value }); }}
-                />
+        <div className="agency-unified-details" onKeyDown={(e) => {
+          const target = e.target as HTMLElement;
+          if (e.key === "Enter" && target.tagName !== "TEXTAREA") {
+            e.preventDefault();
+            if (!saving && !isDuplicateAgencyPlate) void handleSaveAgency();
+          }
+        }}>
+          <div className="agency-details-layout">
+            <aside className="agency-finance-corner" aria-label="حالة ومبلغ الوكالة">
+              <div className="agency-finance-corner__title">حالة ومبلغ الوكالة</div>
+              <div className="agency-field agency-field--full">
+                <label className="agency-label">حالة المبلغ</label>
+                <div className="agency-payment-switch" role="radiogroup" aria-label="حالة المبلغ">
+                  {AGENCY_PAYMENT_STATUSES.map((status) => {
+                    const isActive = normalizeAgencyPaymentStatus(selectedAgency.payment_status) === status;
+                    return (
+                      <button
+                        key={status}
+                        type="button"
+                        role="radio"
+                        aria-checked={isActive}
+                        className={`agency-payment-switch__option agency-payment-switch__option--${status === "واصل" ? "received" : "pending"}${isActive ? " is-active" : ""}`}
+                        onClick={() => setSelectedAgency({ ...selectedAgency, payment_status: status })}
+                      >
+                        {status}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="agency-field agency-field--lg">
-                <label className="agency-label">الوكيل الجديد</label>
-                <TextInput
-                  id="agency-new-agent"
-                  inputSize="sm"
-                  value={selectedAgency.new_agent_name}
-                  onChange={(e) => { setSelectedAgency({ ...selectedAgency, new_agent_name: e.target.value }); }}
-                />
-              </div>
-              <div className="agency-field agency-field--lg">
-                <label className="agency-label">رقم الهاتف</label>
-                <TextInput
-                  inputSize="sm"
-                  value={selectedAgency.phone || ""}
-                  autoComplete="new-password"
-                  dir="ltr"
-                  onInput={(e: React.FormEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, phone: toEnglishDigits((e.target as HTMLInputElement).value) }); }}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, phone: toEnglishDigits(e.target.value) }); }}
-                  onBlur={(e: React.FocusEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, phone: toEnglishDigits(e.target.value) }); }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* ── صف 2: نوع السيارة والموديل ── */}
-          <div className="agency-section">
-            <div className="agency-fields-row">
-              <div className="agency-field agency-field--lg">
-                <label className="agency-label">نوع السيارة</label>
-                <TextInput
-                  id="agency-car-type"
-                  inputSize="sm"
-                  value={selectedAgency.car_type || ""}
-                  onChange={(e) => { setSelectedAgency({ ...selectedAgency, car_type: e.target.value }); }}
-                />
-              </div>
-              <div className="agency-field agency-field--sm">
-                <label className="agency-label">الموديل</label>
-                <YearScrollField
-                  id="agency-car-year"
-                  value={selectedAgency.car_model}
-                  onChange={(year) => { setSelectedAgency({ ...selectedAgency, car_model: year }); }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* ── صف 3: رقم اللوحة واللون ── */}
-          <div className="agency-section">
-            <div className="agency-fields-row">
-              <div className="agency-field agency-field--md">
-                <label className="agency-label" style={isDuplicateAgencyPlate ? { color: "#ff5a5a" } : undefined}>
-                  {isDuplicateAgencyPlate ? "رقم اللوحة مضاف!" : "رقم اللوحة"}
-                </label>
-                <TextInput
-                  id="agency-car-number"
-                  inputSize="sm"
-                  type="text"
-                  inputMode="decimal"
-                  value={selectedAgency.car_number}
-                  dir="ltr"
-                  className={isDuplicateAgencyPlate ? "input--error" : undefined}
-                  onInput={(e: React.FormEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits((e.target as HTMLInputElement).value).replace(/[^\w\s\u0600-\u06FF-]/g, "") }); }}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits(e.target.value).replace(/[^\w\s\u0600-\u06FF-]/g, "") }); }}
-                  onBlur={(e: React.FocusEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits(e.target.value).replace(/[^\w\s\u0600-\u06FF-]/g, "") }); }}
-                />
-              </div>
-              <div className="agency-field agency-field--md">
-                <label className="agency-label">لون السيارة</label>
-                <TextInput
-                  id="agency-color"
-                  inputSize="sm"
-                  value={selectedAgency.color || ""}
-                  onChange={(e) => { setSelectedAgency({ ...selectedAgency, color: e.target.value }); }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* ── صف 4: المبالغ ── */}
-          <div className="agency-section">
-            <div className="agency-fields-row">
-              <div className="agency-field agency-field--lg">
+              <div className="agency-field agency-field--full">
                 <label className="agency-label">المبلغ (دينار عراقي)</label>
                 <PriceInput
                   value={String(selectedAgency.amount_iqd)}
                   onChange={(val) => { setSelectedAgency({ ...selectedAgency, amount_iqd: Number(val) || 0 }); }}
                 />
               </div>
-              <div className="agency-field agency-field--lg">
+              <div className="agency-field agency-field--full">
                 <label className="agency-label">المبلغ (دولار أمريكي)</label>
                 <PriceInput
                   value={String(selectedAgency.amount_usd)}
                   onChange={(val) => { setSelectedAgency({ ...selectedAgency, amount_usd: Number(val) || 0 }); }}
                   currency="USD"
                 />
+              </div>
+            </aside>
+
+            <div className="agency-details-main">
+              <div className="agency-section">
+                <div className="agency-section__title">بيانات الوكلاء</div>
+                <div className="agency-fields-row agency-fields-row--three">
+                  <div className="agency-field agency-field--lg">
+                    <label className="agency-label">الوكيل القديم</label>
+                    <TextInput
+                      id="agency-old-agent"
+                      inputSize="sm"
+                      value={selectedAgency.old_agent_name}
+                      onChange={(e) => { setSelectedAgency({ ...selectedAgency, old_agent_name: e.target.value }); }}
+                    />
+                  </div>
+                  <div className="agency-field agency-field--lg">
+                    <label className="agency-label">الوكيل الجديد</label>
+                    <TextInput
+                      id="agency-new-agent"
+                      inputSize="sm"
+                      value={selectedAgency.new_agent_name}
+                      onChange={(e) => { setSelectedAgency({ ...selectedAgency, new_agent_name: e.target.value }); }}
+                    />
+                  </div>
+                  <div className="agency-field agency-field--lg">
+                    <label className="agency-label">رقم الهاتف</label>
+                    <TextInput
+                      inputSize="sm"
+                      value={selectedAgency.phone || ""}
+                      autoComplete="new-password"
+                      dir="ltr"
+                      onInput={(e: React.FormEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, phone: toEnglishDigits((e.target as HTMLInputElement).value) }); }}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, phone: toEnglishDigits(e.target.value) }); }}
+                      onBlur={(e: React.FocusEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, phone: toEnglishDigits(e.target.value) }); }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="agency-section">
+                <div className="agency-section__title">بيانات السيارة</div>
+                <div className="agency-fields-row">
+                  <div className="agency-field agency-field--lg">
+                    <label className="agency-label">نوع السيارة</label>
+                    <TextInput
+                      id="agency-car-type"
+                      inputSize="sm"
+                      value={selectedAgency.car_type || ""}
+                      onChange={(e) => { setSelectedAgency({ ...selectedAgency, car_type: e.target.value }); }}
+                    />
+                  </div>
+                  <div className="agency-field agency-field--sm">
+                    <label className="agency-label">الموديل</label>
+                    <YearScrollField
+                      id="agency-car-year"
+                      value={selectedAgency.car_model}
+                      onChange={(year) => { setSelectedAgency({ ...selectedAgency, car_model: year }); }}
+                    />
+                  </div>
+                </div>
+                <div className="agency-fields-row">
+                  <div className="agency-field agency-field--md">
+                    <label className="agency-label" style={isDuplicateAgencyPlate ? { color: "#ff5a5a" } : undefined}>
+                      {isDuplicateAgencyPlate ? "رقم اللوحة مضاف!" : "رقم اللوحة"}
+                    </label>
+                    <TextInput
+                      id="agency-car-number"
+                      inputSize="sm"
+                      type="text"
+                      inputMode="decimal"
+                      value={selectedAgency.car_number}
+                      dir="ltr"
+                      className={isDuplicateAgencyPlate ? "input--error" : undefined}
+                      onInput={(e: React.FormEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits((e.target as HTMLInputElement).value).replace(/[^\w\s\u0600-\u06FF-]/g, "") }); }}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits(e.target.value).replace(/[^\w\s\u0600-\u06FF-]/g, "") }); }}
+                      onBlur={(e: React.FocusEvent<HTMLInputElement>) => { setSelectedAgency({ ...selectedAgency, car_number: toEnglishDigits(e.target.value).replace(/[^\w\s\u0600-\u06FF-]/g, "") }); }}
+                    />
+                  </div>
+                  <div className="agency-field agency-field--md">
+                    <label className="agency-label">لون السيارة</label>
+                    <TextInput
+                      id="agency-color"
+                      inputSize="sm"
+                      value={selectedAgency.color || ""}
+                      onChange={(e) => { setSelectedAgency({ ...selectedAgency, color: e.target.value }); }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="agency-section agency-section--notes">
+                <div className="agency-section__title">الملاحظات</div>
+                <div className="agency-field agency-field--notes">
+                  <textarea
+                    className="agency-notes-input"
+                    value={selectedAgency.notes || ""}
+                    onChange={(e) => setSelectedAgency({ ...selectedAgency, notes: e.target.value })}
+                    placeholder="اختياري"
+                    rows={3}
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -711,12 +775,12 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
               style={{
                 flex: 1,
                 margin: 0,
-                ...(isDuplicateAgencyPlate ? { opacity: 0.42, cursor: "not-allowed", filter: "grayscale(0.55)" } : {}),
+                ...(saving || isDuplicateAgencyPlate ? { opacity: 0.42, cursor: "not-allowed", filter: "grayscale(0.55)" } : {}),
               }}
               onClick={handleSaveAgency}
-              disabled={isDuplicateAgencyPlate}
+              disabled={saving || isDuplicateAgencyPlate}
             >
-              <span className="gold-fx-btn__label">حفظ</span>
+              <span className="gold-fx-btn__label">{saving ? "جاري الحفظ..." : "حفظ"}</span>
             </GoldFxButton>
             <GoldFxButton
               type="button"
@@ -909,30 +973,13 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                 />
               </div>
               <div className="form-group">
-                <label className="label">المبلغ</label>
-                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-                  <div style={{ flex: 1 }}>
-                    <NumberInput
-                      value={String(txForm.amount)}
-                      onChange={(val) => setTxForm({ ...txForm, amount: Number(val) || 0 })}
-                      min={0}
-                      hideArrows
-                    />
-                  </div>
-                  <div className="payment-type-selector" style={{ flexShrink: 0, padding: "4px" }}>
-                    {(["IQD", "USD"] as const).map((opt) => (
-                      <button
-                        key={opt}
-                        type="button"
-                        className={`payment-type-btn ${txForm.currency === opt ? "payment-type-btn--active" : ""}`}
-                        onClick={() => setTxForm({ ...txForm, currency: opt })}
-                        style={{ padding: "8px 12px", fontSize: "var(--fs-xs)" }}
-                      >
-                        {opt}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                <PriceInput
+                  label="المبلغ"
+                  value={txForm.amount ? String(txForm.amount) : ""}
+                  onChange={(val) => setTxForm({ ...txForm, amount: Number(val) || 0 })}
+                  currency={txForm.currency}
+                  onCurrencyChange={(curr) => setTxForm({ ...txForm, currency: curr })}
+                />
               </div>
               <div className="form-group">
                 <label className="label">ملاحظة</label>

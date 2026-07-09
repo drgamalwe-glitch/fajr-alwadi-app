@@ -73,6 +73,8 @@ export const styles = StyleSheet.create({
     fontWeight: 900,
     color: "#111827",
     textAlign: "right",
+    maxLines: 1,
+    textOverflow: "ellipsis",
   },
 
   summaryGrid: {
@@ -127,7 +129,7 @@ export const styles = StyleSheet.create({
     borderLeftColor: "#94a3b8",
   },
   cardLabel: { fontSize: 8.5, fontWeight: 700, color: "#64748b", textAlign: "center", marginBottom: 3 },
-  cardValue: { fontSize: 11, fontWeight: 900, color: "#1e293b", textAlign: "center" },
+  cardValue: { fontSize: 11, fontWeight: 900, color: "#1e293b", textAlign: "center", maxLines: 1, textOverflow: "ellipsis" },
   valueRed: { color: "#b91c1c", textAlign: "center" },
   valueGreen: { color: "#15803d", textAlign: "center" },
 
@@ -154,7 +156,7 @@ export const styles = StyleSheet.create({
     marginBottom: 6,
     backgroundColor: "#fffdf8",
   },
-  installmentText: { fontSize: 9.5, fontWeight: 800, color: "#334155", textAlign: "center" },
+  installmentText: { fontSize: 9.5, fontWeight: 800, color: "#334155", textAlign: "center", maxLines: 1, textOverflow: "ellipsis" },
 
   tableHeader: {
     flexDirection: "row-reverse",
@@ -182,12 +184,13 @@ export const styles = StyleSheet.create({
     borderRightColor: "#e5e7eb",
     paddingVertical: 5,
     paddingHorizontal: 0,
-    minHeight: 22,
+    minHeight: 23,
+    alignItems: "center",
   },
   tableRowAlt: { backgroundColor: "#f9fafb" },
   rowDebit: { backgroundColor: "#fffafa" },
   rowCredit: { backgroundColor: "#f8fdf9" },
-  td: { fontSize: 9.5, color: "#1c1917", textAlign: "center", lineHeight: 1.3, paddingHorizontal: 5 },
+  td: { fontSize: 9.5, color: "#1c1917", textAlign: "center", lineHeight: 1.15, paddingHorizontal: 5 },
   amountDebit: { color: "#b91c1c", fontWeight: 800, textAlign: "center" },
   amountCredit: { color: "#15803d", fontWeight: 800, textAlign: "center" },
 
@@ -220,6 +223,7 @@ export const styles = StyleSheet.create({
     borderLeftColor: "#cbd5e1",
   },
   colNotes: { width: "39%", textAlign: "right", paddingRight: 8 },
+  singleLineText: { maxLines: 1, textOverflow: "ellipsis" },
 
   emptyState: {
     borderWidth: 0.5,

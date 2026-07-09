@@ -5,7 +5,8 @@ import { TextInput } from "./ui";
 import type { LoginResult, UserInfo } from "../types";
 
 interface LoginScreenProps {
-  onLogin: (user: UserInfo) => void;
+  /** Bug AU3: Pass session token back to App so it can be forwarded to admin commands */
+  onLogin: (user: UserInfo, sessionToken?: string | null) => void;
 }
 
 export function LoginScreen({ onLogin }: LoginScreenProps) {
@@ -36,7 +37,8 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
         });
 
         if (result.success && result.user) {
-          onLogin(result.user);
+          // Bug AU3: forward session token to the App for admin command authentication
+          onLogin(result.user, result.session_token);
         } else {
           setError(result.error || "فشل تسجيل الدخول");
         }

@@ -611,9 +611,10 @@
   --col-car-num-width: 170px;
   --col-model-width: 100px;
   --col-new-agent-width: 18%;
+  --col-agency-notes-width: 28%;
   --col-phone-width: 150px;
-  --col-money-width: 150px;
-  --col-delete-width: 20px;
+  --col-money-width: 190px;
+  --col-delete-width: 36px;
   --agency-details-bg: var(--background-secondary);
   --agency-details-opacity: 1;
   --agency-card-bg: color-mix(in srgb, var(--white) 2%, transparent);
@@ -1786,6 +1787,20 @@ body {
   font-size: var(--table-font-size) !important;
   padding: var(--table-cell-padding) !important;
   border-bottom: var(--table-border-color);
+}
+
+.data-table th.col-notes,
+.data-table td.col-notes,
+.data-table th.col-details,
+.data-table td.col-details,
+.data-table td.cell-notes-text,
+.data-table td.cell-details-text,
+.cell-notes-text,
+.cell-details-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .data-table td button,
@@ -4115,6 +4130,10 @@ textarea::placeholder {
   color: var(--account-moqtarid) !important;
 }
 
+.badge--kind-وكالة {
+  color: var(--gold) !important;
+}
+
 .badge--kind-شركة {
   color: var(--account-sharika) !important;
 }
@@ -4135,6 +4154,10 @@ textarea::placeholder {
 
 .combobox-trigger[data-kind="زبون"] {
   color: var(--account-moqtarid) !important;
+}
+
+.combobox-trigger[data-kind="وكالة"] {
+  color: var(--gold) !important;
 }
 
 .combobox-trigger[data-kind="شركة"] {
@@ -4189,6 +4212,18 @@ textarea::placeholder {
   background: var(--partner-moqtarid-hover) !important;
 }
 
+.partner-row--وكالة {
+  background: color-mix(in srgb, var(--gold) 9%, transparent) !important;
+}
+
+.partner-row--وكالة td:first-child {
+  border-right: var(--partner-row-border-width) solid var(--gold) !important;
+}
+
+.partner-row--وكالة:hover {
+  background: color-mix(in srgb, var(--gold) 14%, transparent) !important;
+}
+
 .partner-row--مستثمر {
   background: var(--partner-mustathmir-bg) !important;
 }
@@ -4204,6 +4239,7 @@ textarea::placeholder {
 .badge--kind-شريك,
 .badge--kind-ممول,
 .badge--kind-زبون,
+.badge--kind-وكالة,
 .badge--kind-مستثمر,
 .badge--kind-شركة {
   background: none !important;
@@ -4236,6 +4272,14 @@ textarea::placeholder {
 .modal-dialog--kind-زبون {
   background: linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(245, 158, 11, 0.01) 100%), var(--partner-moqtarid-dialog-bg) !important;
   border: 1px solid var(--partner-moqtarid-border) !important;
+  backdrop-filter: var(--partner-dialog-blur) saturate(var(--partner-dialog-saturation)) !important;
+  -webkit-backdrop-filter: var(--partner-dialog-blur) saturate(var(--partner-dialog-saturation)) !important;
+  box-shadow: var(--partner-dialog-shadow) !important;
+}
+
+.modal-dialog--kind-وكالة {
+  background: linear-gradient(135deg, rgba(216, 168, 90, 0.1) 0%, rgba(216, 168, 90, 0.02) 100%), var(--background-secondary) !important;
+  border: 1px solid color-mix(in srgb, var(--gold) 36%, var(--border-master)) !important;
   backdrop-filter: var(--partner-dialog-blur) saturate(var(--partner-dialog-saturation)) !important;
   -webkit-backdrop-filter: var(--partner-dialog-blur) saturate(var(--partner-dialog-saturation)) !important;
   box-shadow: var(--partner-dialog-shadow) !important;
@@ -6162,6 +6206,16 @@ textarea::placeholder {
   min-width: var(--col-new-agent-width) !important;
 }
 
+.agencies-page table.agencies-table th.col-notes,
+.agencies-page table.agencies-table td.col-notes {
+  width: var(--col-agency-notes-width) !important;
+  min-width: var(--col-agency-notes-width) !important;
+  max-width: var(--col-agency-notes-width) !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
 .agencies-page table.agencies-table th.col-phone,
 .agencies-page table.agencies-table td.col-phone {
   width: var(--col-phone-width) !important;
@@ -6173,6 +6227,7 @@ textarea::placeholder {
 .agencies-page table.agencies-table td.col-money {
   width: var(--col-money-width) !important;
   min-width: var(--col-money-width) !important;
+  max-width: var(--col-money-width) !important;
 }
 
 .agencies-page table.agencies-table th.col-delete,
@@ -6182,22 +6237,106 @@ textarea::placeholder {
   max-width: var(--col-delete-width) !important;
 }
 
+.agency-cell-clip {
+  display: block !important;
+  max-width: 100%;
+}
+
+.agencies-page table.agencies-table td.col-notes .agency-cell-clip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agency-amounts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.agency-amount {
+  display: inline-block;
+  min-width: 0;
+  direction: ltr;
+  color: inherit !important;
+}
+
+.agency-amount--empty {
+  color: rgba(255, 255, 255, 0.32) !important;
+}
+
 .agency-unified-details {
   background: var(--bg2) !important;
   border: 1px solid var(--textinputborder) !important;
   border-radius: var(--all-radius) !important;
   backdrop-filter: blur(var(--background-secondary-blur)) saturate(var(--background-secondary-saturate)) !important;
   -webkit-backdrop-filter: blur(var(--background-secondary-blur)) saturate(var(--background-secondary-saturate)) !important;
-  padding: 30px;
+  width: min(980px, calc(100% - 40px));
+  max-width: 980px;
+  padding: 24px;
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 18px;
   height: auto;
   min-height: 400px;
-  max-width: 520px;
   margin: 20px 20px 20px auto;
   box-shadow: none !important;
   animation: agency-details-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.agency-details-layout {
+  display: grid;
+  grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+  direction: ltr;
+  width: 100%;
+}
+
+.agency-details-main {
+  grid-column: 2;
+  direction: rtl;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.agency-finance-corner {
+  grid-column: 1;
+  direction: rtl;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--gold) 32%, var(--textinputborder));
+  border-radius: var(--all-radius);
+  background: linear-gradient(180deg, rgba(216, 168, 90, 0.095), rgba(255, 255, 255, 0.035));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.agency-finance-corner::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 36px;
+  height: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--gold) 70%, transparent);
+}
+
+.agency-finance-corner__title {
+  color: var(--gold);
+  font-size: var(--fs-sm);
+  font-weight: 900;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .agency-details-grid {
@@ -6257,7 +6396,7 @@ textarea::placeholder {
   background: transparent;
   border: none;
   border-radius: 0;
-  padding: 18px 20px;
+  padding: 0 0 16px;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   overflow: hidden;
@@ -6272,20 +6411,20 @@ textarea::placeholder {
   content: "";
   position: absolute;
   top: 0;
-  left: 15%;
-  right: 15%;
+  left: 0;
+  right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(212, 175, 55, 0.3), transparent);
+  background: linear-gradient(90deg, transparent, rgba(212, 175, 55, 0.22), transparent);
   pointer-events: none;
 }
 
 .agency-section__title {
   font-size: var(--font-size);
-  font-weight: 700;
+  font-weight: 800;
   color: var(--textinputlabletext);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin-bottom: 14px;
+  letter-spacing: 0;
+  margin-bottom: 12px;
+  padding-top: 14px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -6303,6 +6442,16 @@ textarea::placeholder {
   gap: 12px;
   align-items: flex-end;
   flex-wrap: wrap;
+}
+
+.agency-fields-row + .agency-fields-row {
+  margin-top: 12px;
+}
+
+.agency-fields-row--three {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
 }
 
 .agency-field {
@@ -6324,12 +6473,112 @@ textarea::placeholder {
   flex: 2 1 200px;
 }
 
+.agency-field--full {
+  width: 100%;
+}
+
+.agency-field--status {
+  flex: 0 0 210px;
+}
+
+.agency-field--notes {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
 .agency-label {
   font-size: var(--font-size);
   font-weight: 600;
   color: var(--textinputlabletext) !important;
   letter-spacing: 0.02em;
   white-space: nowrap;
+}
+
+.agency-payment-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  height: 44px;
+  padding: 4px;
+  border: 1px solid var(--textinputborder);
+  border-radius: var(--all-radius);
+  background: rgba(255, 255, 255, 0.035);
+  overflow: hidden;
+}
+
+.agency-payment-switch__option {
+  min-width: 0;
+  border: 0;
+  border-radius: calc(var(--all-radius) - 4px);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+  white-space: nowrap;
+}
+
+.agency-payment-switch__option.is-active {
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.agency-payment-switch__option--received.is-active {
+  background: color-mix(in srgb, var(--green) 76%, #0f1614);
+}
+
+.agency-payment-switch__option--pending.is-active {
+  background: color-mix(in srgb, var(--red) 78%, #1a1113);
+}
+
+.agency-notes-input {
+  width: 100%;
+  min-height: 68px;
+  max-height: 96px;
+  resize: vertical;
+  border: 1px solid var(--textinputborder);
+  border-radius: var(--all-radius);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--textinputtext);
+  padding: 12px 14px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.6;
+  outline: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.agency-notes-input:focus {
+  border-color: color-mix(in srgb, var(--gold) 58%, transparent);
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 12%, transparent);
+}
+
+.agency-notes-input::placeholder {
+  color: rgba(255, 255, 255, 0.34);
+}
+
+@media (max-width: 980px) {
+  .agency-unified-details {
+    width: calc(100% - 24px);
+    margin: 12px auto;
+    padding: 18px;
+  }
+
+  .agency-details-layout {
+    grid-template-columns: 1fr;
+    direction: rtl;
+  }
+
+  .agency-finance-corner,
+  .agency-details-main {
+    grid-column: auto;
+  }
+
+  .agency-fields-row--three {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
@@ -8695,6 +8944,29 @@ textarea::placeholder {
 
 .cars-data-table .ct-delete {
   width: 5%;
+}
+
+.car-row-delete-btn {
+  appearance: none;
+  border: 1px solid rgba(248, 113, 113, 0.48);
+  border-radius: 6px;
+  background: rgba(127, 29, 29, 0.28);
+  color: #fecaca;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1;
+  padding: 0.42rem 0.55rem;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.car-row-delete-btn:hover,
+.car-row-delete-btn:focus-visible {
+  background: rgba(185, 28, 28, 0.42);
+  border-color: rgba(252, 165, 165, 0.78);
+  color: #fff;
+  outline: none;
 }
 
 /* ── OVERRIDES FOR SOLD TAB (المباع) IN GALLERY ── */

@@ -1074,6 +1074,7 @@ dependencies = [
  "tauri-plugin-fs",
  "tauri-plugin-opener",
  "trash",
+ "urlencoding",
 ]
 
 [[package]]

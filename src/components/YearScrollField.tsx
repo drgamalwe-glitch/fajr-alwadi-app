@@ -26,7 +26,7 @@ export function YearScrollField({
   value,
   onChange,
   minYear = 2000,
-  maxYear = 2026,
+  maxYear = new Date().getFullYear() + 1,
   disabled,
   required,
 }: YearScrollFieldProps) {

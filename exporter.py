@@ -17,6 +17,11 @@ TS_FILES = [
 def extract_rust_architecture(content):
     result = []
 
+    # NOTE: Regex-based extraction is fragile. For production use, consider syn
+    # (Rust) or ts-morph (TS) AST parsing. The regexes below are best-effort
+    # and assume consistent source formatting; they may miss or mis-handle
+    # nested braces, macros, doc-comments with embedded braces, etc.
+
     # Structs
     structs = re.findall(
         r"(?:#\[[^\]]+\]\s*)*(?:pub\s+)?struct\s+\w+\s*\{.*?\n\}",

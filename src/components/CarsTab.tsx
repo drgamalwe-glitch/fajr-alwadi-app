@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buildCarInvokeArgs, callTauri } from "../api/tauri";
-import type { Car, CarExpenseRecord, CarFormState, Partner, PartnerTransaction } from "../types";
-import { compareCarNetProfit, carProfitPercentage } from "../utils/finance";
+import type { Car, CarFormState, Partner, PartnerTransaction } from "../types";
+import { carNetProfit, compareCarNetProfit, carProfitPercentage } from "../utils/finance";
 import { cleanAndNormalizeNumbers, normalizePhoneNumber, toEnglishDigits } from "../utils/numberInput";
-import { compareMoney, moneyAdd, moneySum } from "../utils/money";
+import { compareMoney, moneyAdd, moneyDiv, moneySub, moneySum } from "../utils/money";
 import { todayIsoDate } from "../utils/dateSegments";
 import { CarFormPanel } from "./CarFormPanel";
 import { ActionButton, PriceDisplay, TextInput, PriceInput } from "@/components/ui";
@@ -359,7 +359,7 @@ export function CarsTab({
       return true;
     });
 
-    setIsBatchFormValid(allValid && dupNums.size === 0 && dupChassis.size === 0);
+    setIsBatchFormValid(allValid);
   }, [batchRows, cars, panelMode]);
 
   const [sortConfig, setSortConfig] = useState<{ key: CarSortKey; direction: "asc" | "desc" } | null>(null);
@@ -639,7 +639,7 @@ export function CarsTab({
       },
     };
     return () => { requestCloseRef.current = null; };
-  });
+  }, []);
 
   useEffect(() => {
     if (!carFormTrigger) return;
@@ -737,13 +737,13 @@ export function CarsTab({
     if (!originalCar || originalCar.status !== "مبيوعة") return false;
     if (formData.status !== "مبيوعة") return false;
     return (
-      Math.abs(Number(originalCar.selling_price) - Number(formData.selling)) > 0.001
+      compareMoney(moneySub(originalCar.selling_price, formData.selling), 0) !== 0
       || (originalCar.sale_currency ?? "IQD") !== (formData.saleCurrency || "IQD")
       || (originalCar.payment_type ?? "") !== formData.paymentType
-      || Math.abs(Number(originalCar.amount_paid ?? 0) - Number(formData.amountPaid ?? 0)) > 0.001
-      || Math.abs(Number(originalCar.amount_remaining ?? 0) - Number(formData.amountRemaining ?? 0)) > 0.001
+      || compareMoney(moneySub(originalCar.amount_paid ?? 0, formData.amountPaid ?? 0), 0) !== 0
+      || compareMoney(moneySub(originalCar.amount_remaining ?? 0, formData.amountRemaining ?? 0), 0) !== 0
       || Number(originalCar.installment_months ?? 1) !== Number(formData.installmentMonths ?? 1) + 0
-      || Math.abs(Number(originalCar.monthly_payment ?? 0) - (Number(formData.amountRemaining ?? 0) / getUnpaidInstallmentMonths(formData))) > 0.001
+      || compareMoney(moneySub(originalCar.monthly_payment ?? 0, moneyDiv(formData.amountRemaining ?? 0, getUnpaidInstallmentMonths(formData))), 0) !== 0
       || (originalCar.buyer_name ?? "") !== formData.buyerName.trim()
       || normalizePhoneNumber(originalCar.buyer_phone ?? "") !== normalizePhoneNumber(formData.phone)
       || (originalCar.sale_date ?? "") !== (formData.saleDate ?? "")
@@ -757,7 +757,7 @@ export function CarsTab({
     if (!originalCar || originalCar.status !== "مبيوعة") return false;
     if (formData.status !== "مبيوعة") return false;
     return (
-      Math.abs(Number(originalCar.purchase_price) - Number(formData.purchase)) > 0.001
+      compareMoney(moneySub(originalCar.purchase_price, formData.purchase), 0) !== 0
       || (originalCar.currency ?? "IQD") !== (formData.currency || "IQD")
       || (originalCar.purchase_type ?? "") !== (formData.purchaseType ?? "")
       || (originalCar.financer_name ?? "") !== (formData.financerName ?? "")
@@ -769,7 +769,7 @@ export function CarsTab({
   function hasSoldCarIdentityChange(originalCar: Car | undefined, formData: CarFormState): boolean {
     if (!originalCar || originalCar.status !== "مبيوعة") return false;
     if (formData.status !== "مبيوعة") return false;
-    return (originalCar.car_number ?? "") !== formData.num.trim();
+    return (originalCar.car_plate_num ?? originalCar.car_number ?? "") !== formData.num.trim();
   }
 
   const handleAutoSave = async () => {
@@ -795,15 +795,15 @@ export function CarsTab({
           name: data.name.trim(),
           color: data.color.trim(),
           details: data.details.trim(),
-          purchase: Number(data.purchase) || 0,
+          purchase: data.purchase || "0",
           currency: data.currency || "IQD",
           saleCurrency: data.saleCurrency || "IQD",
-          selling: Number(data.selling) || 0,
+          selling: data.selling || "0",
           paymentType: data.paymentType,
-          amountPaid: Number(data.amountPaid) || 0,
-          amountRemaining: Number(data.amountRemaining) || 0,
+          amountPaid: data.amountPaid || "0",
+          amountRemaining: data.amountRemaining || "0",
           installmentMonths: data.paymentType === "اقساط" ? Number(data.installmentMonths) || 1 : null,
-          monthlyPayment: data.paymentType === "اقساط" ? (Number(data.amountRemaining) || 0) / getUnpaidInstallmentMonths(data) : null,
+          monthlyPayment: data.paymentType === "اقساط" ? moneyDiv(data.amountRemaining, getUnpaidInstallmentMonths(data)) : null,
           buyerName: data.buyerName.trim(),
           buyerPhone: normalizePhoneNumber(data.phone),
           purchaseDate: data.purchaseDate || null,
@@ -819,19 +819,19 @@ export function CarsTab({
       } else if (isPureSaleEdit) {
         // Pure sale field edit (no cost/identity change): use update_sold_car_with_accounting
         await callTauri("update_sold_car_with_accounting", {
-          carNumber: data.num,
+          carNumber: originalCar?.car_number ?? data.oldNum ?? data.num,
           buyerName: data.buyerName.trim(),
           buyerPhone: normalizePhoneNumber(data.phone),
-          sellingPrice: Number(data.selling) || 0,
+          sellingPrice: data.selling || "0",
           saleCurrency: data.saleCurrency || "IQD",
           saleDate: data.saleDate || todayIsoDate(),
           paymentType: data.paymentType,
-          amountPaid: Number(data.amountPaid) || 0,
-          amountRemaining: Number(data.amountRemaining) || 0,
+          amountPaid: data.amountPaid || "0",
+          amountRemaining: data.amountRemaining || "0",
           installmentMonths: data.paymentType === "اقساط" ? Number(data.installmentMonths) || 1 : null,
           firstPaymentDate: data.firstPaymentDate || null,
           deliveryDate: data.deliveryDate || null,
-          monthlyPayment: data.paymentType === "اقساط" ? (Number(data.amountRemaining) || 0) / getUnpaidInstallmentMonths(data) : null,
+          monthlyPayment: data.paymentType === "اقساط" ? moneyDiv(data.amountRemaining, getUnpaidInstallmentMonths(data)) : null,
         });
       } else if (isCostOrIdentityEdit) {
         // Cost or identity change: go through add_car which supports all purchase fields + oldNum
@@ -844,15 +844,15 @@ export function CarsTab({
       } else if (isNewSaleFromAvailable) {
         // Selling an available car: use sell_car_with_accounting
         await callTauri("sell_car_with_accounting", {
-          carNumber: data.num,
+          carNumber: originalCar?.car_number ?? data.oldNum ?? data.num,
           buyerName: data.buyerName.trim(),
           buyerPhone: normalizePhoneNumber(data.phone),
-          sellingPrice: Number(data.selling) || 0,
+          sellingPrice: data.selling || "0",
           saleCurrency: data.saleCurrency || "IQD",
           saleDate: data.saleDate || todayIsoDate(),
           paymentType: data.paymentType,
-          amountPaid: Number(data.amountPaid) || 0,
-          amountRemaining: Number(data.amountRemaining) || 0,
+          amountPaid: data.amountPaid || "0",
+          amountRemaining: data.amountRemaining || "0",
           installmentMonths: data.paymentType === "اقساط" ? Number(data.installmentMonths) || 1 : null,
           firstPaymentDate: data.firstPaymentDate || null,
           deliveryDate: data.deliveryDate || null,
@@ -876,7 +876,7 @@ export function CarsTab({
 
       await onRefresh();
       if (panelMode === "edit" && data.num !== selectedId) {
-        setSelectedId(data.num);
+        setSelectedId(originalCar?.car_number ?? data.oldNum ?? data.num);
       }
     } catch (err) {
       console.error("فشل الحفظ:", err);
@@ -897,12 +897,12 @@ export function CarsTab({
         carNumber: formData.num,
         buyerName,
         buyerPhone: phone,
-        sellingPrice: Number(formData.selling),
+        sellingPrice: formData.selling || "0",
         saleCurrency: formData.saleCurrency || "IQD",
         saleDate: formData.saleDate || todayIsoDate(),
         paymentType: formData.paymentType,
-        amountPaid: Number(formData.amountPaid) || 0,
-        amountRemaining: Number(formData.amountRemaining) || 0,
+        amountPaid: formData.amountPaid || "0",
+        amountRemaining: formData.amountRemaining || "0",
         installmentMonths: formData.paymentType === "اقساط" ? Number(formData.installmentMonths) || 1 : null,
         firstPaymentDate: formData.firstPaymentDate || null,
         deliveryDate: formData.deliveryDate || null,
@@ -1108,10 +1108,7 @@ export function CarsTab({
 
     if (conflicts.length > 0) {
       setBatchDuplicateConflicts(conflicts);
-      // Rows that are NOT conflicting
-      const conflictIdxs = new Set(conflicts.map(c => c.rowIdx));
-      const safeRows = batchRows.filter((_, idx) => !conflictIdxs.has(idx));
-      setPendingBatchRowsAfterDupeCheck(safeRows);
+      setPendingBatchRowsAfterDupeCheck(batchRows);
       setShowBatchDuplicateModal(true);
       return;
     }
@@ -1173,82 +1170,7 @@ export function CarsTab({
     setSaving(true);
     try {
       const carNumber = carToDelete.car_number;
-      const chassis = carToDelete.chassis_number?.trim();
-      const purchaseType = carToDelete.purchase_type;
-      const financerName = carToDelete.financer_name?.trim();
-      const buyerName = carToDelete.buyer_name?.trim();
 
-      // 1. Delete car expenses
-      try {
-        const expenses = await callTauri<CarExpenseRecord[]>("get_car_expense_records", { carNumber });
-        for (const exp of expenses || []) {
-          await callTauri("delete_car_expense_record", { id: exp.id });
-        }
-      } catch (expErr) {
-        console.error("Failed to delete car expenses:", expErr);
-      }
-
-      // 2. Delete funder transaction (تمويل)
-      if ((purchaseType === "تمويل" || purchaseType === "دين") && financerName && chassis) {
-        try {
-          const txs = await callTauri<PartnerTransaction[]>(
-            "get_partner_transactions",
-            { partnerName: financerName, kind: "ممول" }
-          );
-          const tx = txs?.find(t => t.notes?.includes(chassis));
-          if (tx) {
-            await callTauri("delete_partner_transaction", {
-              id: tx.id,
-              partnerName: financerName,
-              kind: "ممول",
-            });
-          }
-        } catch (txnErr) {
-          console.error("Failed to delete funder transaction on car delete:", txnErr);
-        }
-      }
-
-      // 3. Delete شركة transaction
-      if (purchaseType === "شركة" && financerName && chassis) {
-        try {
-          const txs = await callTauri<PartnerTransaction[]>(
-            "get_partner_transactions",
-            { partnerName: financerName, kind: "شركة" }
-          );
-          const tx = txs?.find(t => t.notes?.includes(chassis));
-          if (tx) {
-            await callTauri("delete_partner_transaction", {
-              id: tx.id,
-              partnerName: financerName,
-              kind: "شركة",
-            });
-          }
-        } catch (txnErr) {
-          console.error("Failed to delete company transaction on car delete:", txnErr);
-        }
-      }
-
-      // 5. Delete buyer (زبون) transactions related to this car
-      if (buyerName && chassis) {
-        try {
-          const txs = await callTauri<PartnerTransaction[]>(
-            "get_partner_transactions",
-            { partnerName: buyerName, kind: "زبون" }
-          );
-          const relatedTxs = txs?.filter(t => t.notes?.includes(chassis) || t.notes?.includes(carNumber)) || [];
-          for (const tx of relatedTxs) {
-            await callTauri("delete_partner_transaction", {
-              id: tx.id,
-              partnerName: buyerName,
-              kind: "زبون",
-            });
-          }
-        } catch (txnErr) {
-          console.error("Failed to delete buyer transactions on car delete:", txnErr);
-        }
-      }
-
-      // 6. Delete the car itself
       const savedUser = localStorage.getItem("app_current_user");
       const adminName = savedUser ? (JSON.parse(savedUser).display_name || JSON.parse(savedUser).username) : "الإدارة";
       await callTauri("delete_car", { num: carNumber, adminName });
@@ -1259,6 +1181,7 @@ export function CarsTab({
         closePanel();
       }
       await onRefresh();
+      showToast("تم حذف السيارة وجميع قيودها.");
     } catch (err) {
       console.error(err);
       showToast("تعذر حذف السيارة — حاول مرة أخرى");
@@ -1575,6 +1498,7 @@ export function CarsTab({
                       {carsTab === "sold" && (
                         <th className="ct-buyer">اسم المشتري</th>
                       )}
+                      <th className="ct-delete" style={{ width: "52px" }}></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1617,7 +1541,13 @@ export function CarsTab({
                                 )}
                               </td>
                               <td className="ct-profit-pct">
-                                {isSold ? <span className="text-green">({carProfitPercentage(car)}%)</span> : <span className="text-muted">—</span>}
+                                {isSold ? (
+                                  <span className={compareMoney(carNetProfit(car), 0) < 0 ? "text-red" : "text-green"}>
+                                    ({carProfitPercentage(car)}%)
+                                  </span>
+                                ) : (
+                                  <span className="text-muted">—</span>
+                                )}
                               </td>
                             </>
                           )}
@@ -1626,6 +1556,20 @@ export function CarsTab({
                               <span className="text-white font-bold">{car.buyer_name || "—"}</span>
                             </td>
                           )}
+                          <td className="ct-delete" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              className="partner-inline-delete-btn"
+                              title="حذف"
+                              aria-label={`حذف السيارة ${car.car_plate_num ?? car.car_number}`}
+                              onClick={() => {
+                                setCarToDelete(car);
+                                setShowDeleteModal(true);
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </td>
                         </tr>
                       );
                     })}
@@ -1651,6 +1595,7 @@ export function CarsTab({
                         {carsTab === "sold" && (
                           <td className="ct-buyer">&nbsp;</td>
                         )}
+                        <td className="ct-delete">&nbsp;</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1793,7 +1738,7 @@ export function CarsTab({
                             />
                           ) : (
                             <div className="flex items-center justify-center h-[38px] bg-white/[0.02] border border-white/5 rounded-xl text-sm font-semibold text-white/50" dir="ltr">
-                              {row.purchase ? Number(row.purchase).toLocaleString() : "0"} {row.currency}
+                              <PriceDisplay amount={row.purchase || 0} currency={row.currency} noColor />
                             </div>
                           )}
                         </td>
@@ -2073,10 +2018,7 @@ export function CarsTab({
             </div>
             <p className="fx-confirm-message" style={{ marginBottom: "14px" }}>
               تم اكتشاف <strong>{batchDuplicateConflicts.length}</strong> تعارض في المجموعة المدخلة.
-              السيارات المكررة لن يتم حفظها.
-              {pendingBatchRowsAfterDupeCheck.length > 0
-                ? ` سيتم حفظ ${pendingBatchRowsAfterDupeCheck.length} سيارة غير مكررة فقط.`
-                : " لا توجد سيارات غير مكررة للحفظ."}
+              هذا تنبيه فقط، وسيتم حفظ كل السيارات بمعرّفات داخلية مختلفة عند الحاجة.
             </p>
 
             {/* Conflict list */}
@@ -2115,18 +2057,16 @@ export function CarsTab({
             </div>
 
             <div className="fx-confirm-actions">
-              {pendingBatchRowsAfterDupeCheck.length > 0 && (
-                <GoldFxButton
-                  type="button"
-                  variant="gold"
-                  onClick={() => {
-                    setShowBatchDuplicateModal(false);
-                    void executeBatchSave(pendingBatchRowsAfterDupeCheck);
-                  }}
-                >
-                  <span className="gold-fx-btn__label">حفظ ({pendingBatchRowsAfterDupeCheck.length})</span>
-                </GoldFxButton>
-              )}
+              <GoldFxButton
+                type="button"
+                variant="gold"
+                onClick={() => {
+                  setShowBatchDuplicateModal(false);
+                  void executeBatchSave(pendingBatchRowsAfterDupeCheck);
+                }}
+              >
+                <span className="gold-fx-btn__label">حفظ الكل ({pendingBatchRowsAfterDupeCheck.length})</span>
+              </GoldFxButton>
               <ActionButton
                 type="button"
                 variant="ghost"
