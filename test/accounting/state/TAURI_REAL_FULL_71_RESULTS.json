@@ -1,0 +1,77 @@
+[
+  {
+    "id": "FULL-71-001",
+    "name": "Cash car sale — full real-backend cycle",
+    "related_scenarios": [
+      "FULL-71-001"
+    ],
+    "group": "cash_sale",
+    "status": "FAIL",
+    "expected": {},
+    "actual": {
+      "error": "الجلسة مطلوبة أو منتهية الصلاحية"
+    },
+    "rust_functions": [
+      "add_car_cash_purchase",
+      "sell_car_cash",
+      "summary_snapshot"
+    ],
+    "notes": "الجلسة مطلوبة أو منتهية الصلاحية"
+  },
+  {
+    "id": "FULL-71-002",
+    "name": "General expense — reduces partner cash",
+    "related_scenarios": [
+      "FULL-71-002"
+    ],
+    "group": "general_expense",
+    "status": "FAIL",
+    "expected": {},
+    "actual": {
+      "error": "الجلسة مطلوبة أو منتهية الصلاحية"
+    },
+    "rust_functions": [
+      "add_expense",
+      "summary_snapshot"
+    ],
+    "notes": "الجلسة مطلوبة أو منتهية الصلاحية"
+  },
+  {
+    "id": "FULL-71-003",
+    "name": "Investor deposit — increases Qasa only",
+    "related_scenarios": [
+      "FULL-71-003"
+    ],
+    "group": "investor",
+    "status": "FAIL",
+    "expected": {},
+    "actual": {
+      "error": "الجلسة مطلوبة أو منتهية الصلاحية"
+    },
+    "rust_functions": [
+      "add_partner",
+      "add_partner_transaction",
+      "summary_snapshot"
+    ],
+    "notes": "الجلسة مطلوبة أو منتهية الصلاحية"
+  },
+  {
+    "id": "FULL-71-004",
+    "name": "Funder financing + repayment — full cycle",
+    "related_scenarios": [
+      "FULL-71-004"
+    ],
+    "group": "funder",
+    "status": "FAIL",
+    "expected": {},
+    "actual": {
+      "error": "الجلسة مطلوبة أو منتهية الصلاحية"
+    },
+    "rust_functions": [
+      "add_funded_car",
+      "pay_financier_from_partners",
+      "summary_snapshot"
+    ],
+    "notes": "الجلسة مطلوبة أو منتهية الصلاحية"
+  }
+]

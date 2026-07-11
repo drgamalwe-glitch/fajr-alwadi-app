@@ -1,0 +1,225 @@
+.qasa-wrap {
+  position: relative;
+}
+
+.qasa-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--all-radius);
+  padding: 10px 24px;
+
+  background: rgba(30, 30, 40, 0.15);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+
+  border: 1px solid rgba(255, 170, 0, 0.15);
+
+  transform-style: preserve-3d;
+  opacity: 0.7;
+  transition: border-color 0.5s ease, box-shadow 0.5s ease, opacity 0.5s ease;
+}
+
+.qasa-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--all-radius);
+  background: radial-gradient(
+    ellipse 140% 60% at 50% 100%,
+    rgba(255, 170, 0, 0.5) 0%,
+    rgba(255, 170, 0, 0.15) 30%,
+    transparent 70%
+  );
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.8;
+  transition: opacity 0.6s ease;
+}
+
+.qasa-card:hover::before {
+  opacity: 1;
+}
+
+.qasa-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--all-radius);
+  background: radial-gradient(
+    ellipse 100% 50% at 50% 120%,
+    rgba(255, 200, 50, 0.4) 0%,
+    rgba(255, 170, 0, 0.1) 40%,
+    transparent 70%
+  );
+  filter: blur(8px);
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+
+.qasa-card:hover::after {
+  opacity: 1;
+  animation: innerGlow 2.5s ease-in-out infinite;
+}
+
+.qasa-glass-reflection {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--all-radius);
+  background: linear-gradient(
+    135deg, 
+    rgba(255, 255, 255, 0.15) 0%, 
+    rgba(255, 255, 255, 0) 35%, 
+    rgba(255, 255, 255, 0) 80%, 
+    rgba(255, 255, 255, 0.06) 100%
+  );
+  pointer-events: none;
+  z-index: 2;
+  transition: all 0.6s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.qasa-card:hover {
+  border-color: rgba(255, 170, 0, 0.5);
+  z-index: 50;
+  box-shadow: 
+    inset 0 0 30px -5px rgba(255, 170, 0, 0.15),
+    0 0 25px -10px rgba(255, 170, 0, 0.2);
+}
+
+.qasa-card:hover .qasa-glass-reflection {
+  background: linear-gradient(
+    135deg, 
+    rgba(255, 255, 255, 0.28) 0%, 
+    rgba(255, 255, 255, 0) 45%, 
+    rgba(255, 255, 255, 0) 75%, 
+    rgba(255, 255, 255, 0.12) 100%
+  );
+}
+
+@keyframes innerGlow {
+  0% { opacity: 0.6; filter: blur(6px); }
+  50% { opacity: 1; filter: blur(10px); }
+  100% { opacity: 0.6; filter: blur(6px); }
+}
+
+.qasa-noise {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--all-radius);
+  background-image: url("/noise.svg");
+  opacity: 0.02;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.qasa-content {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.qasa-header {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  width: 100%;
+  direction: rtl;
+}
+
+.qasa-title {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  color: #ffaa00 !important;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 20px rgba(255, 170, 0, 0.25);
+  
+  transition: color 0.4s ease, text-shadow 0.4s ease;
+}
+
+.qasa-card:hover .qasa-title {
+  color: #ffaa00 !important;
+  text-shadow: 0 0 30px rgba(255, 170, 0, 0.5);
+}
+
+.qasa-values-frame {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 2px 0;
+  background: transparent;
+  border: none;
+  transition: all 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+  overflow: hidden;
+}
+
+.qasa-card:hover .qasa-values-frame {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.qasa-divider-line {
+  width: 140px;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+  border-radius: 50% / 100%;
+  margin: 2px 0;
+  transition: all 0.7s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.qasa-card:hover .qasa-divider-line {
+  width: 260px;
+  height: 4px;
+  background: linear-gradient(90deg, transparent, rgba(255, 170, 0, 0.95), transparent);
+}
+
+.qasa-iqd, .qasa-usd {
+  font-size: 32px;
+  font-weight: 900;
+  letter-spacing: -1px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1), filter 0.4s ease;
+  
+  -webkit-text-stroke: 0.5px rgba(0, 0, 0, 0.38);
+}
+
+.qasa-iqd {
+  color: #ffaa00 !important;
+}
+
+.qasa-usd {
+  color: #0ebb76 !important;
+}
+
+.qasa-iqd span span,
+.qasa-usd span span {
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  letter-spacing: 1.5px !important;
+  margin-left: 6px !important;
+  vertical-align: middle !important;
+  opacity: 0.75 !important;
+}
+
+.qasa-card:hover .qasa-iqd {
+  transform: translateZ(24px);
+  filter: drop-shadow(0 0 20px rgba(255, 170, 0, 0.3));
+}
+
+.qasa-card:hover .qasa-usd {
+  transform: translateZ(18px);
+  filter: drop-shadow(0 0 20px rgba(14, 187, 118, 0.25));
+}
