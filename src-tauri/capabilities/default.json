@@ -1,0 +1,28 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-create",
+    "core:window:allow-center",
+    "opener:allow-open-url",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "$TEMP/fajr_*.pdf" }]
+    },
+    "fs:default",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$TEMP/fajr_*.pdf" },
+        { "path": "$RESOURCE/logo.png" },
+        { "path": "$RESOURCE/assets/logo.png" },
+        { "path": "$RESOURCE/fonts/**" }
+      ]
+    }
+  ]
+}

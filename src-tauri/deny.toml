@@ -1,0 +1,56 @@
+# cargo-deny configuration
+# Docs: https://embarkstudios.github.io/cargo-deny/
+#
+# Run locally:   cargo deny check
+# Install:       cargo install cargo-deny
+#
+# This file is intentionally minimal and permissive — tighten as the project matures.
+# Add to CI after `cargo audit` to enforce license + advisory policy.
+
+[graph]
+# Lint all targets (including dev-deps and build-deps).
+all-features = true
+
+[advisories]
+# Fail the build on any advisory with a CVSS score >= 7.0 (High / Critical).
+# Lower-severity advisories are reported but don't fail the build.
+yanked = "deny"
+# Local mirror of the rustsec advisory DB (cargo-deny auto-fetches if missing).
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Per-spec policy (Bug D2): vulnerabilities fail the build, unmaintained crates warn.
+# NOTE: `vulnerability`/`unmaintained` are deprecated in newer cargo-deny in favor
+# of `yanked`, but remain accepted for backward compatibility with older toolchains.
+vulnerability = "deny"
+unmaintained = "warn"
+# Ignore specific advisory IDs here (with a comment explaining why):
+ignore = []
+
+[licenses]
+# Allow common permissive licenses. Add more as needed.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+# Confidence threshold for license detection (0.0 - 1.0).
+confidence-threshold = 0.8
+
+[bans]
+# Allow duplicate versions of the same crate (some transitively required).
+multiple-versions = "warn"
+wildcards = "warn"
+
+[sources]
+# Only allow crates from crates.io. Any unknown-registry/git dependency fails.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

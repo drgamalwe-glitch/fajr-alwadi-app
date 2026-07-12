@@ -1,0 +1,174 @@
+import { useCallback, useEffect, useState } from "react";
+import { callTauri } from "../api/tauri";
+import { BrandLogo } from "./BrandLogo";
+import { TextInput } from "./ui";
+import type { LoginResult, UserInfo } from "../types";
+
+interface LoginScreenProps {
+  /** Bug AU3: Pass session token back to App so it can be forwarded to admin commands */
+  onLogin: (user: UserInfo, sessionToken?: string | null) => void;
+}
+
+export function LoginScreen({ onLogin }: LoginScreenProps) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [bootstrapRequired, setBootstrapRequired] = useState<boolean | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    callTauri<boolean>("is_bootstrap_required")
+      .then((required) => {
+        setBootstrapRequired(required);
+        if (required) setUsername("admin");
+      })
+      .catch(() => setError("تعذر التحقق من حالة إعداد النظام"));
+  }, []);
+
+  const handleLogin = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      setError("");
+
+      if (!username.trim()) {
+        setError("الرجاء إدخال اسم المستخدم");
+        return;
+      }
+      if (!password.trim()) {
+        setError("الرجاء إدخال كلمة المرور");
+        return;
+      }
+
+      setLoading(true);
+      try {
+        if (bootstrapRequired) {
+          const result = await callTauri<LoginResult>("bootstrap_admin", {
+            password,
+            passwordConfirmation,
+          });
+          if (result.success && result.user) {
+            onLogin(result.user, result.session_token);
+          } else {
+            setError(result.error || "فشل إعداد مدير النظام");
+          }
+          return;
+        }
+        const result = await callTauri<LoginResult>("login", {
+          username: username.trim(),
+          password: password.trim(),
+        });
+
+        if (result.success && result.user) {
+          // Bug AU3: forward session token to the App for admin command authentication
+          onLogin(result.user, result.session_token);
+        } else {
+          setError(result.error || "فشل تسجيل الدخول");
+        }
+      } catch (err) {
+        setError("حدث خطأ أثناء تسجيل الدخول");
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [username, password, passwordConfirmation, bootstrapRequired, onLogin],
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Enter" && !loading) {
+        handleLogin(e as unknown as React.FormEvent);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleLogin, loading]);
+
+  return (
+    <div className="login-screen">
+      <div className="login-screen__bg">
+        <div className="app-bg__mesh" />
+        <div className="app-bg__orb app-bg__orb--1" />
+        <div className="app-bg__orb app-bg__orb--2" />
+        <div className="app-bg__orb app-bg__orb--3" />
+        <div className="app-bg__reflection" />
+      </div>
+      <div className="login-screen__overlay" />
+      <div className="login-screen__card">
+        <div className="login-screen__header">
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <BrandLogo size="lg" />
+          </div>
+          <h1>{bootstrapRequired ? "إعداد مدير النظام" : "شركة فجر الوادي"}</h1>
+          <p>
+            {bootstrapRequired
+              ? "اختر كلمة مرور المدير لأول تشغيل"
+              : "نظام إدارة السيارات والحسابات"}
+          </p>
+        </div>
+        <form className="login-screen__form" onSubmit={handleLogin}>
+          <div className="login-screen__field">
+            <label htmlFor="login-username">اسم المستخدم</label>
+            <TextInput
+              id="login-username"
+              type="text"
+              inputSize="sm"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="أدخل اسم المستخدم"
+              autoFocus
+              autoComplete="username"
+              dir="auto"
+              data-testid="login-username"
+              disabled={Boolean(bootstrapRequired)}
+            />
+          </div>
+          {bootstrapRequired && (
+            <div className="login-screen__field">
+              <label htmlFor="login-password-confirmation">تأكيد كلمة المرور</label>
+              <TextInput
+                id="login-password-confirmation"
+                type="password"
+                inputSize="sm"
+                value={passwordConfirmation}
+                onChange={(e) => setPasswordConfirmation(e.target.value)}
+                placeholder="أعد إدخال كلمة المرور"
+                autoComplete="new-password"
+                dir="auto"
+                data-testid="login-password-confirmation"
+              />
+            </div>
+          )}
+          <div className="login-screen__field">
+            <label htmlFor="login-password">كلمة المرور</label>
+            <TextInput
+              id="login-password"
+              type="password"
+              inputSize="sm"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="أدخل كلمة المرور"
+              autoComplete="current-password"
+              dir="auto"
+              data-testid="login-password"
+            />
+          </div>
+          {error && <div className="login-screen__error">{error}</div>}
+          <button
+            type="submit"
+            className="login-screen__button"
+            disabled={loading || bootstrapRequired === null}
+            data-testid="login-submit"
+          >
+            {loading
+              ? "جاري التنفيذ..."
+              : bootstrapRequired
+                ? "إنشاء مدير النظام"
+                : "تسجيل الدخول"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,70 @@
+{
+  "generated_at": "2026-07-11T03:54:24.927Z",
+  "overall_status": "UNKNOWN",
+  "release_gate": {
+    "decision": "NO_GO",
+    "blocking_reasons": [
+      "backend_bridge: runs on stub backend, not real Rust/SQLite — cannot prove production behavior",
+      "e2e_playwright: runs on mock backend, not real Rust/SQLite — cannot prove production behavior",
+      "rust_backend: executed 0 tests — cannot prove behavior"
+    ],
+    "warnings": []
+  },
+  "total_tests_discovered": 64,
+  "total_tests_executed": 59,
+  "total_tests_passed": 59,
+  "total_tests_failed": 0,
+  "total_tests_skipped": 5,
+  "suites": [
+    {
+      "suite": "oracle",
+      "status": "PASS",
+      "backend_mode": "oracle",
+      "mandatory": false,
+      "tests_discovered": 53,
+      "tests_executed": 53,
+      "tests_passed": 53,
+      "tests_failed": 0,
+      "tests_skipped": 0,
+      "duration_ms": 1783734138586,
+      "raw_path": "/home/z/my-project/workspace/fajr-alwadi-app-main/test/accounting/state/oracle-results.json"
+    },
+    {
+      "suite": "backend_bridge",
+      "status": "PASS",
+      "backend_mode": "stub",
+      "mandatory": true,
+      "tests_discovered": 6,
+      "tests_executed": 1,
+      "tests_passed": 1,
+      "tests_failed": 0,
+      "tests_skipped": 5,
+      "raw_path": "/home/z/my-project/workspace/fajr-alwadi-app-main/test/accounting/state/backend-results.json"
+    },
+    {
+      "suite": "e2e_playwright",
+      "status": "PASS",
+      "backend_mode": "mock",
+      "mandatory": true,
+      "tests_discovered": 5,
+      "tests_executed": 5,
+      "tests_passed": 5,
+      "tests_failed": 0,
+      "tests_skipped": 0,
+      "duration_ms": 11595.897,
+      "raw_path": "/home/z/my-project/workspace/fajr-alwadi-app-main/test/accounting/state/e2e-results.json"
+    },
+    {
+      "suite": "rust_backend",
+      "status": "UNKNOWN",
+      "backend_mode": "real",
+      "mandatory": true,
+      "tests_discovered": 0,
+      "tests_executed": 0,
+      "tests_passed": 0,
+      "tests_failed": 0,
+      "tests_skipped": 0,
+      "raw_path": "/home/z/my-project/workspace/fajr-alwadi-app-main/test/accounting/state/TAURI_REAL_FULL_71_RESULTS.json"
+    }
+  ]
+}

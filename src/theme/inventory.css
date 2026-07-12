@@ -1,0 +1,237 @@
+.inventory-wrap {
+  position: relative;
+}
+
+.inventory-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--all-radius);
+  padding: 10px 24px;
+
+  background: rgba(30, 30, 40, 0.15);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+
+  border: 1px solid rgba(6, 182, 212, 0.15);
+
+  transform-style: preserve-3d;
+  opacity: 0.7;
+  transition: border-color 0.5s ease, box-shadow 0.5s ease, opacity 0.5s ease;
+}
+
+.inventory-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--all-radius);
+  background: radial-gradient(
+    ellipse 140% 60% at 50% 100%,
+    rgba(6, 182, 212, 0.5) 0%,
+    rgba(6, 182, 212, 0.15) 30%,
+    transparent 70%
+  );
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.8;
+  transition: opacity 0.6s ease;
+}
+
+.inventory-card:hover::before {
+  opacity: 1;
+}
+
+.inventory-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--all-radius);
+  background: radial-gradient(
+    ellipse 100% 50% at 50% 120%,
+    rgba(34, 211, 238, 0.4) 0%,
+    rgba(6, 182, 212, 0.1) 40%,
+    transparent 70%
+  );
+  filter: blur(8px);
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+
+.inventory-card:hover::after {
+  opacity: 1;
+  animation: innerGlow 2.5s ease-in-out infinite;
+}
+
+.inventory-glass-reflection {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--all-radius);
+  background: linear-gradient(
+    135deg, 
+    rgba(255, 255, 255, 0.15) 0%, 
+    rgba(255, 255, 255, 0) 35%, 
+    rgba(255, 255, 255, 0) 80%, 
+    rgba(255, 255, 255, 0.06) 100%
+  );
+  pointer-events: none;
+  z-index: 2;
+  transition: all 0.6s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.inventory-card:hover {
+  border-color: rgba(6, 182, 212, 0.5);
+  z-index: 50;
+  box-shadow: 
+    inset 0 0 30px -5px rgba(6, 182, 212, 0.15),
+    0 0 25px -10px rgba(6, 182, 212, 0.2);
+}
+
+.inventory-card:hover .inventory-glass-reflection {
+  background: linear-gradient(
+    135deg, 
+    rgba(255, 255, 255, 0.28) 0%, 
+    rgba(255, 255, 255, 0) 45%, 
+    rgba(255, 255, 255, 0) 75%, 
+    rgba(255, 255, 255, 0.12) 100%
+  );
+}
+
+@keyframes innerGlow {
+  0% { opacity: 0.6; filter: blur(6px); }
+  50% { opacity: 1; filter: blur(10px); }
+  100% { opacity: 0.6; filter: blur(6px); }
+}
+
+.inventory-noise {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--all-radius);
+  background-image: url("/noise.svg");
+  opacity: 0.02;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.inventory-content {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inventory-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  direction: rtl;
+}
+
+.inventory-title {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  color: #06b6d4 !important;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 20px rgba(6, 182, 212, 0.25);
+  
+  transition: color 0.4s ease, text-shadow 0.4s ease;
+}
+
+.inventory-card:hover .inventory-title {
+  color: #06b6d4 !important;
+  text-shadow: 0 0 30px rgba(6, 182, 212, 0.5);
+}
+
+.inventory-values-frame {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 2px 0;
+  background: transparent;
+  border: none;
+  transition: all 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+  overflow: hidden;
+}
+
+.inventory-card:hover .inventory-values-frame {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.inventory-divider-line {
+  width: 140px;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+  border-radius: 50% / 100%;
+  margin: 2px 0;
+  transition: all 0.7s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.inventory-card:hover .inventory-divider-line {
+  width: 260px;
+  height: 4px;
+  background: linear-gradient(90deg, transparent, rgba(6, 182, 212, 0.95), transparent);
+}
+
+.inventory-iqd, .inventory-usd {
+  font-size: 32px;
+  font-weight: 900;
+  letter-spacing: -1px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1), filter 0.4s ease;
+  
+  -webkit-text-stroke: 0.5px rgba(0, 0, 0, 0.38);
+}
+
+.inventory-iqd {
+  color: #06b6d4 !important;
+}
+
+.inventory-usd {
+  color: #0ebb76 !important;
+}
+
+.inventory-iqd span span,
+.inventory-usd span span {
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  letter-spacing: 1.5px !important;
+  margin-left: 6px !important;
+  vertical-align: middle !important;
+  opacity: 0.75 !important;
+}
+
+.inventory-card:hover .inventory-iqd {
+  transform: translateZ(24px);
+  filter: drop-shadow(0 0 20px rgba(6, 182, 212, 0.3));
+}
+
+.inventory-card:hover .inventory-usd {
+  transform: translateZ(18px);
+  filter: drop-shadow(0 0 20px rgba(14, 187, 118, 0.25));
+}
+
+.inventory-count {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 600;
+  white-space: nowrap;
+  transition: color 0.4s ease;
+}
+
+.inventory-card:hover .inventory-count {
+  color: rgba(6, 182, 212, 0.7);
+}
