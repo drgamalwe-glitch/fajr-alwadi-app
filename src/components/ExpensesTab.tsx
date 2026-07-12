@@ -22,6 +22,7 @@ interface ExpensesTabProps {
   toDate?: string;
   initialSubTab?: "expenses" | "profit";
   onSubTabChange?: (tab: "expenses" | "profit") => void;
+  sessionToken?: string | null;
 }
 
 export function ExpensesTab({
@@ -33,6 +34,7 @@ export function ExpensesTab({
   toDate,
   initialSubTab,
   onSubTabChange,
+  sessionToken,
 }: ExpensesTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<"expenses" | "profit">(initialSubTab || "expenses");
   const [profitTotals, setProfitTotals] = useState<{ usd: MoneyValue; iqd: MoneyValue }>({ usd: 0, iqd: 0 });
@@ -195,6 +197,7 @@ export function ExpensesTab({
         date,
         notes: notes.trim() || null,
         currency,
+        sessionToken,
       });
     } else {
       await callTauri("add_expense", {
@@ -203,6 +206,7 @@ export function ExpensesTab({
         date,
         notes: notes.trim() || null,
         currency,
+        sessionToken,
       });
     }
   };

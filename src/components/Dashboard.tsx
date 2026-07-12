@@ -571,6 +571,7 @@ export function Dashboard({
         notes: expenseCar ? `مصروف مرتبط بالسيارة ${expenseCar}` : null,
         currency: expenseCurrency,
         carNumber: expenseCar || null,
+        sessionToken,
       });
       setShowQuickExpense(false);
       setExpenseDesc(""); setExpenseAmt(""); setExpenseCar("");
@@ -680,6 +681,7 @@ export function Dashboard({
         commissionAmount: commissionNum,
         commissionCurrency: commissionCurrency,
         commissionNotes: courierName ? `تسديد دين بيد ${courierName.trim()}` : null,
+        sessionToken,
       });
 
       setShowPayCreditorModal(false);

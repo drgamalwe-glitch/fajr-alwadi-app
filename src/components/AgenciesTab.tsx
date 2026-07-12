@@ -21,6 +21,7 @@ interface AgenciesTabProps {
   onAddAgencyChange?: (onAddAgency: { action: () => void } | null) => void;
   onDirtyChange?: (dirty: boolean) => void;
   requestCloseRef?: React.MutableRefObject<{ request: (afterClose?: () => void) => void } | null>;
+  sessionToken?: string | null;
 }
 
 const AGENCIES_TABS: { id: "list" | "details"; label: string }[] = [
@@ -41,7 +42,7 @@ const normalizeAgency = (agency: Agency): Agency => ({
   payment_status: normalizeAgencyPaymentStatus(agency.payment_status),
 });
 
-export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClose, onAddAgencyChange, onDirtyChange, requestCloseRef }: AgenciesTabProps) {
+export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClose, onAddAgencyChange, onDirtyChange, requestCloseRef, sessionToken }: AgenciesTabProps) {
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
@@ -167,6 +168,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
             notes: selectedAgency.notes,
             paymentStatus: normalizeAgencyPaymentStatus(selectedAgency.payment_status),
             creationToken: String(Math.abs(selectedAgency.id)),
+            sessionToken,
           });
           selectedAgency.id = newId;
         } else {
@@ -183,6 +185,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
             amountUsd: String(selectedAgency.amount_usd ?? "0"),
             notes: selectedAgency.notes,
             paymentStatus: normalizeAgencyPaymentStatus(selectedAgency.payment_status),
+            sessionToken,
           });
         }
         await fetchAgencies();
@@ -369,6 +372,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
         date: dateStr,
         notes: txForm.notes || null,
         currency: txForm.currency,
+        sessionToken,
       });
       resetTxForm(txForm.type);
       setShowTxModal(false);

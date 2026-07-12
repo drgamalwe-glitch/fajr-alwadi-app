@@ -4233,6 +4233,76 @@ pub fn mark_partner_batch_reversed(conn: &Connection, ledger_batch_id: &str) -> 
     Ok(())
 }
 
+/// CRITICAL-3 FIX: Insert reversal entries for every financial_ledger row
+/// matching `select_sql` (bound by `param_name`/`param_value`), then delete
+/// the originals. This preserves the audit trail in all "delete-and-rebuild"
+/// code paths.
+pub fn reverse_and_delete_ledger_entries(
+    db: &Connection,
+    select_sql: &str,
+    delete_sql: &str,
+    param_name: &str,
+    param_value: &str,
+    reversal_note: &str,
+) -> Result<(), String> {
+    let named_param = format!(":{param_name}");
+    let select_with_param = select_sql.replace(":param", &named_param);
+    let delete_with_param = delete_sql.replace(":param", &named_param);
+
+    // SELECT 12 cols: date, time, account_type, account_id, debit, credit,
+    //   currency, reference_type, reference_id, type_, description, notes
+    let mut stmt = db.prepare(&select_with_param).map_err(|e| e.to_string())?;
+    let rows: Vec<(String, String, String, Option<String>, String, String, String, String, String, String, String, Option<String>)> = {
+        let binding = [(param_name, &param_value as &dyn rusqlite::types::ToSql)];
+        stmt.query_map(&binding, |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, String>(8)?,
+                row.get::<_, String>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, Option<String>>(11)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?
+    };
+    drop(stmt);
+
+    for (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, _description, _notes) in rows {
+        db.execute(
+            "INSERT INTO financial_ledger (date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, description, notes)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'عكس', ?10, ?11)",
+            params![
+                date,
+                time,
+                account_type,
+                account_id,
+                credit,
+                debit,
+                currency,
+                reference_type,
+                reference_id,
+                format!("عكس {type_}"),
+                reversal_note,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    let binding = [(param_name, &param_value as &dyn rusqlite::types::ToSql)];
+    db.execute(&delete_with_param, &binding)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn delete_ledger_entries(
     conn: &Connection,
     reference_type: &str,
@@ -6677,13 +6747,19 @@ pub fn add_car(
         || (force_rebuild_due_to_number_change && status == "مبيوعة");
 
     if car_number_changed {
-        // Car number actually changed — old number is being replaced entirely.
-        // Delete all ledger for the old number (safe since old number will be removed).
-        db.execute(
-            "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = ?1",
-            [old_num],
-        )
-        .map_err(|e| e.to_string())?;
+        // CRITICAL-3 FIX: Insert reversal entries before deleting to preserve audit trail.
+        // All ledger entries for the old car number are reversed (debit↔credit) and then
+        // deleted. The migration below re-creates entries under the new car number.
+        let (_rev_date, _rev_time) = now_datetime();
+        reverse_and_delete_ledger_entries(
+            &db,
+            "SELECT id, date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, notes
+             FROM financial_ledger WHERE reference_type = 'car' AND reference_id = :param",
+            "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = :param",
+            "car_id",
+            old_num,
+            &format!("تم تغيير رقم السيارة من {} إلى {} — عكس جميع القيود للترحيل تحت الرقم الجديد", old_num, car_number),
+        )?;
 
         // Migrate all source references to new number
         migrate_car_number_references(&db, old_num, &car_number)?;
@@ -7278,21 +7354,28 @@ pub fn sell_car_with_accounting(
     delete_generated_car_sale_partner_transactions(&db, &car_number)?;
 
     // Delete sale-related car ledger entries (receivable, deferred_revenue, revenue, COGS, inventory credit)
-    // But keep purchase entries
-    db.execute(
-        "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = ?1
-         AND account_type IN ('receivable', 'deferred_revenue', 'revenue', 'expense', 'cash')
-         AND (type_ LIKE '%بيع%' OR type_ LIKE '%مدينون%' OR type_ LIKE '%إيراد%' OR type_ LIKE '%تكلفة%' OR type_ LIKE '%تخفيض%')",
-        [&car_number],
-    ).map_err(|e| e.to_string())?;
-
-    // Also delete inventory credit entries for sale (the COGS offset)
-    db.execute(
-        "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = ?1
-         AND account_type = 'inventory' AND credit > 0 AND type_ LIKE '%تخفيض%'",
-        [&car_number],
-    )
-    .map_err(|e| e.to_string())?;
+    // But keep purchase entries.
+    // CRITICAL-3 FIX: Insert reversal entries before deleting to preserve audit trail.
+    // Combines both original DELETEs (sale accounts + inventory credit) into one reversal+delete.
+    reverse_and_delete_ledger_entries(
+        &db,
+        "SELECT id, date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, notes
+         FROM financial_ledger WHERE reference_type = 'car' AND reference_id = :param
+         AND (
+           (account_type IN ('receivable', 'deferred_revenue', 'revenue', 'expense', 'cash')
+            AND (type_ LIKE '%بيع%' OR type_ LIKE '%مدينون%' OR type_ LIKE '%إيراد%' OR type_ LIKE '%تكلفة%' OR type_ LIKE '%تخفيض%'))
+           OR (account_type = 'inventory' AND credit > 0 AND type_ LIKE '%تخفيض%')
+         )",
+        "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = :param
+         AND (
+           (account_type IN ('receivable', 'deferred_revenue', 'revenue', 'expense', 'cash')
+            AND (type_ LIKE '%بيع%' OR type_ LIKE '%مدينون%' OR type_ LIKE '%إيراد%' OR type_ LIKE '%تكلفة%' OR type_ LIKE '%تخفيض%'))
+           OR (account_type = 'inventory' AND credit > 0 AND type_ LIKE '%تخفيض%')
+         )",
+        "car_number",
+        &car_number,
+        &format!("عكس قيود بيع السيارة {} قبل إعادة بناء البيع", car_number),
+    )?;
 
     // ============================================================
     // STEP 3a: Installment/Due-date: Create customer account + payment + schedule
@@ -8209,8 +8292,8 @@ pub fn save_and_sell_car_with_accounting(
     commission_type: Option<String>,
     commission_value: Option<Money>,
     // CRITICAL-7: bind this write to the supplied session token so the audit
-    // trail records the actual operator. Optional for backwards compatibility.
-    session_token: Option<String>,
+    // trail records the actual operator.
+    session_token: String,
 ) -> Result<(), String> {
     // ============================================================
     // VALIDATION (before any write)
@@ -8256,7 +8339,7 @@ pub fn save_and_sell_car_with_accounting(
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
     // CRITICAL-7: bind this write to the supplied session token so the
     // audit trail records the actual operator, not "any admin".
-    require_admin_session(&db, session_token.as_deref())?;
+    require_admin_session(&db, Some(&session_token))?;
 
     let requested_plate = num.trim().to_string();
     let car_number = resolve_unique_car_number(&db, &requested_plate, None)?;
@@ -9164,7 +9247,7 @@ pub fn update_partner(
 
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let tx = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&tx, None)?;
+    require_admin_session(&tx, Some(&session_token))?;
 
     // Block kind change if ledger history exists
     if old_kind != kind {
@@ -9251,7 +9334,7 @@ pub fn add_partner_transaction(
     currency: Option<String>,
     payment_type: Option<String>,
     creation_token: Option<String>,
-    session_token: Option<String>,
+    session_token: String,
 ) -> Result<(), String> {
     // ============================================================
     // VALIDATION (before any write)
@@ -9269,7 +9352,7 @@ pub fn add_partner_transaction(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    let actor_user_id = require_admin_session(&db, session_token.as_deref())?;
+    let actor_user_id = require_admin_session(&db, Some(&session_token))?;
 
     // FORENSIC FIX (re-audit 2026-07-11, IDEMPOTENCY-1):
     // §31.2 / §31.5 — add_partner_transaction now supports a creation_token.
@@ -9581,28 +9664,48 @@ pub fn delete_generated_car_sale_partner_transactions(
 }
 
 pub fn delete_car_purchase_ledger_entries(db: &Connection, car_number: &str) -> Result<(), String> {
-    db.execute(
-        "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = ?1
+    // CRITICAL-3 FIX: Insert reversal entries before deleting to preserve audit trail.
+    reverse_and_delete_ledger_entries(
+        db,
+        "SELECT id, date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, notes
+         FROM financial_ledger WHERE reference_type = 'car' AND reference_id = :param
          AND (type_ IN ('شراء سيارة', 'شراء سيارة كاش', 'تمويل شراء سيارة', 'شراء سيارة عن طريق شركة')
               OR (type_ NOT LIKE '%بيع%' AND type_ NOT LIKE '%مدينون%' AND type_ NOT LIKE '%إيراد%'
                   AND type_ NOT LIKE '%تكلفة%' AND type_ NOT LIKE '%تخفيض%'
                   AND type_ NOT LIKE '%مخزون%' AND type_ NOT LIKE '%ارباح%'))",
-        [car_number],
-    ).map_err(|e| e.to_string())?;
+        "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = :param
+         AND (type_ IN ('شراء سيارة', 'شراء سيارة كاش', 'تمويل شراء سيارة', 'شراء سيارة عن طريق شركة')
+              OR (type_ NOT LIKE '%بيع%' AND type_ NOT LIKE '%مدينون%' AND type_ NOT LIKE '%إيراد%'
+                  AND type_ NOT LIKE '%تكلفة%' AND type_ NOT LIKE '%تخفيض%'
+                  AND type_ NOT LIKE '%مخزون%' AND type_ NOT LIKE '%ارباح%'))",
+        "car_number",
+        car_number,
+        &format!("عكس قيود شراء السيارة {} قبل إعادة البناء{}", car_number, ""),
+    )?;
     Ok(())
 }
 
 pub fn delete_car_sale_ledger_entries(db: &Connection, car_number: &str) -> Result<(), String> {
-    db.execute(
-        "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = ?1
+    // CRITICAL-3 FIX: Insert reversal entries before deleting to preserve audit trail.
+    reverse_and_delete_ledger_entries(
+        db,
+        "SELECT id, date, time, account_type, account_id, debit, credit, currency, reference_type, reference_id, type_, notes
+         FROM financial_ledger WHERE reference_type = 'car' AND reference_id = :param
          AND (type_ IN ('بيع سيارة', 'بيع سيارة كاش', 'مدينون بيع سيارة', 'إيراد مؤجل بيع سيارة',
                          'تكلفة المبيعات', 'تخفيض المخزون بيع سيارة')
               OR (type_ LIKE '%بيع%' OR type_ LIKE '%مدينون%' OR type_ LIKE '%إيراد%'
                   OR type_ LIKE '%تكلفة%' OR type_ LIKE '%تخفيض%'
                   OR type_ LIKE '%ارباح%'))",
-        [car_number],
-    )
-    .map_err(|e| e.to_string())?;
+        "DELETE FROM financial_ledger WHERE reference_type = 'car' AND reference_id = :param
+         AND (type_ IN ('بيع سيارة', 'بيع سيارة كاش', 'مدينون بيع سيارة', 'إيراد مؤجل بيع سيارة',
+                         'تكلفة المبيعات', 'تخفيض المخزون بيع سيارة')
+              OR (type_ LIKE '%بيع%' OR type_ LIKE '%مدينون%' OR type_ LIKE '%إيراد%'
+                  OR type_ LIKE '%تكلفة%' OR type_ LIKE '%تخفيض%'
+                  OR type_ LIKE '%ارباح%'))",
+        "car_number",
+        car_number,
+        &format!("عكس قيود بيع السيارة {} قبل إعادة البناء{}", car_number, ""),
+    )?;
     Ok(())
 }
 
@@ -12441,7 +12544,7 @@ pub fn pay_customer_installment(
     currency: Option<String>,
     payment_type: Option<String>,
     creation_token: Option<String>,
-    session_token: Option<String>,
+    session_token: String,
 ) -> Result<(), String> {
     // FORENSIC FIX (re-audit 2026-07-11, IDEMPOTENCY-2 + AUDIT-TRAIL-2):
     // Backfill the same idempotency + audit-trail guarantees as the other
@@ -12460,7 +12563,7 @@ pub fn pay_customer_installment(
 
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    let actor_user_id = require_admin_session(&db, session_token.as_deref())?;
+    let actor_user_id = require_admin_session(&db, Some(&session_token))?;
 
     // Idempotent retry: if a partner_transactions row with this creation_token
     // already exists, treat as success (the user is retrying a double-click).
@@ -12483,7 +12586,7 @@ pub fn pay_customer_installment(
                 "installment",
                 Some(installment_id),
                 "pay_customer_installment.idempotent_retry",
-                session_token.as_deref(),
+                Some(&session_token),
                 Some(token),
             )?;
             db.commit().map_err(|e| e.to_string())?;
@@ -12509,7 +12612,7 @@ pub fn pay_customer_installment(
         "installment",
         Some(installment_id),
         "pay_customer_installment",
-        session_token.as_deref(),
+        Some(&session_token),
         creation_token.as_deref(),
     )?;
 
@@ -12743,7 +12846,7 @@ pub fn pay_financier_from_partners(
     commission_currency: Option<String>,
     _commission_notes: Option<String>,
     creation_token: Option<String>,
-    session_token: Option<String>,
+    session_token: String,
 ) -> Result<(), String> {
     // ============================================================
     // VALIDATION (before any write)
@@ -12766,7 +12869,7 @@ pub fn pay_financier_from_partners(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    let actor_user_id = require_admin_session(&db, session_token.as_deref())?;
+    let actor_user_id = require_admin_session(&db, Some(&session_token))?;
 
     // FORENSIC FIX (re-audit 2026-07-11, IDEMPOTENCY-3 + AUDIT-TRAIL-3):
     // Idempotent retry on creation_token + 5-second duplicate detection for
@@ -12794,7 +12897,7 @@ pub fn pay_financier_from_partners(
                 "partner_transaction",
                 None,
                 "pay_financier_from_partners.idempotent_retry",
-                session_token.as_deref(),
+                Some(&session_token),
                 Some(token),
             )?;
             db.commit().map_err(|e| e.to_string())?;
@@ -12986,7 +13089,7 @@ pub fn pay_financier_from_partners(
         "partner_transaction",
         None,
         "pay_financier_from_partners",
-        session_token.as_deref(),
+        Some(&session_token),
         creation_token.as_deref(),
     )?;
 
@@ -13033,6 +13136,7 @@ pub fn update_partner_transaction(
     notes: Option<String>,
     currency: Option<String>,
     payment_type: Option<String>,
+    session_token: String,
 ) -> Result<(), String> {
     // ============================================================
     // VALIDATION (before any write)
@@ -13050,7 +13154,7 @@ pub fn update_partner_transaction(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db, None)?;
+    require_admin_session(&db, Some(&session_token))?;
 
     let pre_car_number = find_car_number_for_transaction(&db, id);
 
@@ -13218,13 +13322,14 @@ pub fn delete_partner_transaction(
     id: i64,
     partner_name: String,
     kind: String,
+    session_token: String,
 ) -> Result<(), String> {
     // ============================================================
     // ATOMIC TRANSACTION
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db, None)?;
+    require_admin_session(&db, Some(&session_token))?;
 
     let pre_car_number = find_car_number_for_transaction(&db, id);
 
@@ -13743,6 +13848,7 @@ pub fn add_expense(
     currency: Option<String>,
     car_number: Option<String>,
     creation_token: Option<String>,
+    session_token: String,
 ) -> Result<(), String> {
     // ============================================================
     // VALIDATION (before any write)
@@ -13758,7 +13864,7 @@ pub fn add_expense(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db, None)?;
+    require_admin_session(&db, Some(&session_token))?;
 
     // FORENSIC FIX (re-audit 2026-07-11, FORENSIC-RUST-1-4):
     // Idempotency: if a creation_token is provided and an expense with that
@@ -14054,6 +14160,7 @@ pub fn update_expense(
     date: String,
     notes: Option<String>,
     currency: Option<String>,
+    session_token: String,
 ) -> Result<(), String> {
     // ============================================================
     // VALIDATION (before any write)
@@ -14069,7 +14176,7 @@ pub fn update_expense(
     // ============================================================
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db, None)?;
+    require_admin_session(&db, Some(&session_token))?;
     let (_, current_time) = now_datetime();
 
     // 1. Delete old partner transactions WITH their ledger entries
@@ -14165,7 +14272,7 @@ pub fn apply_car_expense_changes(
     mut delete_ids: Vec<i64>,
     additions: Vec<CarExpenseChangeInput>,
     creation_token: Option<String>,
-    session_token: Option<String>,
+    session_token: String,
 ) -> Result<(), String> {
     validate_required_text(&chassis, "رقم الشاصي")?;
     let normalized_chassis = normalize_chassis_value(&chassis);
@@ -14182,7 +14289,7 @@ pub fn apply_car_expense_changes(
 
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    let actor_user_id = require_admin_session(&db, session_token.as_deref())?;
+    let actor_user_id = require_admin_session(&db, Some(&session_token))?;
 
     // FORENSIC FIX (re-audit 2026-07-11, IDEMPOTENCY-4):
     // Idempotent retry: if a car_expenses row with this creation_token already
@@ -14209,7 +14316,7 @@ pub fn apply_car_expense_changes(
                 "car_expense",
                 None,
                 "apply_car_expense_changes.idempotent_retry",
-                session_token.as_deref(),
+                Some(&session_token),
                 Some(token),
             )?;
             db.commit().map_err(|e| e.to_string())?;
@@ -14419,7 +14526,7 @@ pub fn apply_car_expense_changes(
         "car_expense",
         None,
         "apply_car_expense_changes",
-        session_token.as_deref(),
+        Some(&session_token),
         creation_token.as_deref(),
     )?;
 
@@ -15039,6 +15146,7 @@ pub fn add_agency(
     notes: String,
     payment_status: Option<String>,
     creation_token: Option<String>,
+    session_token: String,
 ) -> Result<i64, String> {
     // Audit fix #13: validate agency amounts before any write.
     validate_required_text(&old_agent_name, "اسم الوكيل القديم")?;
@@ -15051,7 +15159,7 @@ pub fn add_agency(
 
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db, None)?;
+    require_admin_session(&db, Some(&session_token))?;
     let creation_token = creation_token
         .map(|token| token.trim().to_string())
         .filter(|token| !token.is_empty());
@@ -15155,6 +15263,7 @@ pub fn update_agency(
     amount_iqd: Money,
     notes: String,
     payment_status: Option<String>,
+    session_token: String,
 ) -> Result<(), String> {
     // Audit fix #13: validate agency amounts before any write.
     validate_required_text(&old_agent_name, "اسم الوكيل القديم")?;
@@ -15167,7 +15276,7 @@ pub fn update_agency(
 
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db, None)?;
+    require_admin_session(&db, Some(&session_token))?;
 
     // Phase 14: Delete all partner rows by agency_id (cash_movement + profit_recognition)
     delete_partner_transactions_by_source_with_ledger(&db, "agency", &id.to_string(), None)?;
@@ -15293,6 +15402,7 @@ pub fn add_agency_transaction(
     notes: Option<String>,
     currency: Option<String>,
     creation_token: Option<String>,
+    session_token: String,
 ) -> Result<(), String> {
     // Audit fix #13: validate agency transaction inputs before any write.
     validate_required_text(&type_, "نوع الحركة")?;
@@ -15304,7 +15414,7 @@ pub fn add_agency_transaction(
 
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db, None)?;
+    require_admin_session(&db, Some(&session_token))?;
 
     // FORENSIC FIX (re-audit 2026-07-11, FORENSIC-RUST-1-2):
     // Idempotency: if a creation_token is provided and an agency_transaction
@@ -16502,8 +16612,13 @@ pub fn get_selected_background(state: State<AppState>) -> Result<Option<String>,
 #[tauri::command]
 pub fn set_selected_background(
     state: State<AppState>,
+    session_token: String,
     background: String,
 ) -> Result<String, String> {
+    {
+        let db_guard = state.db.lock().map_err(|e| e.to_string())?;
+        require_admin_session(&db_guard, Some(&session_token))?;
+    }
     let normalized = normalize_background_path(&background)?;
     let target_path = if cfg!(debug_assertions) {
         backgrounds_base_dir()?.join(SELECTED_BACKGROUND_FILE)
@@ -16516,7 +16631,11 @@ pub fn set_selected_background(
 }
 
 #[tauri::command]
-pub fn rename_background(file_path: String) -> Result<String, String> {
+pub fn rename_background(state: State<AppState>, session_token: String, file_path: String) -> Result<String, String> {
+    {
+        let db_guard = state.db.lock().map_err(|e| e.to_string())?;
+        require_admin_session(&db_guard, Some(&session_token))?;
+    }
     let base_dir = backgrounds_base_dir()?;
 
     if !base_dir.exists() {
@@ -16584,7 +16703,11 @@ pub fn rename_background(file_path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn delete_background(file_path: String) -> Result<(), String> {
+pub fn delete_background(state: State<AppState>, session_token: String, file_path: String) -> Result<(), String> {
+    {
+        let db_guard = state.db.lock().map_err(|e| e.to_string())?;
+        require_admin_session(&db_guard, Some(&session_token))?;
+    }
     let base_dir = backgrounds_base_dir()?;
 
     let path = std::path::Path::new(&file_path);
@@ -17098,6 +17221,7 @@ pub fn settle_company_through_funder(
     amount: Money,
     date: String,
     currency: Option<String>,
+    session_token: String,
 ) -> Result<(), String> {
     validate_positive_amount(amount, "المبلغ")?;
     validate_required_text(&company_name, "اسم الشركة")?;
@@ -17108,7 +17232,7 @@ pub fn settle_company_through_funder(
 
     let mut db_guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = db_guard.transaction().map_err(|e| e.to_string())?;
-    require_admin_session(&db, None)?;
+    require_admin_session(&db, Some(&session_token))?;
     let time_str = db
         .query_row("SELECT strftime('%H:%M', 'now', 'localtime')", [], |row| {
             row.get::<_, String>(0)
@@ -17511,12 +17635,11 @@ pub fn add_user(
     password: String,
     display_name: String,
     profile_image: Option<String>,
-    // Bug 3 (AU3): Optional session token. The frontend may pass this to enforce
-    // real session verification. If None, the legacy fallback is used.
-    session_token: Option<String>,
+    // CRITICAL-7: mandatory session token for user management
+    session_token: String,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    require_admin_session(&db, session_token.as_deref())?;
+    require_admin_session(&db, Some(&session_token))?;
     let username = username.trim();
     let password = password.trim();
     let display_name = display_name.trim();
@@ -17546,10 +17669,10 @@ pub fn update_user(
     username: String,
     display_name: String,
     profile_image: Option<String>,
-    session_token: Option<String>,
+    session_token: String,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    require_admin_session(&db, session_token.as_deref())?;
+    require_admin_session(&db, Some(&session_token))?;
     let username = username.trim();
     let display_name = display_name.trim();
 
@@ -17575,11 +17698,11 @@ pub fn change_password(
     state: State<AppState>,
     id: i64,
     new_password: String,
-    // Bug 3 (AU3): Optional session token.
-    session_token: Option<String>,
+    // CRITICAL-7: mandatory session token for password change
+    session_token: String,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    require_admin_session(&db, session_token.as_deref())?;
+    require_admin_session(&db, Some(&session_token))?;
     let new_password = new_password.trim();
 
     if new_password.is_empty() {
@@ -17604,11 +17727,11 @@ pub fn change_password(
 pub fn delete_user(
     state: State<AppState>,
     id: i64,
-    // Bug 3 (AU3): Optional session token.
-    session_token: Option<String>,
+    // CRITICAL-7: mandatory session token for user deletion
+    session_token: String,
 ) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    require_admin_session(&db, session_token.as_deref())?;
+    require_admin_session(&db, Some(&session_token))?;
 
     // Prevent deleting the protected primary admin user, even after username changes.
     if id == PRIMARY_ADMIN_USER_ID {

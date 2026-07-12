@@ -64,6 +64,7 @@ interface PartnersTabProps {
   onReturn?: () => void;
   cars?: Car[];
   onNavigateToCar?: (carNumber: string, status: "available" | "sold", initialPage?: 0 | 1) => void;
+  sessionToken?: string | null;
 }
 
 const normalizeArabic = (str: string): string => {
@@ -282,6 +283,7 @@ export function PartnersTab({
   onReturn,
   cars = [],
   onNavigateToCar,
+  sessionToken,
 }: PartnersTabProps) {
   const [unifiedAccounts, setUnifiedAccounts] = useState<UnifiedAccount[]>([]);
   const [page, setPage] = useState(0);
@@ -1037,6 +1039,7 @@ export function PartnersTab({
           notes: `تسديد ${installmentModal.tx.notes || "قسط"}`,
           currency: installmentModal.tx.currency || "IQD",
           paymentType: installmentModal.tx.payment_type || installmentModal.tx.paymentType || "قاصه",
+          sessionToken,
         });
       } else {
         await callTauri("reverse_customer_installment_payment", {
@@ -1641,7 +1644,7 @@ export function PartnersTab({
     if (!tx) return;
     setDeleteTxConfirm(null);
     try {
-      await callTauri("delete_partner_transaction", { id: tx.id, partnerName: tx.partner_name, kind: tx.kind });
+      await callTauri("delete_partner_transaction", { id: tx.id, partnerName: tx.partner_name, kind: tx.kind, sessionToken });
       transactionsDirtyRef.current = true;
       if (usesUnifiedAccounts) { void fetchUnifiedAccounts(); }
       const txs = await callTauri<PartnerTransaction[]>("get_partner_transactions", { partnerName: tx.partner_name, kind: tx.kind });
@@ -1711,6 +1714,7 @@ export function PartnersTab({
           amount: txForm.amount,
           date: txForm.date,
           currency: txCurrency,
+          sessionToken,
         });
         resetTransactionForm(txForm.type);
         setCompanyPaymentMode("");
@@ -1819,9 +1823,10 @@ export function PartnersTab({
               await callTauri("update_partner_transaction", {
                 id: editingTransactionId,
                 ...transactionPayload,
+                sessionToken,
               });
             } else {
-              const newId = await callTauri<number>("add_partner_transaction", transactionPayload);
+              const newId = await callTauri<number>("add_partner_transaction", { ...transactionPayload, sessionToken });
               if (typeof newId === "number" && Number.isFinite(newId)) {
                 createdIds.push(newId);
               }
@@ -1831,7 +1836,7 @@ export function PartnersTab({
           // Best-effort rollback of any transactions created in this loop before the failure.
           for (const createdId of createdIds) {
             try {
-              await callTauri("delete_partner_transaction", { id: createdId, partnerName: editingKey, kind: form.kind });
+              await callTauri("delete_partner_transaction", { id: createdId, partnerName: editingKey, kind: form.kind, sessionToken });
             } catch (cleanupErr) {
               console.error("Failed to roll back installment transaction", createdId, cleanupErr);
             }

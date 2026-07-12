@@ -36,6 +36,7 @@ interface CarFormPanelProps {
   initialPage?: 0 | 1;
   saleFieldsLocked?: boolean;
   receivedInstallmentsTotal?: number;
+  sessionToken?: string | null;
 }
 
 export function CarFormPanel({
@@ -49,6 +50,7 @@ export function CarFormPanel({
   initialPage = 0,
   saleFieldsLocked = false,
   receivedInstallmentsTotal = 0,
+  sessionToken,
 }: CarFormPanelProps) {
   const [allPartners, setAllPartners] = useState<Partner[]>([]);
   const [carExpenses, setCarExpenses] = useState<CarExpenseRecord[]>([]);
@@ -195,6 +197,7 @@ export function CarFormPanel({
       chassis: form.chassis,
       deleteIds: deletedExpenseIds,
       additions,
+      sessionToken: sessionToken || null,
     });
 
     setDeletedExpenseIds([]);

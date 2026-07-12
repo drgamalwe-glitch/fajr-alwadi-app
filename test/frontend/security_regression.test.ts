@@ -120,7 +120,7 @@ describe("IDEMPOTENCY-1: add_partner_transaction must accept creation_token", ()
     expect(sigMatch).not.toBeNull();
     const sig = sigMatch![1];
     expect(sig).toContain("creation_token: Option<String>");
-    expect(sig).toContain("session_token: Option<String>");
+    expect(sig).toContain("session_token: String");
 
     // The body must check for an existing token via SQL.
     expect(src).toMatch(/SELECT EXISTS\(SELECT 1 FROM partner_transactions WHERE creation_token = /);
@@ -148,5 +148,78 @@ describe("AUDIT-TRAIL-1: append_audit_event must record backend actor", () => {
     const fnMatch = src.match(/fn\s+append_audit_event\s*\(([^)]+)\)/s);
     expect(fnMatch).not.toBeNull();
     expect(fnMatch![1]).not.toMatch(/actor_name/);
+  });
+});
+
+describe("AUTH-MANDATE-1: all write commands require mandatory session_token", () => {
+  const WRITE_COMMANDS = [
+    "save_and_sell_car_with_accounting",
+    "add_partner_transaction",
+    "pay_customer_installment",
+    "pay_financier_from_partners",
+    "apply_car_expense_changes",
+    "add_user",
+    "update_user",
+    "change_password",
+    "delete_user",
+    "set_selected_background",
+    "rename_background",
+    "delete_background",
+  ];
+
+  it("every write command has session_token: String (not Option<String>)", () => {
+    const candidates = [
+      join(PROJECT_ROOT, "src-tauri", "src", "lib.rs"),
+      join(PROJECT_ROOT, "src-tauri", "src", "legacy.rs"),
+    ];
+    let src = "";
+    for (const p of candidates) {
+      if (existsSync(p)) src += "\n" + readFileSync(p, "utf-8");
+    }
+    if (!src) return;
+
+    for (const cmd of WRITE_COMMANDS) {
+      const fnMatch = src.match(new RegExp(`fn\\s+${cmd}\\s*\\(([^)]+)\\)`, "s"));
+      expect(fnMatch).not.toBeNull();
+      const sig = fnMatch![1];
+      // Must have session_token as a required String, not Option<String>
+      expect(sig).toContain("session_token: String");
+      expect(sig).not.toContain("session_token: Option<String>");
+    }
+  });
+
+  it("no write command uses require_admin_session with None", () => {
+    const p = join(PROJECT_ROOT, "src-tauri", "src", "legacy.rs");
+    if (!existsSync(p)) return;
+    const src = readFileSync(p, "utf-8");
+    // There should be zero instances of require_admin_session(&db, None)
+    expect(src).not.toMatch(/require_admin_session\(&\w+,\s*None\)/);
+  });
+});
+
+describe("CRITICAL-3: reversal_and_delete_ledger_entries helper exists", () => {
+  it("legacy.rs defines the reversal helper function", () => {
+    const p = join(PROJECT_ROOT, "src-tauri", "src", "legacy.rs");
+    if (!existsSync(p)) return;
+    const src = readFileSync(p, "utf-8");
+    expect(src).toMatch(/fn\s+reverse_and_delete_ledger_entries\s*\(/);
+  });
+
+  it("delete_car_purchase_ledger_entries uses reversal before delete", () => {
+    const p = join(PROJECT_ROOT, "src-tauri", "src", "legacy.rs");
+    if (!existsSync(p)) return;
+    const src = readFileSync(p, "utf-8");
+    const fnMatch = src.match(/fn\s+delete_car_purchase_ledger_entries\s*\([^)]*\)\s*->[^{]*\{([^}]+)\}/s);
+    expect(fnMatch).not.toBeNull();
+    expect(fnMatch![1]).toContain("reverse_and_delete_ledger_entries");
+  });
+
+  it("delete_car_sale_ledger_entries uses reversal before delete", () => {
+    const p = join(PROJECT_ROOT, "src-tauri", "src", "legacy.rs");
+    if (!existsSync(p)) return;
+    const src = readFileSync(p, "utf-8");
+    const fnMatch = src.match(/fn\s+delete_car_sale_ledger_entries\s*\([^)]*\)\s*->[^{]*\{([^}]+)\}/s);
+    expect(fnMatch).not.toBeNull();
+    expect(fnMatch![1]).toContain("reverse_and_delete_ledger_entries");
   });
 });

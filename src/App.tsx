@@ -586,7 +586,7 @@ export default function App() {
     localStorage.setItem(SELECTED_BACKGROUND_STORAGE_KEY, currentBg);
 
     if (backgroundPersistReady) {
-      callTauri<string>("set_selected_background", { background: currentBg }).catch((err) => {
+      callTauri<string>("set_selected_background", { sessionToken, background: currentBg }).catch((err) => {
         console.error("تعذر حفظ الخلفية المختارة في إعدادات التطبيق:", err);
       });
     }
@@ -882,6 +882,7 @@ export default function App() {
                     onInitialSubTabSet={() => setCarsSubTab(null)}
                     onSubTabChange={setCurrentCarsSubTab}
                     onNavigateToPartner={handleNavigateToPartner}
+                    sessionToken={sessionToken}
                   />
                 )}
                 {activeTab === "partners-financial" && (
@@ -904,6 +905,7 @@ export default function App() {
                     onReturn={clearReturnState}
                     cars={cars}
                     onNavigateToCar={handleNavigateToCar}
+                    sessionToken={sessionToken}
                   />
                 )}
                 {activeTab === "expenses" && (
@@ -916,6 +918,7 @@ export default function App() {
                     toDate={toDate}
                     initialSubTab={expensesSubTab}
                     onSubTabChange={setExpensesSubTab}
+                    sessionToken={sessionToken}
                   />
                 )}
                 {activeTab === "financial-accounts" && (
@@ -932,6 +935,7 @@ export default function App() {
                     onAddAgencyChange={setAddAgencyAction}
                     requestCloseRef={tabCloseRequestRef}
                     onDirtyChange={handleDirtyChange}
+                    sessionToken={sessionToken}
                   />
                 )}
               </div>

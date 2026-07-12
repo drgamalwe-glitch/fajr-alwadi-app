@@ -36,6 +36,7 @@ interface CarsTabProps {
   returnState?: { section: string; subTab?: string } | null;
   onReturn?: () => void;
   onNavigateToPartner?: (name: string, kind?: string) => void;
+  sessionToken?: string | null;
 }
 
 /** وضع اللوحة الجانبية */
@@ -140,6 +141,7 @@ export function CarsTab({
   returnState,
   onReturn,
   onNavigateToPartner,
+  sessionToken,
 }: CarsTabProps) {
   const [form, setForm] = useState<CarFormState>(emptyForm);
   const formRef = useRef<CarFormState>(emptyForm());
@@ -828,10 +830,8 @@ export function CarsTab({
           commissionType: null,
           commissionValue: null,
           // CRITICAL-7: pass session token so the audit trail records the
-          // actual operator. Currently null because CarsTab does not yet
-          // receive sessionToken as a prop — a follow-up task will thread
-          // it through from App.tsx via Dashboard.
-          sessionToken: null,
+          // actual operator.
+          sessionToken: sessionToken || null,
         });
       } else if (isPureSaleEdit) {
         // Pure sale field edit (no cost/identity change): use update_sold_car_with_accounting
@@ -1861,6 +1861,7 @@ export function CarsTab({
                 (tabButtons[0] as HTMLButtonElement)?.click();
               }
             }}
+            sessionToken={sessionToken}
           />
         </div>
       )}
