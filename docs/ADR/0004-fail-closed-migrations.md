@@ -4,7 +4,7 @@
 - **الحالة**: مقبول (Accepted)
 - **المُقرّر**: فريق التدقيق الجنائي — جولة 11-B
 - **المعرّف في `docs/BUG_REGRESSIONS.md`**: MIGRATION-V35
-- **المراجع**: `Instructions.md` §9.1, `final.md` (v34 swallowed errors), `src-tauri/src/lib.rs` v35 implementation
+- **المراجع**: `Instructions.md` §9.1, `reports/FINAL_REPORT.md` (v34 swallowed errors), `src-tauri/src/lib.rs` v35 implementation
 
 ## السياق
 
@@ -197,7 +197,7 @@ fn migrate_v36(conn: &Connection) -> SqlResult<()> {
 ## مراجع
 
 - `Instructions.md` §9.1 (لا تعدّل Migration منشورة).
-- `final.md` — حادثة v34 المبتلعة للأخطاء.
+- `reports/FINAL_REPORT.md` — حادثة v34 المبتلعة للأخطاء.
 - `src-tauri/src/lib.rs` — تنفيذ v35 مع postconditions (مذكور في `docs/MIGRATIONS.md` §v35).
 - `docs/MIGRATIONS.md` — سجل الترحيلات v1–v35، خاصة §v34 و§v35.
 - `docs/ADR/0003-idempotency-tokens.md` — القرار الذي يستفيد من postconditions على فهارس `creation_token`.

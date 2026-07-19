@@ -50,6 +50,7 @@ __pycache__/
 *.sqlite-journal
 *.sqlite-wal
 *.sqlite-shm
+.legacy-database-migrated
 
 # Backups
 backups/
@@ -77,6 +78,7 @@ coverage/
 *.lcov
 *.coverage
 test-results/
+test/accounting/state/
 playwright-report/
 .cache/
 

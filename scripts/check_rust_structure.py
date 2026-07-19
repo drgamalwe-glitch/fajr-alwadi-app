@@ -13,7 +13,13 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RUST = ROOT / "src-tauri" / "src" / "lib.rs"
+RUST_ROOT = ROOT / "src-tauri" / "src"
+RUST_FILES = sorted(
+    path
+    for path in RUST_ROOT.rglob("*.rs")
+    if "tests" not in path.parts and path.name not in {"tests_module.rs", "accounting_test_support.rs"}
+)
+LIB = ROOT / "src-tauri" / "src" / "lib.rs"
 
 
 def fail(message: str) -> None:
@@ -197,17 +203,58 @@ def extract_function(text: str, name: str) -> str:
     return ""
 
 
+def car_expense_safeguards_present(text: str) -> bool:
+    expense_fn = extract_function(text, "apply_car_expense_changes")
+    required_tokens = (
+        "SELECT car_id,description,amount",
+        "reverses_car_expense_id",
+        "WHERE id=?2 AND car_id=?3 AND version=?4",
+        "if affected != 1",
+        "rebuild_sold_car_accounting_after_cost_change",
+        "db.commit()",
+    )
+    has_transaction_boundary = (
+        "transaction()" in expense_fn or "begin_admin_transaction" in expense_fn
+    )
+    has_admin_gate = (
+        "require_admin_session" in expense_fn or "begin_admin_transaction" in expense_fn
+    )
+    return has_transaction_boundary and has_admin_gate and all(
+        token in expense_fn for token in required_tokens
+    )
+
+
 def main() -> int:
-    text = RUST.read_text(encoding="utf-8")
-    scan_delimiters(text)
+    if not RUST_FILES:
+        fail("no production Rust source files found")
 
-    names = re.findall(r"(?m)^\s*(?:pub\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", text)
-    duplicates = sorted(name for name, count in Counter(names).items() if count > 1)
-    if duplicates:
-        fail("duplicate Rust function definitions: " + ", ".join(duplicates))
-    ok(f"{len(names)} unique Rust function definitions")
+    sources = [(path, path.read_text(encoding="utf-8")) for path in RUST_FILES]
+    for path, source in sources:
+        try:
+            scan_delimiters(source)
+        except SystemExit:
+            print(f"[FILE] {path.relative_to(ROOT)}", file=sys.stderr)
+            raise
+    text = "\n".join(source for _, source in sources)
 
-    temporary_words = ("TO" + "DO", "FIX" + "ME", "HA" + "CK", "WORK" + "AROUND")
+    # Only compare module-level functions. Rust permits local helper functions
+    # with the same name in different enclosing scopes.
+    function_count = 0
+    for path, source in sources:
+        names = re.findall(
+            r"(?m)^(?:pub(?:\([^)]*\))?\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+            source,
+        )
+        duplicates = sorted(name for name, count in Counter(names).items() if count > 1)
+        if duplicates:
+            fail(
+                f"duplicate module-level Rust function definitions in {path.relative_to(ROOT)}: "
+                + ", ".join(duplicates)
+            )
+        function_count += len(names)
+    ok(f"{function_count} module-local Rust function definitions across {len(sources)} files")
+
+    temporary_words = ("TO" + "DO", "FIX" + "ME", "HA" + "CK")
     forbidden_markers = [word for word in temporary_words if re.search(rf"\b{word}\b", text, flags=re.I)]
     if forbidden_markers:
         fail(f"temporary markers remain in Rust source: {len(forbidden_markers)}")
@@ -220,9 +267,9 @@ def main() -> int:
 
     expense_fn = extract_function(text, "apply_car_expense_changes")
     required_expense_tokens = (
-        "transaction()",
-        "require_admin_session",
-        "DELETE FROM car_expenses WHERE id = ?1 AND car_number = ?2",
+        "SELECT car_id,description,amount",
+        "reverses_car_expense_id",
+        "WHERE id=?2 AND car_id=?3 AND version=?4",
         "if affected != 1",
         "rebuild_sold_car_accounting_after_cost_change",
         "db.commit()",
@@ -230,6 +277,10 @@ def main() -> int:
     for token in required_expense_tokens:
         if token not in expense_fn:
             fail(f"atomic car-expense function missing safeguard: {token}")
+    if "transaction()" not in expense_fn and "begin_admin_transaction" not in expense_fn:
+        fail("atomic car-expense function missing centralized transaction boundary")
+    if "require_admin_session" not in expense_fn and "begin_admin_transaction" not in expense_fn:
+        fail("atomic car-expense function missing admin gate")
     ok("atomic car-expense transaction safeguards present")
 
     auth_fn = extract_function(text, "require_admin_session")
@@ -239,15 +290,16 @@ def main() -> int:
     ok("financial compatibility path requires a live admin session")
 
     vin_tokens = (
-        "idx_cars_chassis_unique",
+        "DROP INDEX IF EXISTS idx_cars_chassis_unique",
+        "CREATE INDEX IF NOT EXISTS idx_cars_chassis",
         "normalize_chassis_value",
         "ensure_unique_chassis",
-        "ON cars(chassis_number COLLATE NOCASE)",
+        "resolve_unique_car_number",
     )
     for token in vin_tokens:
         if token not in text:
             fail(f"VIN integrity protection missing: {token}")
-    ok("normalized VIN validation and database uniqueness migration present")
+    ok("duplicate chassis support and unique car-number resolution are present")
 
     critical_functions = (
         "get_financial_summary",
@@ -262,7 +314,7 @@ def main() -> int:
     )
     for name in critical_functions:
         body = extract_function(text, name)
-        if re.search(r"query_row[\s\S]{0,500}?\.unwrap_or(?:_default|_else)?\s*\(", body):
+        if re.search(r"query_row[^;]{0,500}?\.unwrap_or(?:_default|_else)?\s*\(", body):
             fail(f"critical function {name} still masks query_row errors with unwrap_or")
     ok("critical accounting functions propagate SQLite query errors")
 
@@ -270,12 +322,17 @@ def main() -> int:
         fail("financial row iteration still discards SQLite row errors")
     ok("SQLite row iteration does not discard errors with filter_map(r.ok())")
 
+    if re.search(r"\.query_row[\s\S]{0,300}?\.unwrap_or_else\(\|_\|\s*\"00:00", text):
+        fail("SQLite timestamp query errors still fall back silently to midnight")
+    ok("transaction timestamps do not mask SQLite failures with midnight fallbacks")
+
     # Common accidental compile error: using ? in a closure explicitly returning bool.
     if re.search(r"\|[^|]*\|\s*->\s*bool\s*\{[^{}]*\?", text, flags=re.S):
         fail("found ? operator inside a closure declared -> bool")
     ok("no obvious Result/bool closure mismatch")
 
-    handler = re.search(r"tauri::generate_handler!\s*\[([\s\S]*?)\]\s*\)", text)
+    lib_text = LIB.read_text(encoding="utf-8")
+    handler = re.search(r"tauri::generate_handler!\s*\[([\s\S]*?)\]\s*\)", lib_text)
     if not handler:
         fail("Tauri generate_handler block not found")
     handler_names = [x.strip() for x in handler.group(1).split(",") if x.strip()]

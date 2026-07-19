@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Car, Partner, PartnerTransaction, UnifiedAccount, FinancialSummary, TabId } from "../types";
 import { callTauri } from "../api/tauri";
 import {
@@ -26,7 +26,9 @@ import {
 } from "lucide-react";
 import { CompanyStatusTab } from "./CompanyStatusTab";
 import { UsersTab } from "./UsersTab";
+import { AccountingPeriodsPanel } from "./AccountingPeriodsPanel";
 import { useAmountPrivacy } from "../utils/amountPrivacy";
+import { generateCreationToken } from "../utils/idempotency";
 
 // ── نظام الألوان مُستمَد من colors.css ──────────────────
 // --red:   #4d000a   (أحمر داكن — للتحذيرات / المصاريف / الأخطار)
@@ -35,7 +37,7 @@ import { useAmountPrivacy } from "../utils/amountPrivacy";
 // --black: #0e0e0e   (أسود    — الخلفية الرئيسية)
 // --white: #ffffff   (أبيض    — النص الأساسي)
 
-type DashboardSubTab = "dashboard" | "company-status" | "users" | "settings";
+type DashboardSubTab = "dashboard" | "company-status" | "users" | "settings" | "periods";
 
 interface DashboardProps {
   cars: Car[];
@@ -319,6 +321,82 @@ function CreditorRow({
 }
 
 // ════════════════════════════════════════════════════════
+// ── مكون الإعدادات ────────────────────────────────────
+// ════════════════════════════════════════════════════════
+function SettingsPanel({
+  hideAmounts,
+  onToggleHideAmounts,
+}: {
+  hideAmounts: boolean;
+  onToggleHideAmounts: () => void;
+}) {
+  return (
+    <div
+      style={{
+        maxWidth: 720,
+        width: "100%",
+        margin: "1rem auto 0",
+        display: "flex",
+        flexDirection: "column",
+        gap: "1rem",
+      }}
+    >
+      {/* إخفاء المبالغ */}
+      <div
+        className="dashboard-panel"
+        style={{
+          padding: "1.25rem",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "1rem",
+        }}
+      >
+        <div>
+          <h3 style={{ margin: 0, color: "var(--labletext)", fontSize: "var(--fs-lg)", fontWeight: 800 }}>
+            إخفاء المبالغ
+          </h3>
+          <p style={{ margin: "0.35rem 0 0", color: "var(--bg2)", fontSize: "var(--fs-sm)" }}>
+            عند التفعيل تظهر المبالغ مشفرة ولا تنكشف إلا عند الضغط على بطاقة المبلغ.
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={hideAmounts}
+          onClick={onToggleHideAmounts}
+          style={{
+            width: 76,
+            height: 38,
+            borderRadius: 999,
+            border: hideAmounts ? "1px solid rgba(216,168,90,0.75)" : "1px solid rgba(255,255,255,0.18)",
+            background: hideAmounts ? "rgba(216,168,90,0.22)" : "rgba(255,255,255,0.08)",
+            padding: 4,
+            cursor: "pointer",
+            display: "flex",
+            justifyContent: hideAmounts ? "flex-start" : "flex-end",
+            transition: "all 0.2s ease",
+            flexShrink: 0,
+          }}
+        >
+          <span
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: "50%",
+              background: hideAmounts ? "var(--smiles)" : "rgba(255,255,255,0.45)",
+              boxShadow: hideAmounts ? "0 0 16px rgba(216,168,90,0.45)" : "none",
+              transition: "all 0.2s ease",
+            }}
+          />
+        </button>
+      </div>
+
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════
 // ── المكون الرئيسي: لوحة التحكم ─────────────────────
 // ════════════════════════════════════════════════════════
 export function Dashboard({
@@ -358,7 +436,7 @@ export function Dashboard({
   const [loadingPanels, setLoadingPanels] = useState(true);
   const hasLoadedRef = useRef(false);
 
-  const loadBalances = async () => {
+  const loadBalances = useCallback(async () => {
     try {
       const [sumData, unified] = await Promise.all([
         callTauri<FinancialSummary>("get_financial_summary", { paymentType: "قاصه" }),
@@ -369,9 +447,9 @@ export function Dashboard({
     } catch (e) {
       console.error(e);
     }
-  };
+  }, []);
 
-  const loadInstallments = async () => {
+  const loadInstallments = useCallback(async () => {
     const debtors = partners.filter((p) => p.kind === "زبون");
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -476,7 +554,7 @@ export function Dashboard({
       })
     );
     setInstallments(alerts.sort((a, b) => a.dueDate.localeCompare(b.dueDate)));
-  };
+  }, [partners]);
 
   useEffect(() => {
     if (!hasLoadedRef.current) setLoadingPanels(true);
@@ -487,7 +565,7 @@ export function Dashboard({
       hasLoadedRef.current = true;
     });
     return () => { cancelled = true; };
-  }, [partners, cars]);
+  }, [partners, cars, loadBalances, loadInstallments]);
 
   const accountKindsForDashboard = new Set(["مستثمر", "ممول", "شركة", "وكالة"]);
   const creditorKinds = new Set(["مستثمر", "ممول", "شركة", "زبون", "وكالة"]);
@@ -547,7 +625,7 @@ export function Dashboard({
 
   const handleExpenseSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!expenseDesc.trim() || !Number(expenseAmt)) {
+    if (!expenseDesc.trim() || compareMoney(expenseAmt, 0) <= 0) {
       // تمييز الحقل الفارغ
       const formEl = (e.target as HTMLElement).closest?.('.modal-dialog__body') || document.querySelector('.modal-dialog__body');
       if (formEl) {
@@ -571,6 +649,7 @@ export function Dashboard({
         notes: expenseCar ? `مصروف مرتبط بالسيارة ${expenseCar}` : null,
         currency: expenseCurrency,
         carNumber: expenseCar || null,
+        creationToken: generateCreationToken(),
         sessionToken,
       });
       setShowQuickExpense(false);
@@ -653,7 +732,7 @@ export function Dashboard({
   const handlePayCreditor = async () => {
     // تنظيف الاسم والبيانات المحددة فوراً
     const cleanCreditorName = selectedCreditor.trim();
-    if (!cleanCreditorName || !Number(creditorAmount)) return;
+    if (!cleanCreditorName || compareMoney(creditorAmount, 0) <= 0) return;
 
     setLoadingAction(true);
     try {
@@ -681,6 +760,7 @@ export function Dashboard({
         commissionAmount: commissionNum,
         commissionCurrency: commissionCurrency,
         commissionNotes: courierName ? `تسديد دين بيد ${courierName.trim()}` : null,
+        creationToken: generateCreationToken(),
         sessionToken,
       });
 
@@ -704,6 +784,7 @@ export function Dashboard({
   return (
     <div
       className="dashboard"
+      data-testid="dashboard-root"
       style={{ display: "flex", flexDirection: "column", gap: 0, flex: 1, minHeight: 0, height: "100%" }}
     >
 
@@ -722,6 +803,7 @@ export function Dashboard({
           <div className="cars-tabs financial-tabs">
             <button
               type="button"
+              data-testid="dashboard-subtab-main"
               className={`top-btn-one ${activeSubTab === "dashboard" ? "top-btn-one--active" : ""}`}
               onClick={() => setActiveSubTab("dashboard")}
             >
@@ -737,6 +819,7 @@ export function Dashboard({
             </button>
             <button
               type="button"
+              data-testid="dashboard-subtab-users"
               className={`top-btn-two ${activeSubTab === "users" ? "top-btn-two--active" : ""}`}
               onClick={() => setActiveSubTab("users")}
             >
@@ -749,6 +832,14 @@ export function Dashboard({
             >
               الإعدادات
             </button>
+            <button
+              type="button"
+              data-testid="dashboard-subtab-periods"
+              className={`top-btn-two ${activeSubTab === "periods" ? "top-btn-two--active" : ""}`}
+              onClick={() => setActiveSubTab("periods")}
+            >
+              الفترات المحاسبية
+            </button>
           </div>
         </div>
         <div
@@ -760,61 +851,16 @@ export function Dashboard({
       </div>
 
       {activeSubTab === "company-status" ? (
-        <CompanyStatusTab summary={summary} unifiedAccounts={unifiedAccounts} partners={partners} onNavigateToTab={onNavigateToTab} onNavigateToPartner={onNavigateToPartner} />
+        <CompanyStatusTab summary={summary} unifiedAccounts={unifiedAccounts} partners={partners} sessionToken={sessionToken} onNavigateToTab={onNavigateToTab} onNavigateToPartner={onNavigateToPartner} />
       ) : activeSubTab === "users" ? (
         <UsersTab onLogout={onLogout || (() => { })} sessionToken={sessionToken} />
+      ) : activeSubTab === "periods" ? (
+        <AccountingPeriodsPanel sessionToken={sessionToken ?? ""} />
       ) : activeSubTab === "settings" ? (
-        <div
-          className="dashboard-panel"
-          style={{
-            maxWidth: 720,
-            width: "100%",
-            margin: "1rem auto 0",
-            padding: "1.25rem",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "1rem",
-          }}
-        >
-          <div>
-            <h3 style={{ margin: 0, color: "var(--labletext)", fontSize: "var(--fs-lg)", fontWeight: 800 }}>
-              إخفاء المبالغ
-            </h3>
-            <p style={{ margin: "0.35rem 0 0", color: "var(--bg2)", fontSize: "var(--fs-sm)" }}>
-              عند التفعيل تظهر المبالغ مشفرة ولا تنكشف إلا عند الضغط على بطاقة المبلغ.
-            </p>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={hideAmounts}
-            onClick={() => setHideAmounts(!hideAmounts)}
-            style={{
-              width: 76,
-              height: 38,
-              borderRadius: 999,
-              border: hideAmounts ? "1px solid rgba(216,168,90,0.75)" : "1px solid rgba(255,255,255,0.18)",
-              background: hideAmounts ? "rgba(216,168,90,0.22)" : "rgba(255,255,255,0.08)",
-              padding: 4,
-              cursor: "pointer",
-              display: "flex",
-              justifyContent: hideAmounts ? "flex-start" : "flex-end",
-              transition: "all 0.2s ease",
-            }}
-          >
-            <span
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: "50%",
-                background: hideAmounts ? "var(--smiles)" : "rgba(255,255,255,0.45)",
-                boxShadow: hideAmounts ? "0 0 16px rgba(216,168,90,0.45)" : "none",
-                transition: "all 0.2s ease",
-              }}
-            />
-          </button>
-        </div>
+        <SettingsPanel
+          hideAmounts={hideAmounts}
+          onToggleHideAmounts={() => setHideAmounts(!hideAmounts)}
+        />
       ) : (
         <>
           {/* ═══════════════════════════════════════════════════
@@ -1010,7 +1056,7 @@ export function Dashboard({
                   </div>
                   <div className="modal-dialog__actions">
                     <ActionButton type="button" variant="ghost" onClick={() => setShowQuickExpense(false)}>إلغاء</ActionButton>
-                    <ActionButton type="submit" variant="danger" disabled={loadingAction || !expenseDesc.trim() || !Number(expenseAmt)}>
+                    <ActionButton type="submit" variant="danger" disabled={loadingAction || !expenseDesc.trim() || compareMoney(expenseAmt, 0) <= 0}>
                       {loadingAction ? "جاري التسجيل..." : "تسجيل المصروف"}
                     </ActionButton>
                   </div>
@@ -1164,7 +1210,7 @@ export function Dashboard({
                     </div>
                     <div className="modal-dialog__actions">
                       <ActionButton type="button" variant="ghost" onClick={() => setShowPayCreditorModal(false)}>إلغاء</ActionButton>
-                      <GoldFxButton type="submit" variant="red" style={{ flex: 1, margin: 0 }} disabled={loadingAction || !selectedCreditor || !Number(creditorAmount)}>
+                      <GoldFxButton type="submit" variant="red" style={{ flex: 1, margin: 0 }} disabled={loadingAction || !selectedCreditor || compareMoney(creditorAmount, 0) <= 0}>
                         <span className="gold-fx-btn__icon">↑</span>
                         <span className="gold-fx-btn__label">{loadingAction ? "جاري التسديد..." : "تسديد"}</span>
                       </GoldFxButton>

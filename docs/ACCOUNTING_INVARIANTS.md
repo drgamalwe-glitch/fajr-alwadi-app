@@ -200,7 +200,7 @@
 
 **المرجع**: §10.3 (Fully Paid Customer), §28 (ضمنيًا).
 
-**التطبيق**: عند دفع كل الأقساط، صفوف `باقي قسط` تتحول إلى `واصل قسط`. `customer_balance_for_currency` يحسب الرصيد من صفوف `kind='زبون'` — صفوف `باقي` تزيد الرصيد، صفوف `واصل`/`تسديد`/`ايداع`/`مقدمة` تخفضه. بعد كل السداد، يجب أن يكون المجموع صفرًا. **إصلاح مهم** (Bug 2 في `final.md`): كان قارئ الرصيد يحتسب صف الدفع الحدثي `customer_payment` مرة ثانية بعد تحويل القسط إلى `واصل`، فينتج رصيد سالب `-6,000,000` بدل `0`. الإصلاح: استبعاد صفوف `source_type='customer_payment', source_role='customer_payment', related_source_type='car'` من خصم الرصيد، مع إبقاء `customer_transaction` اليدوي محتسبًا.
+**التطبيق**: عند دفع كل الأقساط، صفوف `باقي قسط` تتحول إلى `واصل قسط`. `customer_balance_for_currency` يحسب الرصيد من صفوف `kind='زبون'` — صفوف `باقي` تزيد الرصيد، صفوف `واصل`/`تسديد`/`ايداع`/`مقدمة` تخفضه. بعد كل السداد، يجب أن يكون المجموع صفرًا. **إصلاح مهم** (Bug 2 في `reports/FINAL_REPORT.md`): كان قارئ الرصيد يحتسب صف الدفع الحدثي `customer_payment` مرة ثانية بعد تحويل القسط إلى `واصل`، فينتج رصيد سالب `-6,000,000` بدل `0`. الإصلاح: استبعاد صفوف `source_type='customer_payment', source_role='customer_payment', related_source_type='car'` من خصم الرصيد، مع إبقاء `customer_transaction` اليدوي محتسبًا.
 
 **الاختبار**: `test_customer_balance_zero_after_all_event_installments_paid` (السطر 17742) — يتحقق أن الرصيد الكلي والجزئي = 0 بعد سداد كل الأقساط. `test_manual_customer_payment_still_reduces_balance` (السطر 17776) — اختبار الحماية: الدفعات اليدوية تستمر بخفض الرصيد (6,000,000 مستحق − 1,000,000 دفعة يدوية = 5,000,000).
 
@@ -235,13 +235,13 @@
 
 - **الثابت 14** (Read-Only Never Writes) لا يوجد له `#[test]` صريح في `lib.rs`. التحقق يتم عبر `scripts/accounting_audit.py` الذي يقارن hash قاعدة البيانات قبل/بعد استدعاء دوال القراءة. إن تعطّل السكربت أو تغيّر، فقد لا يُكتشف انتهاك هذا الثابت. التوصية: إضافة `#[test] fn test_read_only_functions_dont_write()` يفتح قاعدة بيانات في الذاكرة، يستدعي كل دوال القراءة، ويتحقق من `PRAGMA data_version` لم يتغير.
 - **الثوابت 17 و 18** (Qasa/Cash tabs = cards) مغطاة بشكل ضمني فقط. التوصية: إضافة اختبار صريح يُنشئ سيارة، يبيعها نقدي، ثم يستدعي `get_financial_summary` و`get_cash_register_entries` ويتحقق من تطابق القيم.
-- **التغطية الشاملة**: حسب `final.md`، Rust coverage = 37.54% regions, 26.38% functions, 45.14% lines. هذا أقل من المستهدف. مسارات الأخطاء (error paths) في أوامر Tauri غير منفذة جيدًا بالاختبارات.
+- **التغطية الحالية**: آخر تشغيل يثبت Rust ‏133/133 مع all-features، Frontend ‏90/90، bridge ‏8/8 وE2E ‏5/5. لا توجد قياس coverage محدث، لذلك لا يُعاد استخدام النسب التاريخية كحكم حالي.
 
 ## مراجع
 
 - `Instructions.md` — المصدر #1, خاصة §1.1, §1.2, §1.3, §3, §5, §6, §7, §9, §11, §12, §13, §17, §19, §20, §22, §24, §24.1, §25, §26, §27, §28, §30, §31.
-- `final.md` — تقرير التدقيق, يوثّق الأخطاء التسعة المعالجة وكل اختبار مرتبط.
-- `src-tauri/src/lib.rs` — الكود الإنتاجي, خاصة `#[cfg(test)] mod strict_accounting_invariants` (الأسطر 17074–20093).
+- `reports/FINAL_REPORT.md` — تقرير الجاهزية ونتائج البوابات الحالية.
+- `src-tauri/src/legacy/` — وحدات الإنتاج والاختبارات الصارمة حسب المجال.
 - `src-tauri/src/accounting_test_support.rs` — حاضنة الاختبارات (`reset_to_two_test_partners`, `apply_full_scenario_71`, إلخ).
 - `test/accounting/oracle/` — اختبارات Vitest الـ 53 (Accounting Oracle).
 - `test/frontend/idempotency.test.ts` — اختبارات Frontend لـ `IdempotencyGuard`.

@@ -5,6 +5,7 @@ import { NumericFormat } from "react-number-format";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "../../lib/utils";
 import { toEnglishDigits } from "../../utils/numberInput";
+import { toMoney } from "../../utils/money";
 
 type Currency = "USD" | "IQD";
 
@@ -59,9 +60,6 @@ export function PriceInput({
   const [internalCurrency, setInternalCurrency] = useState<Currency>("IQD");
   const inputRef = useRef<HTMLInputElement>(null);
   
-  // مرجع للاحتفاظ بآخر قيمة رقمية مدخلة لمنع مشاكل الـ Async
-  const latestFloatValue = useRef<number | undefined>(parseFloat(value) || 0);
-
   // تحويل الأرقام العربية إلى إنجليزية قبل معالجة NumericFormat
   useEffect(() => {
     const el = inputRef.current;
@@ -114,23 +112,19 @@ export function PriceInput({
   };
 
   const handleValueChange = (vals: { value: string; floatValue: number | undefined }) => {
-    latestFloatValue.current = vals.floatValue;
     onChange(vals.value);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "ArrowUp") {
       e.preventDefault();
-      const currentVal = parseFloat(value) || 0;
-      const newVal = currentVal * 1000;
-      latestFloatValue.current = newVal;
-      onChange(String(newVal));
+      const newVal = toMoney(value).times(1000);
+      onChange(newVal.toFixed(currency === "USD" ? 2 : 0));
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
-      const currentVal = parseFloat(value) || 0;
-      const newVal = currency === "IQD" ? Math.floor(currentVal / 1000) : currentVal / 1000;
-      latestFloatValue.current = newVal;
-      onChange(String(newVal));
+      const divided = toMoney(value).div(1000);
+      const newVal = currency === "IQD" ? divided.floor() : divided;
+      onChange(newVal.toFixed(currency === "USD" ? 2 : 0));
     } else {
       externalOnKeyDown?.(e);
     }
@@ -179,6 +173,7 @@ export function PriceInput({
           {/* زر العملة الأنحف والأرفع w-12 */}
           <button
             type="button"
+            data-testid={id ? `${id}-currency` : undefined}
             onClick={toggleCurrency}
             disabled={disabled}
             className="relative flex items-center justify-center w-14 h-auto min-h-[40px] cursor-pointer select-none border-l border-white/10 shrink-0 bg-transparent outline-none transition-colors"
@@ -202,6 +197,7 @@ export function PriceInput({
           {/* حقل إدخال الأرقام المصحح بالكامل */}
           <NumericFormat
             id={id}
+            data-testid={id}
             getInputRef={inputRef}
             value={value === "" ? "" : value}
             onValueChange={handleValueChange}
@@ -216,10 +212,9 @@ export function PriceInput({
             autoCapitalize="off"
             spellCheck={false}
             onBlur={() => {
-              const currentVal = latestFloatValue.current;
-              if (currentVal !== undefined && currentVal < min) {
+              if (value !== "" && toMoney(value).lt(min)) {
                 onChange(String(min));
-              } else if ((value === "" || currentVal === undefined) && required) {
+              } else if (value === "" && required) {
                 onChange(String(min));
               }
               externalOnBlur?.();

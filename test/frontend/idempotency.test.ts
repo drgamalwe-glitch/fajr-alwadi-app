@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { toMoney } from "../../src/utils/money";
 import {
   generateCreationToken,
   IdempotencyGuard,
@@ -115,60 +114,6 @@ describe("Instructions.md §31.3 — Duplicate Chassis Allowed with Different ID
     for (let i = 2; i <= 100; i++) existing.add(`CAR_Z#${i}`);
     const resolved = resolveUniqueCarNumber(existing, "CAR_Z");
     expect(resolved).toBe("CAR_Z#101");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────
-// §31.4 — Agency Cash vs Credit Profit Recognition
-// ─────────────────────────────────────────────────────────────────────
-
-describe("Instructions.md §31.4 — Agency Cash vs Credit", () => {
-  it("cash agency: profit = full amount, split 50/50", () => {
-    const agencyAmount = toMoney("1000000");
-    const half = agencyAmount.div(2);
-    expect(half.toString()).toBe("500000");
-    // Profit is recognized immediately for cash agencies.
-  });
-
-  it("credit agency: profit = 0 until payment received", () => {
-    const agencyAmount = toMoney("1000000");
-    // For credit agencies, profit_recognition is NOT created.
-    // So the profit contribution is 0.
-    const profitContribution = toMoney("0");
-    expect(profitContribution.toString()).toBe("0");
-    expect(profitContribution.lt(agencyAmount)).toBe(true);
-  });
-
-  it("after receiving credit agency payment: profit = full amount", () => {
-    const agencyAmount = toMoney("1000000");
-    // When set_agency_receivable_status marks the agency as "واصل",
-    // profit_recognition is created retroactively.
-    const recognizedProfit = agencyAmount; // full amount
-    expect(recognizedProfit.toString()).toBe("1000000");
-  });
-
-  it("cash agency: cash_movement = full amount, split 50/50", () => {
-    const agencyAmount = toMoney("1000000");
-    const halfCash = agencyAmount.div(2);
-    expect(halfCash.toString()).toBe("500000");
-  });
-
-  it("credit agency: cash_movement = 0 (no cash entered Qasa)", () => {
-    const cashContribution = toMoney("0");
-    expect(cashContribution.toString()).toBe("0");
-  });
-
-  it("ledger: cash agency → Dr cash / Cr revenue", () => {
-    const amount = toMoney("1000000");
-    // Dr cash (قاصه) = amount, Cr revenue = amount → balanced.
-    expect(amount.eq(amount)).toBe(true);
-  });
-
-  it("ledger: credit agency → Dr receivable / Cr deferred_revenue", () => {
-    const amount = toMoney("1000000");
-    // Dr receivable = amount, Cr deferred_revenue = amount → balanced.
-    // Revenue is NOT credited (profit not recognized yet).
-    expect(amount.eq(amount)).toBe(true);
   });
 });
 

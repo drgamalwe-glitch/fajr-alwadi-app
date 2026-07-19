@@ -4,6 +4,7 @@ import { callTauri } from "../api/tauri";
 import { normalizePhoneNumber } from "../utils/numberInput";
 import { ActionButton } from "./ui/ActionButton";
 import { SearchableCombobox } from "./SearchableCombobox";
+import type { Partner } from "../types";
 
 type PartnerKind = "ممول" | "شركة" | "زبون";
 
@@ -11,6 +12,7 @@ interface QuickAddPartnerModalProps {
   kind: PartnerKind;
   onClose: () => void;
   onSaved: (name: string, phone: string) => void;
+  sessionToken?: string | null;
 }
 
 const KIND_LABEL: Record<PartnerKind, string> = {
@@ -19,7 +21,7 @@ const KIND_LABEL: Record<PartnerKind, string> = {
   "زبون": "زبون",
 };
 
-export function QuickAddPartnerModal({ kind, onClose, onSaved }: QuickAddPartnerModalProps) {
+export function QuickAddPartnerModal({ kind, onClose, onSaved, sessionToken }: QuickAddPartnerModalProps) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [saving, setSaving] = useState(false);
@@ -28,7 +30,7 @@ export function QuickAddPartnerModal({ kind, onClose, onSaved }: QuickAddPartner
   const [existingNames, setExistingNames] = useState<string[]>([]);
 
   useEffect(() => {
-    callTauri<any[]>("get_partners")
+    callTauri<Partner[]>("get_partners")
       .then((res) => {
         setExistingNames((res || []).map((p) => p.partner_name));
       })
@@ -98,7 +100,7 @@ export function QuickAddPartnerModal({ kind, onClose, onSaved }: QuickAddPartner
     }
     setSaving(true);
     try {
-      const partnersList = await callTauri<any[]>("get_partners");
+      const partnersList = await callTauri<Partner[]>("get_partners");
       const alreadyExists = (partnersList || []).some(
         (p) => p.partner_name.trim().toLowerCase() === nameTrim.toLowerCase()
       );
@@ -114,6 +116,7 @@ export function QuickAddPartnerModal({ kind, onClose, onSaved }: QuickAddPartner
         name: nameTrim,
         phone: finalPhone,
         kind,
+        sessionToken: sessionToken || null,
       });
       onSaved(nameTrim, finalPhone);
     } catch (err) {
@@ -139,6 +142,7 @@ export function QuickAddPartnerModal({ kind, onClose, onSaved }: QuickAddPartner
         className={`modal-dialog modal-dialog--slim modal-dialog--overflow-visible modal-dialog--kind-${kind}`}
         role="dialog"
         aria-modal="true"
+        data-testid={`quick-add-${kind}-dialog`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="partner-form-panel--slim">
@@ -162,6 +166,7 @@ export function QuickAddPartnerModal({ kind, onClose, onSaved }: QuickAddPartner
                 <input
                   ref={nameRef}
                   id="partner-name"
+                  data-testid="quick-add-partner-name"
                   type="text"
                   dir="rtl"
                   value={name}
@@ -200,6 +205,7 @@ export function QuickAddPartnerModal({ kind, onClose, onSaved }: QuickAddPartner
                 </label>
                 <input
                   id="partner-phone"
+                  data-testid="quick-add-partner-phone"
                   type="tel"
                   inputMode="tel"
                   dir="ltr"
@@ -242,10 +248,10 @@ export function QuickAddPartnerModal({ kind, onClose, onSaved }: QuickAddPartner
                 />
               </div>
               <div className="car-form-panel__actions">
-                <ActionButton type="submit" variant="success" disabled={saving || nameExists}>
+                <ActionButton type="submit" variant="success" disabled={saving || nameExists} data-testid="quick-add-partner-save">
                   {saving ? "جاري الحفظ..." : `حفظ ${KIND_LABEL[kind]}`}
                 </ActionButton>
-                <ActionButton type="button" variant="ghost" onClick={onClose} disabled={saving}>
+                <ActionButton type="button" variant="ghost" onClick={onClose} disabled={saving} data-testid="quick-add-partner-cancel">
                   إلغاء
                 </ActionButton>
               </div>

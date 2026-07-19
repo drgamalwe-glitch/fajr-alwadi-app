@@ -99,8 +99,21 @@ if (typeof window !== "undefined") {
   setTimeout(applyAutoZoom, 1000);
 }
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+function bootstrapApplication() {
+  if (import.meta.env.VITE_E2E === "1") {
+    // The WDIO frontend bridge initializes asynchronously. Rendering must not
+    // wait for it, otherwise a slow bridge startup leaves the native window
+    // blank and the test runner cannot even reach the login screen.
+    void import("@wdio/tauri-plugin").catch((error) => {
+      console.error("[e2e] failed to initialize the WDIO frontend bridge", error);
+    });
+  }
+
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  );
+}
+
+void bootstrapApplication();

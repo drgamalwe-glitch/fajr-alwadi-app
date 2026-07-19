@@ -59,7 +59,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   const pendingAgencyActionRef = useRef<(() => void) | null>(null);
   const pendingAgencyCloseRef = useRef<(() => void) | null>(null);
 
-  const [txForm, setTxForm] = useState({ type: "ايداع" as string, amount: 0, date: todayIsoDate(), notes: "", currency: "IQD" as "IQD" | "USD" });
+  const [txForm, setTxForm] = useState({ type: "ايداع" as string, amount: "0", date: todayIsoDate(), notes: "", currency: "IQD" as "IQD" | "USD" });
 
   const [deleteTxConfirm, setDeleteTxConfirm] = useState<AgencyTransaction | null>(null);
   const [deleteAgencyConfirm, setDeleteAgencyConfirm] = useState<Agency | null>(null);
@@ -110,6 +110,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
       payment_status: "واصل",
       date: today,
       time: "",
+      version: 1,
     };
     setSelectedAgency(newAgency);
     initialAgencyRef.current = JSON.stringify(newAgency);
@@ -185,6 +186,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
             amountUsd: String(selectedAgency.amount_usd ?? "0"),
             notes: selectedAgency.notes,
             paymentStatus: normalizeAgencyPaymentStatus(selectedAgency.payment_status),
+            expectedVersion: selectedAgency.version,
             sessionToken,
           });
         }
@@ -202,7 +204,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
     }
   };
 
-  const handleCancelAgency = async () => {
+  const handleCancelAgency = useCallback(async () => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
@@ -210,7 +212,11 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
     if (selectedAgency) {
       if (selectedAgency.id > 0 && !selectedAgency.old_agent_name.trim() && !selectedAgency.new_agent_name.trim()) {
         try {
-          await callTauri("delete_agency", { id: selectedAgency.id });
+      await callTauri("delete_agency", {
+        id: selectedAgency.id,
+        expectedVersion: selectedAgency.version,
+        sessionToken: sessionToken || null,
+      });
           await fetchAgencies();
         } catch (err) {
           console.error("Failed to delete empty agency on cancel:", err);
@@ -220,7 +226,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
     setSelectedAgency(null);
     initialAgencyRef.current = "";
     setAgenciesTab("list");
-  };
+  }, [selectedAgency, sessionToken, fetchAgencies]);
 
   const handleAgencySaveConfirmSave = async () => {
     if (agencySaveInFlightRef.current) return;
@@ -247,13 +253,13 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
     pendingAgencyCloseRef.current = null;
   };
 
-  const tryCancelAgency = () => {
+  const tryCancelAgency = useCallback(() => {
     if (agencyDirty && selectedAgency) {
       setShowAgencySaveConfirm(true);
     } else {
       void handleCancelAgency();
     }
-  };
+  }, [agencyDirty, selectedAgency, handleCancelAgency]);
 
   useEffect(() => {
     onDirtyChange?.(agencyDirty);
@@ -325,7 +331,11 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
     setSaving(true);
     try {
       if (deleteAgencyConfirm.id > 0) {
-        await callTauri("delete_agency", { id: deleteAgencyConfirm.id });
+        await callTauri("delete_agency", {
+          id: deleteAgencyConfirm.id,
+          expectedVersion: deleteAgencyConfirm.version,
+          sessionToken: sessionToken || null,
+        });
       }
       if (selectedAgency?.id === deleteAgencyConfirm.id) {
         setSelectedAgency(null);
@@ -342,14 +352,14 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   };
 
   const resetTxForm = (type: string) => {
-    setTxForm({ type, amount: 0, date: todayIsoDate(), notes: "", currency: "IQD" });
+    setTxForm({ type, amount: "0", date: todayIsoDate(), notes: "", currency: "IQD" });
   };
 
   const handleAddTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedAgency) return;
     const dateStr = txForm.date?.trim() || "";
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr) || !Number.isFinite(txForm.amount) || txForm.amount <= 0) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr) || compareMoney(txForm.amount, 0) <= 0) {
       // تمييز الحقل الفارغ
       const formEl = (e.target as HTMLElement).closest?.('.form') || document.querySelector('.modal-dialog .form');
       if (formEl) {
@@ -387,7 +397,11 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
   const handleDeleteTransaction = async () => {
     if (!deleteTxConfirm) return;
     try {
-      await callTauri("delete_agency_transaction", { id: deleteTxConfirm.id });
+      await callTauri("delete_agency_transaction", {
+        id: deleteTxConfirm.id,
+        expectedVersion: deleteTxConfirm.version,
+        sessionToken: sessionToken || null,
+      });
       setDeleteTxConfirm(null);
       await onRefresh();
     } catch {
@@ -448,7 +462,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [agenciesSearchOpen, onAgenciesSearchClose, agenciesTab, showTxModal, deleteTxConfirm, deleteAgencyConfirm, showAgencySaveConfirm]);
+  }, [agenciesSearchOpen, onAgenciesSearchClose, agenciesTab, showTxModal, deleteTxConfirm, deleteAgencyConfirm, showAgencySaveConfirm, tryCancelAgency]);
 
   return (
     <div className="customers-page agencies-page">
@@ -557,6 +571,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                       return (
                         <tr
                           key={agency.id}
+                          data-testid={`agency-row-${agency.id}`}
                           className="customers-tr"
                           onClick={() => loadAgency(agency)}
                           title="اضغط لعرض التفاصيل"
@@ -592,6 +607,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                               type="button"
                               className="partner-inline-delete-btn"
                               title="حذف"
+                              aria-label={`حذف الوكالة ${agency.id}`}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setDeleteAgencyConfirm(agency);
@@ -640,6 +656,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                       <button
                         key={status}
                         type="button"
+                        data-testid={`agency-payment-status-${status}`}
                         role="radio"
                         aria-checked={isActive}
                         className={`agency-payment-switch__option agency-payment-switch__option--${status === "واصل" ? "received" : "pending"}${isActive ? " is-active" : ""}`}
@@ -654,15 +671,17 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
               <div className="agency-field agency-field--full">
                 <label className="agency-label">المبلغ (دينار عراقي)</label>
                 <PriceInput
+                  id="agency-amount-iqd"
                   value={String(selectedAgency.amount_iqd)}
-                  onChange={(val) => { setSelectedAgency({ ...selectedAgency, amount_iqd: Number(val) || 0 }); }}
+                  onChange={(val) => { setSelectedAgency({ ...selectedAgency, amount_iqd: val }); }}
                 />
               </div>
               <div className="agency-field agency-field--full">
                 <label className="agency-label">المبلغ (دولار أمريكي)</label>
                 <PriceInput
+                  id="agency-amount-usd"
                   value={String(selectedAgency.amount_usd)}
-                  onChange={(val) => { setSelectedAgency({ ...selectedAgency, amount_usd: Number(val) || 0 }); }}
+                  onChange={(val) => { setSelectedAgency({ ...selectedAgency, amount_usd: val }); }}
                   currency="USD"
                 />
               </div>
@@ -776,6 +795,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
             <GoldFxButton
               type="button"
               variant="green"
+              data-testid="btn-save-agency"
               style={{
                 flex: 1,
                 margin: 0,
@@ -980,7 +1000,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
                 <PriceInput
                   label="المبلغ"
                   value={txForm.amount ? String(txForm.amount) : ""}
-                  onChange={(val) => setTxForm({ ...txForm, amount: Number(val) || 0 })}
+                  onChange={(val) => setTxForm({ ...txForm, amount: val })}
                   currency={txForm.currency}
                   onCurrencyChange={(curr) => setTxForm({ ...txForm, currency: curr })}
                 />
@@ -1038,7 +1058,7 @@ export function AgenciesTab({ onRefresh, agenciesSearchOpen, onAgenciesSearchClo
       <ConfirmDialog
         open={!!deleteAgencyConfirm}
         title="تأكيد حذف الوكالة"
-        message={`هل تريد حذف وكالة «${deleteAgencyConfirm?.old_agent_name || ""} → ${deleteAgencyConfirm?.new_agent_name || ""}» وكل معاملاتها؟ لا يمكن التراجع عن هذا الإجراء.`}
+        message={`سيتم إلغاء وكالة «${deleteAgencyConfirm?.old_agent_name || ""} → ${deleteAgencyConfirm?.new_agent_name || ""}» محاسبياً وعكس مبالغها ومعاملاتها وقيودها من السجلات النشطة، مع إبقاء سجل التدقيق وقيود العكس محفوظين.`}
         confirmLabel="نعم، احذف"
         cancelLabel="إلغاء"
         danger

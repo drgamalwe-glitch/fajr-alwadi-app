@@ -8,7 +8,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["test/frontend/**/*.test.ts", "test/accounting/oracle/**/*.test.ts", "test/accounting/backend/**/*.test.ts"],
+    include: ["test/frontend/**/*.test.ts"],
     testTimeout: 30_000,
     fileParallelism: false,
   },

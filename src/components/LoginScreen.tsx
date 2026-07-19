@@ -10,10 +10,12 @@ interface LoginScreenProps {
 }
 
 export function LoginScreen({ onLogin }: LoginScreenProps) {
-  const [username, setUsername] = useState("");
+  const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [bootstrapRequired, setBootstrapRequired] = useState<boolean | null>(null);
+  const [passwordChangeUser, setPasswordChangeUser] = useState<UserInfo | null>(null);
+  const [passwordChangeSession, setPasswordChangeSession] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -42,6 +44,19 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
 
       setLoading(true);
       try {
+        if (passwordChangeUser && passwordChangeSession) {
+          if (password !== passwordConfirmation) {
+            setError("كلمتا المرور غير متطابقتين");
+            return;
+          }
+          await callTauri("change_password", {
+            id: passwordChangeUser.id,
+            newPassword: password,
+            sessionToken: passwordChangeSession,
+          });
+          onLogin(passwordChangeUser, passwordChangeSession);
+          return;
+        }
         if (bootstrapRequired) {
           const result = await callTauri<LoginResult>("bootstrap_admin", {
             password,
@@ -59,7 +74,18 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
           password: password.trim(),
         });
 
-        if (result.success && result.user) {
+        if (
+          result.success &&
+          result.user &&
+          result.password_change_required &&
+          result.session_token
+        ) {
+          setPasswordChangeUser(result.user);
+          setPasswordChangeSession(result.session_token);
+          setPassword("");
+          setPasswordConfirmation("");
+          setError("يجب اختيار كلمة مرور قوية جديدة قبل استخدام النظام");
+        } else if (result.success && result.user) {
           // Bug AU3: forward session token to the App for admin command authentication
           onLogin(result.user, result.session_token);
         } else {
@@ -72,7 +98,15 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
         setLoading(false);
       }
     },
-    [username, password, passwordConfirmation, bootstrapRequired, onLogin],
+    [
+      username,
+      password,
+      passwordConfirmation,
+      bootstrapRequired,
+      passwordChangeUser,
+      passwordChangeSession,
+      onLogin,
+    ],
   );
 
   useEffect(() => {
@@ -100,11 +134,19 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
           <div style={{ display: "flex", justifyContent: "center" }}>
             <BrandLogo size="lg" />
           </div>
-          <h1>{bootstrapRequired ? "إعداد مدير النظام" : "شركة فجر الوادي"}</h1>
+          <h1>
+            {bootstrapRequired
+              ? "إعداد مدير النظام"
+              : passwordChangeUser
+                ? "تأمين حساب المدير"
+                : "شركة فجر الوادي"}
+          </h1>
           <p>
             {bootstrapRequired
               ? "اختر كلمة مرور المدير لأول تشغيل"
-              : "نظام إدارة السيارات والحسابات"}
+              : passwordChangeUser
+                ? "غيّر كلمة المرور القديمة قبل المتابعة"
+                : "نظام إدارة السيارات والحسابات"}
           </p>
         </div>
         <form className="login-screen__form" onSubmit={handleLogin}>
@@ -121,10 +163,10 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
               autoComplete="username"
               dir="auto"
               data-testid="login-username"
-              disabled={Boolean(bootstrapRequired)}
+              disabled={Boolean(bootstrapRequired || passwordChangeUser)}
             />
           </div>
-          {bootstrapRequired && (
+          {(bootstrapRequired || passwordChangeUser) && (
             <div className="login-screen__field">
               <label htmlFor="login-password-confirmation">تأكيد كلمة المرور</label>
               <TextInput
@@ -149,7 +191,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="أدخل كلمة المرور"
-              autoComplete="current-password"
+              autoComplete={bootstrapRequired || passwordChangeUser ? "new-password" : "current-password"}
               dir="auto"
               data-testid="login-password"
             />
@@ -165,7 +207,9 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
               ? "جاري التنفيذ..."
               : bootstrapRequired
                 ? "إنشاء مدير النظام"
-                : "تسجيل الدخول"}
+                : passwordChangeUser
+                  ? "حفظ كلمة المرور والمتابعة"
+                  : "تسجيل الدخول"}
           </button>
         </form>
       </div>

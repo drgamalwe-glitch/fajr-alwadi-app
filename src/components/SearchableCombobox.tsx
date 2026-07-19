@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export interface SearchableComboboxProps {
@@ -11,6 +11,7 @@ export interface SearchableComboboxProps {
   onClear?: () => void;
   suffix?: string;
   disabled?: boolean;
+  testId?: string;
 }
 
 export function SearchableCombobox({
@@ -23,6 +24,7 @@ export function SearchableCombobox({
   onClear,
   suffix,
   disabled,
+  testId,
 }: SearchableComboboxProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -31,14 +33,14 @@ export function SearchableCombobox({
   const containerRef = useRef<HTMLDivElement>(null);
   const isFocusingRef = useRef(false);
 
-  const handleOpenChange = (open: boolean) => {
+  const handleOpenChange = useCallback((open: boolean) => {
     setIsOpen(open);
     if (!open) {
       setSearch("");
       setHighlightedIndex(-1);
     }
     onOpenChange?.(open);
-  };
+  }, [onOpenChange]);
 
   // إغلاق عند النقر خارج
   useEffect(() => {
@@ -51,7 +53,7 @@ export function SearchableCombobox({
       document.addEventListener("mousedown", handleClickOutside);
     }
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isOpen]);
+  }, [isOpen, handleOpenChange]);
 
   const selectedOption = options.find((o) => o.value === value);
   const selectedLabel = selectedOption?.label || "";
@@ -144,6 +146,7 @@ export function SearchableCombobox({
           autoComplete="off"
           className={`combobox-trigger ${suffix ? "combobox-trigger--has-suffix" : ""}`}
           data-kind={selectedKind || ""}
+          data-testid={testId}
         />
         {suffix && <span className="combobox-suffix">{suffix}</span>}
         <span className={`combobox-arrow ${isOpen ? "combobox-arrow--open" : ""}`}>▼</span>
@@ -183,6 +186,7 @@ export function SearchableCombobox({
                   <div
                     id={`combobox-option-${index}`}
                     key={opt.value}
+                    data-testid={testId ? `${testId}-option-${opt.value}` : undefined}
                     onClick={() => { onChange(opt.value); handleOpenChange(false); }}
                     onMouseEnter={() => setHighlightedIndex(index)}
                     className={`combobox-option ${value === opt.value ? "combobox-option--selected" : ""} ${highlightedIndex === index ? "combobox-option--highlighted" : ""}`}

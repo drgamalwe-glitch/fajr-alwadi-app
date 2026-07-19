@@ -131,6 +131,7 @@ export function Header({
               type="button"
               variant="gold"
               onClick={onAddAccount}
+              data-testid="btn-add-account"
             >
               <span className="gold-fx-btn__icon">+</span>
               <span className="gold-fx-btn__label">إضافة حساب</span>
@@ -152,6 +153,7 @@ export function Header({
                   type="button"
                   variant="gold"
                   onClick={onAddBatchCar}
+                  data-testid="btn-add-car-batch"
                 >
                   <span className="gold-fx-btn__icon">+</span>
                   <span className="gold-fx-btn__label">إضافة مجموعة</span>
@@ -186,6 +188,7 @@ export function Header({
               type="button"
               variant="gold"
               onClick={onAddAgency}
+              data-testid="btn-add-agency"
             >
               <span className="gold-fx-btn__icon">+</span>
               <span className="gold-fx-btn__label">إضافة وكالة</span>
@@ -196,6 +199,7 @@ export function Header({
               type="button"
               variant="gold"
               onClick={onAddExpense}
+              data-testid="btn-add-expense"
             >
               <span className="gold-fx-btn__icon">+</span>
               <span className="gold-fx-btn__label">إضافة مصروف</span>
@@ -217,6 +221,7 @@ export function Header({
                 type="button"
                 variant="green"
                 onClick={onDeposit}
+                data-testid="btn-account-deposit"
               >
                 <span className="gold-fx-btn__icon">↓</span>
                 <span className="gold-fx-btn__label">{depositLabel}</span>
@@ -225,6 +230,7 @@ export function Header({
                 type="button"
                 variant="red"
                 onClick={onWithdraw}
+                data-testid="btn-account-withdraw"
               >
                 <span className="gold-fx-btn__icon">↑</span>
                 <span className="gold-fx-btn__label">{withdrawLabel}</span>

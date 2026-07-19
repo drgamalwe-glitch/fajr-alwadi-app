@@ -7,7 +7,4 @@
 
 pub use crate::legacy::{init_db, init_db_for_test, AppState};
 
-// `init_db_for_test` is feature-gated behind `accounting-test-support` in
-// legacy.rs. Re-export it conditionally so non-test builds don't fail.
-
 // Items not yet enumerated are still accessible via `crate::legacy::*`.

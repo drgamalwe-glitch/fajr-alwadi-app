@@ -12,6 +12,7 @@ export interface CarPartner {
 }
 
 export interface Car {
+  id: number;
   car_number: string;
   car_plate_num: string;
   chassis_number?: string | null;
@@ -47,6 +48,8 @@ export interface Car {
   commission_type?: string | null;
   commission_value?: MoneyValue;
   car_partners?: CarPartner[] | null;
+  version: number;
+  active_sale_version?: number | null;
 }
 
 export interface Partner {
@@ -57,6 +60,7 @@ export interface Partner {
   usd_balance: MoneyValue;
   kind: string;
   total_withdrawals: MoneyValue;
+  version?: number;
 }
 
 export interface UnifiedAccount {
@@ -65,6 +69,7 @@ export interface UnifiedAccount {
   iqd_balance: MoneyValue;
   usd_balance: MoneyValue;
   kind: string;
+  version?: number;
 }
 
 export interface PartnerTransaction {
@@ -94,6 +99,7 @@ export interface PartnerTransaction {
   due_date?: string | null;
   ledger_batch_id?: string | null;
   is_reversed?: number;
+  installment_version?: number | null;
 }
 
 export interface InstallmentPreviewRow {
@@ -124,15 +130,18 @@ export interface ExpenseEntry {
   notes: string | null;
   currency?: string | null;
   car_number?: string | null;
+  version: number;
 }
 
 export interface CarExpenseRecord {
   id: number;
+  car_id: number;
   car_number: string;
   description: string;
   amount: MoneyValue;
   date: string;
   currency?: string | null;
+  version: number;
 }
 
 export interface CashRegisterEntry {
@@ -162,6 +171,7 @@ export interface Agency {
   payment_status: "واصل" | "غير واصل";
   date: string;
   time: string;
+  version: number;
 }
 
 export interface AgencyTransaction {
@@ -173,6 +183,9 @@ export interface AgencyTransaction {
   amount: MoneyValue;
   currency?: string | null;
   notes: string | null;
+  version: number;
+  operation_id: string;
+  status: "active" | "reversed" | "reversal" | "cancelled";
 }
 
 export interface UserInfo {
@@ -246,6 +259,8 @@ export interface CompanyStatus {
 }
 
 export interface CarFormState {
+  carId?: number;
+  expectedVersion?: number;
   num: string;
   chassis: string;
   model: string;
@@ -335,4 +350,16 @@ export interface PartnerProfitShare {
 export interface ProfitDistributionDetail {
   distribution: ProfitDistribution;
   shares: PartnerProfitShare[];
+}
+
+// §19 — Accounting period lock (قفل الفترات المحاسبية)
+export interface AccountingPeriod {
+  id: number;
+  start_date: string;
+  end_date: string;
+  /** "open" | "closed" */
+  status: string;
+  version: number;
+  reason: string | null;
+  updated_at: string;
 }

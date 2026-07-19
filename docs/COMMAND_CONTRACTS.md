@@ -5,7 +5,7 @@
 ## 1. قواعد عامة لكل command
 
 - كل command يستقبل `state: State<AppState>` كأول معامل.
-- أوامر الكتابة المالية تستقبل `session_token: Option<String>` (بعضها لم يُحدّث بعد — مدرج في REMAINING_RISKS).
+- أوامر الكتابة المالية المميزة تستقبل رمز جلسة صالحًا.
 - المبالغ تُرسل كـ**string** (عبر `moneyToStorage`) وتُستقبل كـ`Money` في Rust.
 - كل command يُرجع `Result<T, String>` — الخطأ نص عربي للمستخدم.
 - Tauri يحوّل `camelCase` (TS) ↔ `snake_case` (Rust) تلقائياً.
@@ -119,7 +119,6 @@ await callTauri("apply_car_expense_changes", {
 
 | Command | التوقيع | التأثير |
 |---|---|---|
-| `restore_from_backup` | `(state, backup_path)` | استعادة من نسخة احتياطية |
 | `export_database_to_excel` | `(state)` | تصدير Excel |
 | `open_temp_pdf` | `(path)` | فتح PDF مؤقت (مقيد بـtemp dir) |
 | `open_whatsapp` | `(phone)` | فتح واتساب |
@@ -128,7 +127,7 @@ await callTauri("apply_car_expense_changes", {
 
 ## 3. CommandContext (موحّد مقترح)
 
-> **غير مطبق بعد** — مقترح للمرحلة التالية. مذكور في REMAINING_RISKS.
+> **مقترح خارج نطاق التسليم الحالي.**
 
 ```rust
 pub struct CommandContext {

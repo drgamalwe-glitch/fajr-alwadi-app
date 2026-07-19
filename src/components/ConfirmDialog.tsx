@@ -50,6 +50,7 @@ export function ConfirmDialog({
       <div
         className="fx-confirm-dialog"
         role="alertdialog"
+        data-testid="confirm-dialog"
         aria-labelledby="confirm-title"
         aria-describedby="confirm-message"
         onClick={(e) => e.stopPropagation()}
@@ -66,6 +67,7 @@ export function ConfirmDialog({
             variant={danger ? "red" : "green"}
             onClick={onConfirm}
             disabled={loading}
+            data-testid="confirm-dialog-confirm"
           >
             <span className="gold-fx-btn__label">{loading ? "جاري التنفيذ..." : confirmLabel}</span>
           </GoldFxButton>
@@ -74,6 +76,7 @@ export function ConfirmDialog({
             variant="ghost"
             onClick={onCancel}
             disabled={loading}
+            data-testid="confirm-dialog-cancel"
           >
             {cancelLabel}
           </ActionButton>
@@ -82,4 +85,3 @@ export function ConfirmDialog({
     </div>
   );
 }
-

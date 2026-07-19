@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Document, Image, Page, Text, View } from "@react-pdf/renderer";
 import type { Partner, PartnerTransaction } from "../types";
-import { compareMoney, moneyAdd, moneySub, toMoney, type MoneyValue } from "../utils/money";
+import { compareMoney, formatMoney, moneyAbs, moneyAdd, moneySub, toMoney, type MoneyValue } from "../utils/money";
 import { formatNotesText } from "../utils/notesDisplay";
 import { styles } from "./pdfStyles";
 
@@ -39,7 +39,7 @@ const formatEnglishNumber = (value: unknown, fallback = 0) =>
 
 // Format a Decimal/MoneyValue for display. Keeps values as Decimal until the very moment of rendering.
 const formatAmount = (amount: MoneyValue, currency: StatementCurrency) =>
-  `${formatEnglishNumber(Math.round(toFiniteNumber(toMoney(amount).toNumber())))} ${currencyLabel(currency)}`;
+  `${formatMoney(amount, currency)} ${currencyLabel(currency)}`;
 
 const formatDualAmount = (iqd: MoneyValue, usd: MoneyValue) => {
   const parts = [];
@@ -312,7 +312,7 @@ export function PartnerStatementPDF({
       : "المستثمر";
 
     const formatVal = (v: MoneyValue, curr: StatementCurrency) =>
-      `${formatEnglishNumber(Math.round(Math.abs(toFiniteNumber(toMoney(v).toNumber()))))} ${currencyLabel(curr)}`;
+      `${formatMoney(moneyAbs(v), curr)} ${currencyLabel(curr)}`;
 
     if (compareMoney(iqd, 0) === 0 && compareMoney(usd, 0) === 0) {
       return (

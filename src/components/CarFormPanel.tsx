@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState, useMemo } from "react";
-import type { CarFormState, Partner, CarExpenseRecord } from "../types";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import type { Car, CarFormState, Partner, CarExpenseRecord } from "../types";
 import { callTauri } from "../api/tauri";
 import { SearchableCombobox } from "./SearchableCombobox";
 import { QuickAddPartnerModal } from "./QuickAddPartnerModal";
 
 import { toChassisText } from "../utils/keyboardLayout";
 import { normalizePhoneNumber, toEnglishDigits } from "../utils/numberInput";
-import { compareMoney, moneyAdd, moneyDiv, moneySub, moneySum } from "../utils/money";
+import { compareMoney, moneyAdd, moneyDiv, moneySub, moneySum, type MoneyValue } from "../utils/money";
 import { todayIsoDate } from "../utils/dateSegments";
 import { normalizeVehicleIdentifier } from "../utils/vehicle";
+import { generateCreationToken } from "../utils/idempotency";
 import { UnifiedDateField } from "./UnifiedDateField";
 import { YearScrollField } from "./YearScrollField";
 import {
@@ -25,7 +26,7 @@ interface CarFormPanelProps {
   form: CarFormState;
   isEditing: boolean;
   onChange: (patch: Partial<CarFormState>) => void;
-  onSubmit: (e: React.FormEvent) => Promise<boolean>;
+  onSubmit: (e: React.FormEvent) => Promise<number | false>;
   onSaveComplete?: () => void;
   onClose?: () => void;
   embedMode?: boolean;
@@ -35,7 +36,7 @@ interface CarFormPanelProps {
   onNavigateToPartner?: (name: string, kind?: string) => void;
   initialPage?: 0 | 1;
   saleFieldsLocked?: boolean;
-  receivedInstallmentsTotal?: number;
+  receivedInstallmentsTotal?: MoneyValue;
   sessionToken?: string | null;
 }
 
@@ -61,16 +62,21 @@ export function CarFormPanel({
   // ── نظام الصفحتين: 0 = مواصفات السيارة، 1 = تفاصيل البيع ──
   const [formPage, setFormPage] = useState(0);
   const [deletedExpenseIds, setDeletedExpenseIds] = useState<number[]>([]);
+  const [deletedExpenseVersions, setDeletedExpenseVersions] = useState<Record<number, number>>({});
+  // Keep one token for the complete dirty expense batch. If the backend commits
+  // but the response is lost, the retry must carry the same identity.
+  const expenseCreationTokenRef = useRef<string | null>(null);
   // نافذة الإضافة السريعة للممول / الشركة / الزبون
   const [quickAddKind, setQuickAddKind] = useState<"ممول" | "شركة" | "زبون" | null>(null);
-  const [existingCars, setExistingCars] = useState<any[]>([]);
+  const [existingCars, setExistingCars] = useState<Car[]>([]);
+  const [duplicateNotice, setDuplicateNotice] = useState("");
 
   useEffect(() => {
     setFormPage(initialPage);
   }, [initialPage, form.oldNum, form.num]);
 
   useEffect(() => {
-    callTauri<any[]>("get_cars")
+    callTauri<Car[]>("get_cars")
       .then((res) => setExistingCars(res || []))
       .catch(console.error);
   }, []);
@@ -112,20 +118,24 @@ export function CarFormPanel({
     reloadPartners();
   }, []);
 
-  const loadCarExpenses = () => {
-    if (!form.num) return;
-    const carNumber = form.num.trim();
-    callTauri<CarExpenseRecord[]>("get_car_expense_records", { carNumber })
+  const loadCarExpenses = useCallback(() => {
+    if (!form.carId) {
+      setCarExpenses([]);
+      return;
+    }
+    callTauri<CarExpenseRecord[]>("get_car_expense_records", { carId: form.carId })
       .then((res) => {
         setCarExpenses(res || []);
       })
       .catch(console.error);
-  };
+  }, [form.carId]);
 
   useEffect(() => {
     setDeletedExpenseIds([]);
+    setDeletedExpenseVersions({});
+    expenseCreationTokenRef.current = null;
     loadCarExpenses();
-  }, [form.num]);
+  }, [form.carId, loadCarExpenses]);
 
   useEffect(() => {
     onExpenseDirtyChange?.(
@@ -138,40 +148,46 @@ export function CarFormPanel({
     );
   }, [expenseDesc, expenseAmt, carExpenses, deletedExpenseIds, onExpenseDirtyChange]);
 
-  const prevPage = useRef(formPage);
-  useEffect(() => {
-    if (prevPage.current === 0 && formPage === 1) {
-      if (expenseDesc.trim() && Number(expenseAmt) > 0) {
-        handleAddExpense();
-      }
-    }
-    prevPage.current = formPage;
-  }, [formPage]);
-
-  const handleAddExpense = () => {
+  const handleAddExpense = useCallback(() => {
     if (!expenseDesc.trim() || compareMoney(expenseAmt, 0) <= 0) return;
     const carNumber = form.num.trim();
     const newExpense: CarExpenseRecord = {
       id: -Date.now(), // Unique temporary negative ID
+      car_id: form.carId ?? 0,
       date: todayIsoDate(),
       description: expenseDesc.trim(),
       amount: expenseAmt,
       currency: expenseCurrency,
       car_number: carNumber,
+      version: 1,
     };
     setCarExpenses((prev) => [...prev, newExpense]);
     setExpenseDesc("");
     setExpenseAmt("");
-  };
+  }, [expenseDesc, expenseAmt, form.num, form.carId, expenseCurrency]);
+
+  const prevPage = useRef(formPage);
+  useEffect(() => {
+    if (prevPage.current === 0 && formPage === 1) {
+      if (expenseDesc.trim() && compareMoney(expenseAmt, 0) > 0) {
+        handleAddExpense();
+      }
+    }
+    prevPage.current = formPage;
+  }, [formPage, expenseDesc, expenseAmt, handleAddExpense]);
+
 
   const handleDeleteExpense = (id: number) => {
     if (id > 0) {
+      const expense = carExpenses.find((item) => item.id === id);
+      if (!expense) return;
       setDeletedExpenseIds((prev) => [...prev, id]);
+      setDeletedExpenseVersions((prev) => ({ ...prev, [id]: expense.version }));
     }
     setCarExpenses((prev) => prev.filter((exp) => exp.id !== id));
   };
 
-  const saveExpenseChanges = async () => {
+  const saveExpenseChanges = async (savedCarId: number) => {
     const additions = carExpenses
       .filter((exp) => exp.id < 0)
       .map((exp) => ({
@@ -192,15 +208,21 @@ export function CarFormPanel({
 
     if (deletedExpenseIds.length === 0 && additions.length === 0) return;
 
+    const creationToken = expenseCreationTokenRef.current ?? generateCreationToken();
+    expenseCreationTokenRef.current = creationToken;
+
     await callTauri("apply_car_expense_changes", {
-      carNumber: form.num.trim(),
-      chassis: form.chassis,
+      carId: savedCarId,
       deleteIds: deletedExpenseIds,
+      deleteVersions: deletedExpenseVersions,
       additions,
+      creationToken,
       sessionToken: sessionToken || null,
     });
 
+    expenseCreationTokenRef.current = null;
     setDeletedExpenseIds([]);
+    setDeletedExpenseVersions({});
     setCarExpenses((prev) => prev.filter((exp) => exp.id > 0));
     setExpenseDesc("");
     setExpenseAmt("");
@@ -216,7 +238,7 @@ export function CarFormPanel({
     if (!form.color.trim()) return false;
     if (!form.num.trim()) return false;
     if (!form.chassis.trim()) return false;
-    if (form.purchase === "" || Number(form.purchase) <= 0) return false;
+    if (form.purchase === "" || compareMoney(form.purchase, 0) <= 0) return false;
 
     // 2. Check purchase type financer/company select
     if (form.purchaseType === "تمويل" || form.purchaseType === "شركة") {
@@ -225,13 +247,13 @@ export function CarFormPanel({
 
     // 3. Check sale fields if the car is sold
     if (isSold) {
-      if (form.selling === "" || Number(form.selling) <= 0) return false;
+      if (form.selling === "" || compareMoney(form.selling, 0) <= 0) return false;
       if (!form.buyerName.trim()) return false;
       if (!form.phone.trim()) return false;
-      if (form.amountPaid === "" || Number(form.amountPaid) < 0) return false;
+      if (form.amountPaid === "" || compareMoney(form.amountPaid, 0) < 0) return false;
 
       if (form.paymentType !== "كاش") {
-        if (form.amountRemaining === "" || Number(form.amountRemaining) < 0) return false;
+        if (form.amountRemaining === "" || compareMoney(form.amountRemaining, 0) < 0) return false;
       }
 
       if (form.paymentType === "اقساط") {
@@ -270,11 +292,13 @@ export function CarFormPanel({
     onFormValidityChange?.(isFormValid);
   }, [isFormValid, onFormValidityChange]);
   const installmentMonths = Number(form.installmentMonths) || 1;
-  const amountRemaining = Number(form.amountRemaining) || 0;
-
   const monthly = form.paymentType === "اقساط" && installmentMonths > 0
-    ? moneyDiv(amountRemaining, installmentMonths).toNumber() : 0;
+    ? moneyDiv(form.amountRemaining, installmentMonths).toFixed() : "0";
   const formRef = useRef<HTMLFormElement>(null);
+  const onChangeRef = useRef(onChange);
+  useEffect(() => { onChangeRef.current = onChange; });
+  const formStateRef = useRef(form);
+  useEffect(() => { formStateRef.current = form; });
 
   const prevAutoType = useRef(form.paymentType);
 
@@ -290,15 +314,16 @@ export function CarFormPanel({
     if (pt === prevAutoType.current) return;
 
     const patch: Partial<CarFormState> = {};
-    const existingDate = form.deliveryDate || form.firstPaymentDate;
-    if (pt === "موعد" && !form.deliveryDate) {
+    const f = formStateRef.current;
+    const existingDate = f.deliveryDate || f.firstPaymentDate;
+    if (pt === "موعد" && !f.deliveryDate) {
       patch.deliveryDate = existingDate || todayIsoDate();
     }
-    if (pt === "اقساط" && !form.firstPaymentDate) {
+    if (pt === "اقساط" && !f.firstPaymentDate) {
       patch.firstPaymentDate = existingDate || todayIsoDate();
     }
     if (Object.keys(patch).length > 0) {
-      onChange(patch);
+      onChangeRef.current(patch);
     }
     prevAutoType.current = pt;
   }, [form.paymentType]);
@@ -315,7 +340,7 @@ export function CarFormPanel({
       { id: "car-color", valid: () => !!form.color.trim() },
       { id: "car-num", valid: () => !!form.num.trim() },
       { id: "car-chassis", valid: () => !!form.chassis.trim() },
-      { id: "car-purchase", valid: () => form.purchase !== "" && Number(form.purchase) > 0 },
+      { id: "car-purchase", valid: () => form.purchase !== "" && compareMoney(form.purchase, 0) > 0 },
     ];
 
     if (form.purchaseType === "تمويل" || form.purchaseType === "شركة") {
@@ -352,8 +377,9 @@ export function CarFormPanel({
     const formEl = formRef.current;
     if (!formEl) return;
 
+    const duplicateMessages: string[] = [];
     if (isPlateDuplicate) {
-      alert("تنبيه: رقم اللوحة موجود سابقاً، وسيتم حفظ السيارة بمعرّف مختلف.");
+      duplicateMessages.push("رقم اللوحة موجود سابقاً وسيتم الحفظ بمعرّف سيارة مختلف.");
     }
     // FORENSIC FIX (re-audit 2026-07-11, FORENSIC-FRONT-2-2):
     // Per Instructions.md §31.3, duplicate chassis numbers MUST be allowed.
@@ -362,8 +388,9 @@ export function CarFormPanel({
     // and its own cost basis. Rejecting duplicates here violates §31.3.
     // We now show an informational notice instead of blocking the save.
     if (isChassisDuplicate) {
-      alert("تنبيه: رقم الشاصي مستخدم لسيارة أخرى. سيتم حفظ السيارة بمعرّف مختلف (يسمح بتكرار الشاصي وفق §31.3).");
+      duplicateMessages.push("رقم الشاصي مستخدم لسيارة أخرى وسيتم الحفظ بمعرّف سيارة مختلف.");
     }
+    setDuplicateNotice(duplicateMessages.join(" "));
 
     formEl.querySelectorAll(".input--error").forEach(el => el.classList.remove("input--error"));
     formEl.classList.remove("form--submitted");
@@ -374,19 +401,19 @@ export function CarFormPanel({
       { id: "car-color", valid: () => !!form.color.trim() },
       { id: "car-num", valid: () => !!form.num.trim() },
       { id: "car-chassis", valid: () => !!form.chassis.trim() },
-      { id: "car-purchase", valid: () => form.purchase !== "" && Number(form.purchase) > 0 },
+      { id: "car-purchase", valid: () => form.purchase !== "" && compareMoney(form.purchase, 0) > 0 },
     ];
 
     if (isSold) {
       checks.push(
-        { id: "car-selling", valid: () => form.selling !== "" && Number(form.selling) > 0 },
+        { id: "car-selling", valid: () => form.selling !== "" && compareMoney(form.selling, 0) > 0 },
         { id: "buyer-name", valid: () => !!form.buyerName.trim() },
         { id: "buyer-phone", valid: () => !!form.phone.trim() },
-        { id: "amount-paid", valid: () => form.amountPaid !== "" && Number(form.amountPaid) >= 0 },
+        { id: "amount-paid", valid: () => form.amountPaid !== "" && compareMoney(form.amountPaid, 0) >= 0 },
       );
       if (form.paymentType !== "كاش") {
         checks.push(
-          { id: "amount-remaining", valid: () => form.amountRemaining !== "" && Number(form.amountRemaining) >= 0 },
+          { id: "amount-remaining", valid: () => form.amountRemaining !== "" && compareMoney(form.amountRemaining, 0) >= 0 },
         );
       }
       if (form.paymentType === "اقساط") {
@@ -443,7 +470,7 @@ export function CarFormPanel({
       // F9: use Decimal-based comparison instead of JS float subtraction to avoid precision drift.
       const expected = moneyAdd(form.amountPaid, form.amountRemaining, receivedInstallmentsTotal);
       if (compareMoney(moneySub(form.selling, expected), 0) !== 0) {
-        if (receivedInstallmentsTotal > 0) {
+        if (compareMoney(receivedInstallmentsTotal, 0) > 0) {
           alert("تنبيه: مجموع (المقدمة + المبلغ المتبقي + الأقساط الواصلة) يجب أن يساوي سعر البيع!");
         } else {
           alert("تنبيه: مجموع (المبلغ المدفوع + المبلغ المتبقي) يجب أن يساوي سعر البيع!");
@@ -472,11 +499,11 @@ export function CarFormPanel({
       return;
     }
 
-    const carSaved = await onSubmit(e);
-    if (!carSaved) return;
+    const savedCarId = await onSubmit(e);
+    if (savedCarId === false) return;
 
     try {
-      await saveExpenseChanges();
+      await saveExpenseChanges(savedCarId);
     } catch (dbErr) {
       console.error("Failed to save expenses to database:", dbErr);
       alert("تم حفظ السيارة، لكن تعذر حفظ تغييرات مصروفاتها: " + (dbErr instanceof Error ? dbErr.message : String(dbErr)));
@@ -538,6 +565,15 @@ export function CarFormPanel({
       }}
     >
       <div className="flex flex-col h-full overflow-hidden p-4 gap-3 relative">
+        {duplicateNotice && (
+          <div
+            role="status"
+            data-testid="car-duplicate-notice"
+            className="rounded-xl border border-amber-400/35 bg-amber-400/10 px-3 py-2 text-center text-sm text-amber-200"
+          >
+            تنبيه: {duplicateNotice} تبقى القيود والمصروفات مرتبطة بالمعرّف الرقمي الصحيح.
+          </div>
+        )}
         {/* ── شارة حالة السيارة (سويتش toggle أنيق) ── */}
         <div className="absolute right-4 top-10 -translate-y-1/2 z-20">
           <button
@@ -593,6 +629,7 @@ export function CarFormPanel({
             <button
               key={page}
               type="button"
+              data-testid={page === 0 ? "car-form-tab-specs" : "car-form-tab-sale"}
               onClick={() => { setFormPage(page); }}
               className={`car-form-tab text-[var(--car-fs-button)] ${formPage === page ? "is-active" : ""}`}
             >
@@ -757,6 +794,7 @@ export function CarFormPanel({
                           <button
                             key={opt}
                             type="button"
+                            data-testid={`purchase-type-${opt}`}
                             className={`payment-type-btn payment-type-btn--${opt === "كاش" ? "green" : opt === "تمويل" ? "blue" : "orange"} ${form.purchaseType === opt ? "payment-type-btn--active" : ""}`}
                             onClick={() => {
                               if (opt !== form.purchaseType) {
@@ -781,12 +819,14 @@ export function CarFormPanel({
                               onChange={(name) => onChange({ financerName: name })}
                               onOpenChange={setIsSelectOpen}
                               placeholder="اختر الممول"
+                              testId="car-financer"
                               options={allPartners.filter(p => (p.kind || "").trim().replace(/ة/g, "ه") === "ممول").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
                             />
                           </div>
                           <button
                             type="button"
                             title="إضافة ممول جديد"
+                            data-testid="quick-add-financer"
                             onClick={() => setQuickAddKind("ممول")}
                             style={{
                               flexShrink: 0,
@@ -819,12 +859,14 @@ export function CarFormPanel({
                               onChange={(name) => onChange({ financerName: name })}
                               onOpenChange={setIsSelectOpen}
                               placeholder="اختر الشركة"
+                              testId="car-company"
                               options={allPartners.filter((p) => (p.kind || "").trim().replace(/ة/g, "ه") === "شركه").map((p) => ({ label: p.partner_name, value: p.partner_name, kind: p.kind }))}
                             />
                           </div>
                           <button
                             type="button"
                             title="إضافة شركة جديدة"
+                            data-testid="quick-add-company"
                             onClick={() => setQuickAddKind("شركة")}
                             style={{
                               flexShrink: 0,
@@ -861,6 +903,8 @@ export function CarFormPanel({
                 </h4>
                 <div className="flex items-center" style={{ gap: "var(--car-gap-x)" }}>
                   <TextInput
+                    id="car-expense-description"
+                    data-testid="car-expense-description"
                     inputSize="sm"
                     placeholder="وصف المصروف..."
                     value={expenseDesc}
@@ -875,6 +919,7 @@ export function CarFormPanel({
                   />
                   <div className="w-40 shrink-0">
                     <PriceInput
+                      id="car-expense-amount"
                       value={expenseAmt}
                       onChange={setExpenseAmt}
                       currency={expenseCurrency}
@@ -886,12 +931,21 @@ export function CarFormPanel({
                         }
                       }}
                       onBlur={() => {
-                        if (expenseDesc.trim() && Number(expenseAmt) > 0) {
+                        if (expenseDesc.trim() && compareMoney(expenseAmt, 0) > 0) {
                           setTimeout(() => handleAddExpense(), 150);
                         }
                       }}
                     />
                   </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary shrink-0"
+                    data-testid="btn-add-car-expense"
+                    onClick={handleAddExpense}
+                    disabled={!expenseDesc.trim() || compareMoney(expenseAmt, 0) <= 0}
+                  >
+                    إضافة
+                  </button>
                 </div>
                 {carExpenses.length > 0 ? (
                   <div className="max-h-[220px] overflow-y-auto">
@@ -908,13 +962,15 @@ export function CarFormPanel({
                         {carExpenses.map((exp) => (
                           <tr
                             key={exp.id}
+                            data-testid={`car-expense-row-${exp.id}`}
                             className="group border-b border-[var(--car-border-light)] transition-colors hover:bg-[var(--car-bg-inactive-hover)]"
                           >
                             <td className="py-1.5">
                               <button
                                 type="button"
+                                data-testid={`delete-car-expense-${exp.id}`}
                                 onClick={() => handleDeleteExpense(exp.id)}
-                                className="opacity-0 group-hover:opacity-100 text-[var(--car-btn-delete)] transition-opacity text-xs"
+                                className="opacity-70 hover:opacity-100 text-[var(--car-btn-delete)] transition-opacity text-xs"
                                 title="حذف المصروف"
                               >
                                 ✕
@@ -995,6 +1051,7 @@ export function CarFormPanel({
                           }}
                           onOpenChange={setIsSelectOpen}
                           placeholder="اختر الزبون"
+                          testId="car-buyer"
                           disabled={saleFieldsLocked}
                           options={allPartners
                             .filter((p) => (p.kind || "").trim().replace(/ة/g, "ه") === "زبون")
@@ -1034,6 +1091,7 @@ export function CarFormPanel({
                       <button
                         type="button"
                         title="إضافة زبون جديد"
+                        data-testid="quick-add-customer"
                         onClick={() => setQuickAddKind("زبون")}
                         style={{
                           flexShrink: 0,
@@ -1218,6 +1276,7 @@ export function CarFormPanel({
             <QuickAddPartnerModal
               kind={quickAddKind}
               onClose={() => setQuickAddKind(null)}
+              sessionToken={sessionToken}
               onSaved={(name, savedPhone) => {
                 const currentKind = quickAddKind;
                 const phone = normalizePhoneNumber(savedPhone);

@@ -90,8 +90,10 @@ export function moneyToStorage(value: MoneyInput): string {
 export function formatMoney(value: MoneyInput, currency?: string | null): string {
   const places = currency === "USD" ? 2 : 0;
   const rounded = toMoney(value).toDecimalPlaces(places, Decimal.ROUND_HALF_UP);
-  return rounded.toNumber().toLocaleString("en-US", {
-    minimumFractionDigits: places,
-    maximumFractionDigits: places,
-  });
+  const fixed = rounded.toFixed(places);
+  const negative = fixed.startsWith("-");
+  const unsigned = negative ? fixed.slice(1) : fixed;
+  const [integer, fraction] = unsigned.split(".");
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `${negative ? "-" : ""}${grouped}${places > 0 ? `.${fraction}` : ""}`;
 }

@@ -46,16 +46,16 @@ src-tauri/src/
 
 ### 2.1 اعتراف صادق بحدود إعادة الهيكلة الحالية
 
-تقرير التدقيق طلب نقل المنطق فعلياً من `legacy.rs` إلى الـDomains. **التنفيذ الحالي لم يفعل ذلك** — `lib.rs` مُقسم شكلياً لكن `legacy.rs` لا يزال 21,500+ سطر. هذا قرض تقني معروف مُدرج في `REMAINING_RISKS.md` كخطر عالٍ. تم تطبيق الإصلاحات الجذرية السبعة **داخل** `legacy.rs` بدون نقل فعلي.
+أزيل monolith `legacy.rs` وقُسّم فعليًا إلى 18 وحدة مجال داخل `src-tauri/src/legacy/`. تبقى بعض وحدات المجال كبيرة، وملفات `domains/*` تعمل حاليًا كواجهات إعادة تصدير انتقالية؛ التقسيم الأدق موثق كاستثناء صيانة مؤقت.
 
 ## 3. مصادر الحقيقة (Source of Truth)
 
 | المفهوم | المصدر | الموقع |
 |---|---|---|
 | قواعد العمل | `Instructions.md` | جذر المشروع |
-| هيكل قاعدة البيانات | `init_db()` + الـ36 migrations | `legacy.rs:1113` |
-| حسابات الكاش والذمم | SQL مباشرة في `get_company_status` | `legacy.rs:15133` (تم إصلاحها) |
-| تقسيم الشريكين 50/50 | `split_partner_amount_50_by_currency` | `legacy.rs:76` |
+| هيكل قاعدة البيانات | `init_db()` + Migrations 1–45 | `legacy/db_init.rs` |
+| حسابات الكاش والذمم | `get_company_status` | `legacy/reports.rs` |
+| تقسيم الشريكين 50/50 | `split_partner_amount_50_by_currency` | `money.rs` |
 | سياسة المنازل العشرية | `currency_scale` | `legacy.rs:111` |
 | رفض JSON Float | `Money::deserialize` | `legacy.rs` (visit_f64 → Err) |
 | الإيراد المؤجل للوكالات | `Instructions.md` §31 (القاعدة الأحدث) | — |
@@ -92,13 +92,9 @@ React Component
     ↓ تحديث UI
 ```
 
-## 6. الفجوات المعمارية المعروفة (مدرجة في REMAINING_RISKS.md)
+## 6. ملاحظات الصيانة المعمارية
 
-1. `legacy.rs` 21,500+ سطر — يجب تقسيمه فعلياً إلى Domains.
-2. SQL مدمج في دوال الأعمال — يجب فصله إلى Repository layer.
-3. `financial_ledger` و `journal_entries/journal_lines` يعيشان معاً — يجب التوحيد.
-4. بعض الأوامر تستخدم `require_admin_session(&db, None)` — يجب ربطها بـsession_token صريح.
-5. أسماء الشركاء (مثل "أمير"، "منتصر") مدمجة في logic الواجهة (CompanyStatusTab) — يجب استخدام IDs.
+لا توجد فجوة معمارية معروفة مانعة ضمن نطاق التسليم المحاسبي الحالي. أي تقسيم إضافي أو طبقة Repository أو ميزة جديدة يعد تطويرًا لاحقًا.
 
 ## 7. المراجع التقنية
 
@@ -106,4 +102,4 @@ React Component
 - `tauri.conf.json` — إعداد Tauri
 - `capabilities/default.json` — صلاحيات Tauri IPC
 - `package.json` — scripts البناء والاختبار
-- `vitest.config.ts`, `playwright.config.ts` — إعداد الاختبارات
+- `vitest.config.ts` — إعداد الاختبارات الموجّهة

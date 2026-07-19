@@ -12,6 +12,13 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { GoldFxButton } from "./ui/GoldFxButton";
 import { compareMoney, moneySum, type MoneyValue } from "../utils/money";
 import { ProfitDistributionTab } from "./ProfitDistributionTab";
+import { generateCreationToken } from "../utils/idempotency";
+
+function expenseErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  return fallback;
+}
 
 interface ExpensesTabProps {
   onAddExpenseChange?: (onAddExpense: { action: () => void } | null) => void;
@@ -101,7 +108,7 @@ export function ExpensesTab({
       },
     };
     return () => { requestCloseRef.current = null; };
-  }, []);
+  }, [isDirty, requestCloseRef]);
 
   useEffect(() => {
     const lastPage = Math.max(0, Math.ceil(entries.length / PAGE_SIZE) - 1);
@@ -124,25 +131,6 @@ export function ExpensesTab({
     void load();
   }, []);
 
-  useEffect(() => {
-    if (!showAddModal) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        handleCloseModal();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [showAddModal]);
-
-  const handleCloseModal = () => {
-    if (expenseFormDirty) {
-      setShowExpenseSaveConfirm(true);
-      return;
-    }
-    forceCloseModal();
-  };
-
   const forceCloseModal = () => {
     setDescription("");
     setAmount("");
@@ -154,6 +142,25 @@ export function ExpensesTab({
     setFormError(null);
     initialExpenseRef.current = "";
   };
+
+  const handleCloseModal = useCallback(() => {
+    if (expenseFormDirty) {
+      setShowExpenseSaveConfirm(true);
+      return;
+    }
+    forceCloseModal();
+  }, [expenseFormDirty]);
+
+  useEffect(() => {
+    if (!showAddModal) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        handleCloseModal();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [showAddModal, handleCloseModal]);
 
   const validateExpenseForm = (): boolean => {
     let hasError = false;
@@ -169,7 +176,7 @@ export function ExpensesTab({
       descInput?.classList.remove("input--error");
     }
 
-    if (!amount || Number(amount) <= 0) {
+    if (!amount || compareMoney(amount, 0) <= 0) {
       amountInput?.classList.add("input--error");
       if (!hasError) amountInput?.focus();
       hasError = true;
@@ -197,6 +204,7 @@ export function ExpensesTab({
         date,
         notes: notes.trim() || null,
         currency,
+        expectedVersion: editingExpense.version,
         sessionToken,
       });
     } else {
@@ -206,6 +214,7 @@ export function ExpensesTab({
         date,
         notes: notes.trim() || null,
         currency,
+        creationToken: generateCreationToken(),
         sessionToken,
       });
     }
@@ -221,8 +230,8 @@ export function ExpensesTab({
       pendingExpenseCloseRef.current?.();
       pendingExpenseCloseRef.current = null;
     } catch (err) {
-      console.error(err);
-      setFormError(err instanceof Error ? err.message : "فشل حفظ المصروف");
+      console.warn("Expense save rejected:", err);
+      setFormError(expenseErrorMessage(err, "فشل حفظ المصروف"));
     }
   };
 
@@ -271,7 +280,7 @@ export function ExpensesTab({
     return () => {
       onAddExpenseChange?.(null);
     };
-  }, [onAddExpenseChange, activeSubTab]);
+  }, [onAddExpenseChange, activeSubTab, handleCloseModal]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -284,8 +293,8 @@ export function ExpensesTab({
       forceCloseModal();
       void load();
     } catch (err) {
-      console.error(err);
-      setFormError(err instanceof Error ? err.message : "فشل حفظ المصروف");
+      console.warn("Expense save rejected:", err);
+      setFormError(expenseErrorMessage(err, "فشل حفظ المصروف"));
     } finally {
       setExpenseSaving(false);
     }
@@ -299,12 +308,16 @@ export function ExpensesTab({
     if (!deleteExpenseConfirm) return;
     setDeleting(true);
     try {
-      await callTauri("delete_expense", { id: deleteExpenseConfirm.id });
+      await callTauri("delete_expense", {
+        id: deleteExpenseConfirm.id,
+        expectedVersion: deleteExpenseConfirm.version,
+        sessionToken: sessionToken || null,
+      });
       setDeleteExpenseConfirm(null);
       void load();
     } catch (err) {
       console.error("Failed to delete expense:", err);
-      const message = err instanceof Error ? err.message : "فشل حذف المصروف";
+      const message = expenseErrorMessage(err, "فشل حذف المصروف");
       setFormError(message);
       alert(message);
       setDeleteExpenseConfirm(null);
@@ -326,7 +339,9 @@ export function ExpensesTab({
     const sign = direction === "asc" ? 1 : -1;
     return [...entries].sort((a, b) => {
       if (key === "id" || key === "amount") {
-        return (Number(a[key] ?? 0) - Number(b[key] ?? 0)) * sign;
+        return (key === "id"
+          ? Number(a.id) - Number(b.id)
+          : compareMoney(a.amount, b.amount)) * sign;
       }
       if (key === "date") {
         const dtA = `${a.date}T${a.time || "00:00"}`;
@@ -414,6 +429,7 @@ export function ExpensesTab({
               <div
                 className="modal-dialog modal-dialog--has-header"
                 role="dialog"
+                data-testid="expense-dialog"
                 onClick={(e) => e.stopPropagation()}
                 style={{ maxWidth: "520px" }}
               >
@@ -441,6 +457,7 @@ export function ExpensesTab({
                       <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>وصف المصروف</label>
                       <TextInput
                         id="expense-description"
+                        data-testid="expense-description"
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
                         required
@@ -465,6 +482,7 @@ export function ExpensesTab({
                     <div className="agency-field agency-field--lg">
                       <label className="agency-label" style={{ color: "var(--textinputlabletext)" }}>ملاحظة</label>
                       <TextInput
+                        id="expense-notes"
                         value={notes}
                         onChange={(e) => setNotes(e.target.value)}
                       />
@@ -476,6 +494,7 @@ export function ExpensesTab({
                     <GoldFxButton
                       type="submit"
                       variant="green"
+                      data-testid="btn-save-expense"
                       style={{ flex: 1, margin: 0 }}
                       disabled={expenseSaving}
                     >
@@ -572,6 +591,7 @@ export function ExpensesTab({
                     pageEntries.map((entry) => (
                       <tr
                         key={entry.id}
+                        data-testid={`expense-row-${entry.id}`}
                         onClick={() => handleRowClick(entry)}
                         style={{ cursor: "pointer" }}
                         className="clickable-row"
@@ -592,6 +612,7 @@ export function ExpensesTab({
                             }}
                             title="حذف"
                             aria-label="حذف المصروف"
+                            data-testid={`delete-expense-${entry.id}`}
                           >
                             ✕
                           </button>
@@ -618,7 +639,7 @@ export function ExpensesTab({
           <ConfirmDialog
             open={!!deleteExpenseConfirm}
             title="تأكيد حذف المصروف"
-            message={`هل أنت متأكد من حذف المصروف «${deleteExpenseConfirm?.description || ""}» نهائياً؟ لا يمكن التراجع عن هذا الإجراء.`}
+            message={`سيتم عكس المصروف «${deleteExpenseConfirm?.description || ""}» وجميع قيوده وحركاته من السجلات النشطة، مع إبقاء المصروف الأصلي وقيد العكس وسجل التدقيق محفوظة.`}
             confirmLabel="نعم، احذف"
             cancelLabel="إلغاء"
             danger

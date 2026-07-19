@@ -1,36 +1,79 @@
-# Fajr Alwadi Accounting Instructions
+# Instructions.md — تعليمات نظام فجر الوادي المحاسبي
 
-This file is the main accounting source of truth for the project.
+> **المصدر التشغيلي والمحاسبي الرئيسي للمشروع بعد اعتماد نطاق التسليم المختصر.**
+>
+> هذا الملف هو **المصدر المحاسبي الرئيسي والملزم** للمشروع. يجب أن يلتزم به أي كود، أو تقرير، أو بطاقة في لوحة المعلومات، أو ترحيل لقاعدة البيانات، أو تعديل ينفذه وكيل ذكاء اصطناعي. عند تعارض الكود الحالي مع هذه التعليمات، يجب تعديل الكود ليتوافق معها.
 
-Any code, report, dashboard card, database migration, or AI-generated change must follow this file exactly.
+## 0. نطاق التسليم النهائي المعتمد
 
-If the current code conflicts with this file, the code must be changed to follow this file.
+- الأولوية المطلقة لصحة العمليات المحاسبية، ودقة الأموال، وعدم تكرار الأثر المالي.
+- تعتمد العلاقات المحاسبية على المعرّفات الرقمية (`*_id`)؛ الأسماء والأرقام التجارية والنصوص للعرض والبحث فقط.
+- يُسمح بإضافة أكثر من دورة شراء تحمل رقم الشاصي نفسه، بشرط امتلاك كل سيارة `car_id` مستقلًا وعدم اختلاط حساباتها أو بيعها أو مصروفاتها.
+- يجب أن تكون إضافة الوكالة ذرّية ومحمية من النقر المزدوج وإعادة إرسال الطلب؛ الطلب نفسه يعيد المعرف نفسه ولا ينشئ وكالة أو قيودًا مرتين.
+- اسم الدخول الافتراضي المعتمد لهذا التسليم هو `admin` وكلمة المرور `admin`، ولا يفرض النظام تغييرها.
+- لا يتضمن نطاق المنتج ميزة إنشاء النسخ الاحتياطية أو إدارتها أو استعادة قاعدة بيانات سابقة، وتُحذف أوامرها وشاشاتها واختباراتها.
+- لا تُضاف اختبارات أو تقارير شكلية. تُعتمد الفحوص القصيرة واختبارات الواجهة الفعلية المرتبطة مباشرة بالمحاسبة، والهوية الرقمية، ودورات السيارة، والأقساط، والوكالات، والمصروفات، ومنع التكرار.
+- حالة `GO` تعني نجاح البناء والفحوص الموجّهة لهذه المخاطر وعدم وجود عيب معروف ضمن هذا النطاق؛ ولا تتطلب بناء المشروع على ثلاثة أنظمة تشغيل.
 
 ---
 
-# 1. Core Rules
+## 1. تعليمات إلزامية لوكيل الذكاء الاصطناعي
 
-## 1.1 Partners
+قبل قراءة أي ملف برمجي، افتح `reports/CODE_MAP.md` أولًا.
 
-- The system has exactly two partners.
-- Each partner owns 50%.
-- Every partner-related profit, cost, cash deposit, or cash withdrawal must be split automatically:
-  - Partner 1: 50%
-  - Partner 2: 50%
+يحتوي `reports/CODE_MAP.md` على خريطة المجالات والملفات ونقاط الدخول. استخدم الاسم المستقر ثم `rg -n` للوصول إلى السطر الحالي بدل الاعتماد على أرقام تتقادم بعد كل تنسيق.
 
-## 1.2 No Double Counting
+```text
+1. ابحث في reports/CODE_MAP.md عن المجال أو نقطة الدخول.
+2. استخدم `rg -n` داخل الملف المحدد للعثور على الدالة.
+3. اقرأ فقط النطاق اللازم لتنفيذ المهمة.
+```
 
-The same accounting event may appear in more than one screen for display purposes, but it must not be counted more than once.
+هيكل المشروع بعد إعادة الهيكلة:
 
-Showing a transaction in several places does not mean it is a new accounting transaction.
+- خلفية Rust: المسار `src-tauri/src/legacy/`، موزعة على 18 وحدة حسب المجال.
+- واجهة React: المساران `src/components/` و`src/utils/`.
+- فهرس الكود الكامل: `reports/CODE_MAP.md`.
 
-## 1.3 Read-Only Means Read-Only
+### ترتيب أولوية القواعد
 
-Any function, screen, report, summary card, or dashboard that only reads data must not create, update, delete, reverse, rebuild, or migrate accounting records.
+1. هذه الوثيقة هي مصدر الحقيقة المحاسبي.
+2. القاعدة الأحدث والأكثر تخصيصًا تتقدم على القاعدة الأقدم أو العامة.
+3. قواعد الوكالات النقدية والآجلة الواردة في هذه النسخة هي القواعد النهائية، وتلغي أي سلوك سابق كان يعترف بربح الوكالة الآجلة قبل استلامها.
+4. لا يجوز استنتاج السلوك المحاسبي من اسم العملية أو وصفها فقط؛ يجب الاعتماد على الحقول الصريحة ومعرّفات المصدر.
 
-Only create, update, and delete operations are allowed to change the database.
+---
 
-Examples of read-only functions that must never write data:
+## 2. المبادئ الأساسية
+
+### 2.1 الشريكان ونسبة الملكية
+
+- يحتوي النظام على شريكين فقط.
+- حصة كل شريك هي 50%.
+- كل ربح، أو تكلفة، أو إيداع نقدي، أو سحب نقدي متعلق بالشركاء يُقسّم تلقائيًا بينهما بنسبة 50% لكل شريك.
+- عند تعذر تقسيم أصغر وحدة نقدية بالتساوي، يُمنح الباقي بصورة حتمية للشريك الأول حسب الترتيب الأبجدي، لضمان أن تعيد عمليات البناء النتائج نفسها دائمًا.
+- قراءة أسماء الشركاء من قاعدة البيانات هدفها إظهار الأسماء فقط، ولا تغيّر عدد الشركاء أو نسبة التقسيم.
+
+### 2.2 منع الاحتساب المزدوج
+
+قد تظهر العملية المحاسبية نفسها في أكثر من شاشة لأغراض العرض، لكنها تُحتسب محاسبيًا مرة واحدة فقط.
+
+ظهور العملية في سجل العمليات، والقاصة، والكاش، ولوحة المعلومات لا يعني أنها أربع عمليات مستقلة، بل تمثيلات مختلفة للعملية الأصلية حسب أثرها.
+
+### 2.3 دوال القراءة لا تكتب في قاعدة البيانات
+
+أي دالة أو شاشة أو تقرير أو بطاقة تلخيصية مخصصة للقراءة فقط، يُمنع أن تقوم بأي من الآتي:
+
+- إنشاء سجل.
+- تحديث سجل.
+- حذف سجل.
+- عكس قيد أو عملية.
+- إعادة بناء سجلات محاسبية.
+- تنفيذ ترحيل لقاعدة البيانات.
+
+تغيير البيانات مسموح فقط ضمن أوامر الإنشاء والتحديث والحذف الصريحة.
+
+من أمثلة دوال القراءة التي يجب ألا تكتب في قاعدة البيانات:
 
 - `get_financial_summary`
 - `get_cash_register_entries`
@@ -42,146 +85,64 @@ Examples of read-only functions that must never write data:
 
 ---
 
-# 2. Main Accounting Concepts
+## 3. المفاهيم المحاسبية والشاشات
 
-## 2.1 Qasa
+### 3.1 القاصة
 
-Qasa means the operational cash/safe register.
+القاصة هي سجل النقد التشغيلي، وتضم فقط:
 
-Qasa includes only:
+1. الحركات النقدية للشركاء.
+2. الحركات النقدية للمستثمرين.
 
-1. Partner cash movements.
-2. Investor cash movements.
+لا تضم القاصة:
 
-Qasa must not include:
+- حركات الممولين بذاتها.
+- حركات الشركات بذاتها.
+- حركات الزبائن التي لا تؤثر في نقد الشركاء أو المستثمرين.
+- سجلات الاعتراف بالربح التي لا تمثل حركة نقد حقيقية.
 
-- Funder movements.
-- Company movements.
-- Customer movements that do not affect partner or investor cash.
-- Profit recognition rows that are not real cash movements.
+فلتر القاصة المعتمد:
 
-## 2.2 Cash Tab Inside Qasa
+```text
+affects_qasa = true
+kind IN ('شريك', 'مستثمر')
+```
 
-The Cash tab inside Qasa means partner cash only.
+### 3.2 تبويب الكاش داخل القاصة
 
-It includes only partner cash movements.
+الكاش يعني نقد الشركاء فقط، ولا يشمل المستثمرين.
 
-It does not include investor movements.
+فلتر الكاش المعتمد:
 
-## 2.3 Investors
+```text
+affects_partner_cash = true
+kind = 'شريك'
+```
 
-Investor movements appear in:
+### 3.3 سجل العمليات العام
 
-- General operations log.
-- Qasa tab.
-
-Investor movements do not appear in:
-
-- Partner Cash tab.
-
-## 2.4 Funders and Companies
-
-Funder and company movements appear in:
-
-- General operations log.
-- Customer/accounts section.
-- Receivables or liabilities depending on the balance.
-
-Funder and company movements do not appear in:
-
-- Qasa.
-- Partner Cash tab.
-
-Exception:
-
-If a funder or company settlement causes a real partner cash payment, then only the separate partner cash movement appears in Qasa/Cash.
-
-The funder/company transaction itself must still not appear in Qasa/Cash.
+يمكن أن يعرض سجل العمليات العام كل الأحداث المهمة للعرض والتدقيق، بما فيها عمليات المستثمرين والممولين والشركات والزبائن والوكالات، لكن ظهوره لا يغيّر أثر العملية المحاسبي ولا يجعلها حركة قاصة أو كاش تلقائيًا.
 
 ---
 
-# 3. Cash Movement vs Profit Recognition
+## 4. تصنيف كل سجل محاسبي
 
-This is the most important rule in the system.
+يجب أن يحدد كل سجل محاسبي مولّد مصدره ودوره وآثاره بصورة صريحة.
 
-A cash movement is not the same as profit recognition.
-
-## 3.1 Cash Movement
-
-A cash movement means real money entered or left Qasa/Cash.
-
-Examples:
-
-- Customer payment received.
-- Cash car sale received.
-- Partner paid car purchase.
-- Partner paid general expense.
-- Partner paid car expense.
-- Partner paid funder or company settlement.
-- Investor deposit or withdrawal.
-
-## 3.2 Profit Recognition
-
-Profit recognition means the system records how much of the received money is profit.
-
-Profit recognition does not create new cash by itself.
-
-## 3.3 Critical Example
-
-A customer pays:
-
-```text
-Customer payment = 5,000,000
-Payment profit = 2,500,000
-````
-
-Correct result:
-
-```text
-Qasa increases by 5,000,000 only.
-Cash increases by 5,000,000 only.
-Profit increases by 2,500,000.
-Each partner profit share = 1,250,000.
-```
-
-Wrong result:
-
-```text
-Qasa increases by 5,000,000
-Then Qasa increases again by 2,500,000 as profit
-Total Qasa increase = 7,500,000
-```
-
-This is forbidden.
-
-Payment profit is part of the payment amount that already entered Qasa/Cash.
-
-It must be recognized as profit, but it must not be added as a second cash movement.
-
----
-
-# 4. Recommended Transaction Classification
-
-Every generated accounting row should clearly define what it affects.
-
-Recommended fields:
+الحقول الأساسية:
 
 ```text
 source_type
-source_id
+source_entity_id
 source_role
 affects_qasa
 affects_partner_cash
 affects_profit
 ```
 
-## 4.1 Field Meaning
+### 4.1 `source_type`
 
-### source_type
-
-The original source of the transaction.
-
-Examples:
+نوع العملية الأصلية، مثل:
 
 ```text
 customer_payment
@@ -195,451 +156,426 @@ company_payment
 investor_transaction
 ```
 
-### source_id
+### 4.2 `source_entity_id`
 
-The id or unique reference of the original source.
+المعرّف الرقمي الفريد للعملية أو الكيان الأصلي، ويُخزن في عمود `INTEGER`. يبقى `source_id` النصي القديم للتوافق والعرض فقط ولا يجوز استخدامه في المطابقة المحاسبية.
 
-Examples:
+أمثلة:
 
-```text
-customer payment id
-car number
-expense id
-car expense id
-agency id
-agency transaction id
-funder transaction id
-company transaction id
-```
+- معرّف دفعة الزبون.
+- المعرّف الرقمي لسجل السيارة.
+- معرّف المصروف العام.
+- معرّف مصروف السيارة.
+- معرّف الوكالة.
+- معرّف حركة الوكالة.
+- معرّف تسوية الممول أو الشركة.
 
-### source_role
+لا يجوز استخدام الاسم أو التاريخ أو الملاحظة بوصفها بديلًا عن المعرّف.
 
-The accounting role of the generated transaction.
+### 4.3 `source_role`
 
-Examples:
+الدور المحاسبي للسجل المولّد، مثل:
 
 ```text
 cash_movement
 profit_recognition
 cash_payment
 partner_cash_payment
+agency_receivable
 legacy_customer_payment_cash
 ```
 
-### affects_qasa
+### 4.4 حقول الأثر
 
-Use `true` only if this row must appear in Qasa.
+- `affects_qasa = true`: يظهر السجل في القاصة لأنه يمثل حركة نقد داخلة أو خارجة ضمن نطاق القاصة.
+- `affects_partner_cash = true`: يظهر السجل في كاش الشركاء.
+- `affects_profit = true`: يدخل السجل في حساب الربح وتوزيعه.
 
-### affects_partner_cash
-
-Use `true` only if this row must appear in the partner Cash tab.
-
-### affects_profit
-
-Use `true` only if this row must be included in profit and profit distribution.
+سجل الاعتراف بالربح لا يصبح حركة نقدية لمجرد أنه يحتوي مبلغًا.
 
 ---
 
-# 5. Profit Formula
+## 5. المعرّفات الفريدة وسلامة الربط
 
-All profit cards, profit sections, profit distribution, and net profit must follow this formula:
+### 5.1 التصميم القائم على المعرّفات
+
+يجب أن يملك كل كيان معرّفًا رقميًا فريدًا من نوع:
 
 ```text
-Total Profit =
-Cash Car Sale Profits
-+ Agency Profits
-+ Installment/Term Sale Profits Recognized Gradually From Payments
-- General Expenses Only
+INTEGER PRIMARY KEY AUTOINCREMENT
 ```
 
-## Important Notes
+الجداول التي تملك معرّفات رقمية أصلًا تشمل:
 
-* Cash car sale profit is recognized immediately at sale time.
-* Agency profit is recognized when recorded.
-* Installment or term-sale profit is not recognized fully at sale time.
-* Installment or term-sale profit is not delayed until the last payment.
-* Installment or term-sale profit is recognized gradually with each customer payment.
-* Only general expenses from the Expenses section reduce net profit.
-* Car expenses do not reduce general net profit directly.
-* Car expenses are part of the car cost and reduce the car profit.
-* **Losses must reduce net profit.** If a car is sold below its cost (selling < purchase + car expenses), the negative profit (loss) must be subtracted from net profit. A loss is not silently ignored.
+- `partner_transactions.id`
+- `financial_ledger.id`
+- `agencies.id`
+- `agency_transactions.id`
+- `expenses.id`
+- `car_expenses.id`
+- `audit_log.id`
+- `users.id`
+
+يبقى `cars.car_number` معرّفًا تجاريًا ظاهرًا، لكن الربط المحاسبي الداخلي يجب أن يعتمد على معرّف رقمي مستقل لسجل السيارة، لا على النص وحده.
+
+### 5.2 اكتمال بيانات المصدر
+
+كل سجل في `partner_transactions` وكل قيد في `financial_ledger` يجب أن يحتوي على:
+
+- `source_type` غير فارغ.
+- `source_entity_id` رقمي وغير فارغ.
+- `source_role` غير فارغ.
+
+أي سجل لا يستوفي هذه الشروط يُعد سجلًا فاسدًا ويجب أن يظهر في نتائج التدقيق.
+
+### 5.3 سجل التدقيق والدفتر المالي
+
+- يجب أن يشير `financial_ledger.reference_entity_id` إلى المعرّف الرقمي للكيان، ويبقى `reference_id` القديم للعرض فقط.
+- يجب أن يشير `audit_log.entity_id` إلى المعرّف الرقمي للكيان.
+- لا يجوز تنفيذ الحذف أو التحديث اعتمادًا على `name` أو `date` أو `notes` أو `description` فقط.
 
 ---
 
-# 5.1 Car Expenses Source of Truth for Cash Sales
+## 6. الحركة النقدية والاعتراف بالربح
 
-For cash car sales, `calculate_analytical_profit` uses the `car_expenses` table as the authoritative source for car expenses, not the legacy `expenses_at_sale` snapshot on the cars row.
+هذه هي القاعدة الأهم في النظام:
+
+> **الحركة النقدية ليست هي الاعتراف بالربح.**
+
+### 6.1 الحركة النقدية
+
+تعني دخول مال حقيقي إلى القاصة أو خروجه منها.
+
+أمثلة:
+
+- استلام دفعة من زبون.
+- استلام ثمن بيع سيارة نقدًا.
+- دفع الشركاء ثمن شراء سيارة.
+- دفع مصروف عام أو مصروف سيارة.
+- دفع تسوية لممول أو شركة من نقد الشركاء.
+- إيداع مستثمر أو سحبه.
+
+### 6.2 الاعتراف بالربح
+
+يعني تحديد الجزء الربحي من مبلغ أو عملية، ولا ينشئ نقدًا جديدًا بذاته.
+
+مثال موحد:
 
 ```text
-Car Profit = Selling Price - Purchase Price - SUM(car_expenses.amount WHERE car_number = ?)
+دفعة الزبون = 5,000,000
+ربح الدفعة = 2,500,000
 ```
 
-If no rows exist in `car_expenses` for the car, it falls back to `COALESCE(expenses_at_sale, 0)` for backward compatibility with cars sold before the `car_expenses` table existed.
+النتيجة الصحيحة:
 
-This ensures that:
-- Cash car profits and installment payment profits use the same car cost basis.
-- A car expense added after sale (e.g. repair cost) is reflected in both paths.
-- The `expenses_at_sale` snapshot is never used when actual `car_expenses` rows exist.
+```text
+زيادة القاصة = 5,000,000 فقط
+زيادة كاش الشركاء = 5,000,000 فقط
+زيادة الربح = 2,500,000
+حصة كل شريك من الربح = 1,250,000
+```
+
+النتيجة الممنوعة:
+
+```text
+زيادة القاصة بالدفعة 5,000,000
+ثم زيادتها مرة أخرى بالربح 2,500,000
+إجمالي الزيادة الخاطئ = 7,500,000
+```
+
+ربح الدفعة جزء من المبلغ الذي دخل فعلًا، لذلك يُعترف به كربح من دون إنشاء حركة كاش ثانية.
 
 ---
 
-# 6. Car Profit Formula
+## 7. معادلات الربح
 
-## 6.1 Car Cost
-
-```text
-Car Cost = Purchase Price + Car Expenses
-```
-
-## 6.2 Full Car Profit
+### 7.1 معادلة الربح الإجمالي والصافي
 
 ```text
-Full Car Profit = Selling Price - Car Cost
+إجمالي الربح =
+أرباح بيع السيارات النقدية
++ أرباح الوكالات المستلمة
++ أرباح مبيعات الأقساط والأجل المعترف بها تدريجيًا عند الدفع
+- المصروفات العامة فقط
 ```
 
-## 6.3 Profit Ratio
+قواعد ملزمة:
+
+- ربح البيع النقدي يُعترف به عند البيع.
+- ربح الوكالة النقدية أو المستلمة يُعترف به عند الاستلام.
+- ربح البيع بالتقسيط أو الأجل لا يُعترف به كاملًا عند البيع.
+- لا يؤجل ربح التقسيط كله إلى الدفعة الأخيرة؛ بل يُعترف به تدريجيًا مع كل دفعة.
+- المصروفات العامة فقط تُطرح مباشرة من صافي الربح.
+- مصروفات السيارة تدخل في كلفة السيارة، ولا تُطرح مرة ثانية كمصروف عام.
+- الخسارة قيمة ربح سالبة ويجب أن تخفّض صافي الربح، ولا يجوز تجاهلها.
+
+### 7.2 كلفة السيارة وربحها
 
 ```text
-Profit Ratio = Full Car Profit / Selling Price
+كلفة السيارة = سعر الشراء + مصروفات السيارة
+الربح الكامل للسيارة = سعر البيع - كلفة السيارة
+نسبة الربح = الربح الكامل / سعر البيع
+ربح الدفعة = مبلغ الدفعة × نسبة الربح
+حصة كل شريك = ربح الدفعة / 2
 ```
 
-## 6.4 Payment Profit
+### 7.3 مصدر مصروفات السيارة
+
+المصدر الأساسي لمصروفات السيارة هو جدول `car_expenses`:
 
 ```text
-Payment Profit = Payment Amount × Profit Ratio
+ربح السيارة =
+سعر البيع
+- سعر الشراء
+- SUM(car_expenses.amount WHERE car_id = ?)
 ```
 
-## 6.5 Partner Share
+عند عدم وجود سجلات فعلية في `car_expenses` للسيارة، يُسمح باستخدام:
 
 ```text
-Each Partner Profit Share = Payment Profit / 2
+COALESCE(expenses_at_sale, 0)
 ```
+
+وذلك للتوافق مع السيارات القديمة فقط.
+
+إذا وُجدت سجلات في `car_expenses`، فلا يجوز استخدام لقطة `expenses_at_sale` بالتوازي معها، منعًا للاحتساب المزدوج.
 
 ---
 
-# 7. Installment and Term Sales
+## 8. البيع بالتقسيط أو الأجل
 
-Installment and term-sale profits must be recognized gradually with each customer payment.
+### 8.1 عند تسجيل البيع
 
-## 7.1 At Sale Time
+- لا يُعترف بالربح الكامل فورًا.
+- لا يوزع الربح الكامل على الشريكين فورًا.
+- يُنشأ رصيد الزبون أو المبلغ المتبقي.
+- أي مبلغ مستلم فعليًا يُسجل كحركة نقدية.
+- يُعترف فقط بالجزء الربحي من المبلغ المدفوع فعلًا.
 
-When a car is sold by installments or term sale:
+### 8.2 أثر كل دفعة
 
-* Do not recognize the full car profit immediately.
-* Do not distribute the full car profit to partners.
-* Create the customer receivable or remaining balance.
-* Record any actual payment received as cash movement.
-* Recognize profit only for the amount actually paid.
+كل دفعة زبون تنشئ أثرين منفصلين:
 
-## 7.2 At Each Customer Payment
-
-Each customer payment must create two accounting effects:
-
-### Effect 1: Cash Movement
-
-The full payment amount enters Qasa/Cash if it belongs to partner cash.
-
-Example:
+#### الأثر الأول: حركة نقدية
 
 ```text
-Customer payment = 5,000,000
-```
-
-Then:
-
-```text
-Qasa/Cash increases by 5,000,000
-```
-
-This movement affects:
-
-```text
+source_role = cash_movement
 affects_qasa = true
 affects_partner_cash = true
 affects_profit = false
 ```
 
-### Effect 2: Profit Recognition
+تدخل قيمة الدفعة الكاملة إلى القاصة وكاش الشركاء مرة واحدة.
 
-Only the profit part of the payment is recognized as profit.
-
-Example:
+#### الأثر الثاني: اعتراف بالربح
 
 ```text
-Payment profit = 2,500,000
-```
-
-Then:
-
-```text
-Profit increases by 2,500,000
-Each partner profit share = 1,250,000
-```
-
-This movement affects:
-
-```text
+source_role = profit_recognition
 affects_qasa = false
 affects_partner_cash = false
 affects_profit = true
 ```
 
-This row must not increase Qasa or Cash again.
+يسجل هذا الأثر الجزء الربحي فقط، ولا يزيد القاصة أو الكاش مرة أخرى.
 
-## 7.3 Last Installment
+### 8.3 الدفعة المقدمة
 
-When the last installment is paid:
+الدفعة المقدمة تخضع للمعالجة نفسها التي تخضع لها أي دفعة أخرى:
 
-* Record the payment as cash movement.
-* Recognize only the profit of that payment.
-* Do not add the full car profit again.
-* Do not create any final extra profit row.
+1. حركة نقدية بالمبلغ الكامل.
+2. اعتراف بالجزء الربحي من الدفعة.
 
-## 7.4 Profit Cap
+لا يجوز اعتبار الدفعة المقدمة ناقصة الأثر المحاسبي.
 
-The total recognized profit from all payments must never exceed the full car profit.
+### 8.4 الحد الأعلى للربح المعترف به
 
-Use this rule:
+لا يجوز أن يتجاوز مجموع الربح المعترف به الربح الكامل للسيارة.
 
 ```text
-Remaining Recognizable Profit =
-Full Car Profit - Already Recognized Profit
+الربح المتبقي القابل للاعتراف =
+الربح الكامل - الربح المعترف به سابقًا
 ```
-
-Then:
 
 ```text
-Recognized Payment Profit =
-min(Calculated Payment Profit, Remaining Recognizable Profit)
+ربح الدفعة المعترف به =
+min(ربح الدفعة المحسوب، الربح المتبقي القابل للاعتراف)
 ```
 
-If the remaining recognizable profit is zero or negative, do not recognize more profit.
+إذا كان المتبقي صفرًا أو سالبًا، فلا يُنشأ اعتراف إضافي بالربح.
+
+### 8.5 الدفعة الأخيرة
+
+عند دفع القسط الأخير:
+
+- تُسجل الدفعة كحركة نقدية.
+- يُعترف بربح هذه الدفعة فقط.
+- لا يُضاف الربح الكامل للسيارة مرة أخرى.
+- لا يُنشأ صف ربح ختامي إضافي.
+
+### 8.6 قيود دفتر الأستاذ المؤجلة
+
+عند بيع سيارة بالتقسيط أو الأجل:
+
+```text
+مدين: الذمم المدينة — بسعر البيع
+دائن: المخزون — بكلفة السيارة
+دائن: الإيراد المؤجل — بالربح الكامل فقط
+```
+
+إذا كانت الصفقة خاسرة، يُسجل بدل رصيد الإيراد المؤجل:
+
+```text
+مدين: مصروف «خسارة بيع سيارة»
+```
+
+ومع كل دفعة، يُنقل الجزء الربحي المعترف به:
+
+```text
+مدين: الإيراد المؤجل
+دائن: الإيراد
+```
+
+يجب أن يصل رصيد الإيراد المؤجل إلى صفر تمامًا بعد الاعتراف بكامل الربح.
+
+### 8.7 إعادة بناء أرباح الدفعات
+
+عند تشغيل `rebuild_customer_payment_profit_recognitions` أو ما يعادلها، يجب أن تتجاهل عملية الحذف أو إعادة البناء الصفوف المعكوسة:
+
+```text
+COALESCE(is_reversed, 0) = 0
+```
+
+وذلك لمنع إحياء أرباح دفعات عُكست بصورة صحيحة.
+
+### 8.8 التحقق من سقف الدفعة المقدمة
+
+عند تحديث دفعة مقدمة، يجب أن يشمل التحقق جميع الدفعات المقدمة السابقة والأقساط المسددة للصفقة نفسها:
+
+```text
+المبلغ الجديد
++ الأقساط المسددة
++ الدفعات المقدمة الحالية
+<= سعر البيع
+```
+
+### 8.9 الدفع الفعلي المختلف وإعادة توزيع الأقساط
+
+عندما يختلف المبلغ المدفوع فعليًا عن قيمة القسط الحالية:
+
+- يُحفظ مبلغ القسط المجدول وقت الدفع والمبلغ المدفوع فعليًا والفرق في حدث دفع مستقل.
+- إذا كان المدفوع أقل، يوزع النقص بالتساوي على الأقساط اللاحقة غير المدفوعة فقط.
+- إذا كان المدفوع أكثر، يخصم الفائض بالتساوي من الأقساط اللاحقة غير المدفوعة فقط.
+- لا تتغير المقدمة أو الأقساط المدفوعة سابقًا أو الأقساط الأسبق من القسط المحدد.
+- يعتمد التقسيم أصغر وحدة للعملة: دينار واحد في IQD وسنت واحد في USD، ويذهب فرق أصغر وحدة إلى آخر قسط متأثر.
+- إذا غطت الدفعة الأقساط اللاحقة بالكامل، تتحول الأقساط التي أصبحت قيمتها صفرًا إلى `paid` وترتبط بحدث الدفعة نفسه؛ يمنع إبقاء قسط صفري بحالة `unpaid`.
+- إذا دُفع آخر قسط بأقل من قيمته، ينشأ قسط رقمي لاحق بعد شهر بقيمة الفرق.
+- إذا دُفع آخر قسط بأكثر من قيمته، تُرفض العملية ما لم يوجد نظام رصيد دائن موثق وآمن.
+- عكس حدث الدفع يعيد مبالغ وحالات الجدول الأصلية، ويحذف الأثر النشط لأي قسط لاحق أنشأه ذلك الحدث.
 
 ---
 
-# 8. Installment Example
+## 9. البيع النقدي للسيارات
 
-Car data:
+عند بيع سيارة نقدًا:
 
-```text
-Purchase Price = 10,000,000
-Selling Price = 20,000,000
-Car Expenses = 0
-Sale Type = Installments
-Down Payment = 5,000,000
-Remaining = 15,000,000
-```
+1. يدخل سعر البيع الكامل إلى القاصة وكاش الشركاء مرة واحدة.
+2. يُنشأ سجل منفصل للاعتراف بالربح أو الخسارة.
+3. سجل الربح أو الخسارة لا يؤثر في القاصة أو الكاش.
 
-Calculation:
+مثال:
 
 ```text
-Car Cost = 10,000,000
-Full Car Profit = 20,000,000 - 10,000,000 = 10,000,000
-Profit Ratio = 10,000,000 / 20,000,000 = 50%
+سعر الشراء = 10,000,000
+سعر البيع = 20,000,000
+مصروفات السيارة = 0
+الربح = 10,000,000
 ```
 
-When the customer pays the down payment:
+النتيجة:
 
 ```text
-Payment Amount = 5,000,000
-Payment Profit = 5,000,000 × 50% = 2,500,000
-Each Partner Share = 1,250,000
+زيادة القاصة والكاش = 20,000,000 فقط
+الربح المعترف به = 10,000,000
+حصة كل شريك = 5,000,000
 ```
 
-Correct result:
+يُمنع رفع القاصة إلى 30,000,000 بإضافة الربح إلى سعر البيع.
 
-```text
-Qasa increases by 5,000,000 only.
-Cash increases by 5,000,000 only.
-Profit increases by 2,500,000.
-Partner 1 profit = 1,250,000.
-Partner 2 profit = 1,250,000.
-```
+### 9.1 السلوك المعماري المؤكد للبيع النقدي
 
-When the customer pays an installment of 1,000,000:
-
-```text
-Payment Amount = 1,000,000
-Payment Profit = 1,000,000 × 50% = 500,000
-Each Partner Share = 250,000
-```
-
-After all payments:
-
-```text
-Total Recognized Profit = 10,000,000
-Partner 1 Total Profit = 5,000,000
-Partner 2 Total Profit = 5,000,000
-```
-
-No extra profit is allowed after the last installment.
+- يُودع سعر البيع الكامل في صف واحد من نوع `cash_movement`.
+- تنشئ `rebuild_cash_sale_profit_recognition` صفوف `profit_recognition` موقعة بقيمة الربح أو الخسارة، مقسمة بين الشريكين.
+- تقرأ `calculate_analytical_profit` صفوف الاعتراف بالربح ولا تعيد احتسابها بصورة منفصلة من جدول السيارات.
+- لا تدخل صفوف الربح في القاصة أو الكاش.
+- هذا السلوك صحيح وليس احتسابًا مزدوجًا.
 
 ---
 
-# 9. Cash Car Sales
+## 10. حسابات الزبائن
 
-When a car is sold for cash:
+حساب الزبون يتابع المبلغ الذي ما زال بذمته.
 
-## 9.1 Cash Movement
+### 10.1 العمليات التي تزيد المبلغ المستحق
 
-The full selling price enters Qasa/Cash once.
-
-Example:
-
-```text
-Selling Price = 20,000,000
-```
-
-Then:
-
-```text
-Qasa/Cash increases by 20,000,000
-```
-
-## 9.2 Profit Recognition
-
-Profit is recognized separately:
-
-```text
-Profit = Selling Price - Purchase Price - Car Expenses
-```
-
-Example:
-
-```text
-Purchase Price = 10,000,000
-Selling Price = 20,000,000
-Car Expenses = 0
-Profit = 10,000,000
-Each Partner Share = 5,000,000
-```
-
-Correct result:
-
-```text
-Qasa/Cash increases by 20,000,000 only.
-Profit increases by 10,000,000.
-```
-
-Wrong result:
-
-```text
-Qasa/Cash increases by 20,000,000
-Then increases again by 10,000,000 as profit
-Total increase = 30,000,000
-```
-
-This is forbidden.
-
----
-
-# 10. Customer Accounts
-
-A customer account tracks what the customer still owes.
-
-## 10.1 Remaining Balance
-
-The customer is considered owing money only through remaining/debt transactions.
-
-Examples:
+من أمثلتها:
 
 ```text
 باقي
 سحب
 ```
 
-## 10.2 Paid Transactions
+### 10.2 العمليات التي تخفض الرصيد
 
-Paid transactions reduce the customer balance.
-
-Examples:
+من أمثلتها:
 
 ```text
 واصل
-ايداع
 إيداع
+ايداع
 مقدمة
 استلام
 تسديد
 ```
 
-## 10.3 Fully Paid Customer
+### 10.3 الزبون المسدد بالكامل
 
-When all remaining installments become paid, the customer balance must become zero.
+عندما تتحول جميع الأقساط المتبقية إلى مدفوعة، يجب أن يصبح رصيد الزبون صفرًا، وألا يستمر ظهوره كمدين.
 
-The customer must not still appear as owing money after all installments are paid.
+### 10.4 تقارير الطباعة
 
-## 10.4 Printing Reports
+يمكن أن تعرض طباعة كشف الزبون:
 
-Customer statement printing may show:
+- المبلغ الإجمالي.
+- المبلغ المدفوع.
+- المبلغ المتبقي.
+- عدد الأقساط الكلي.
+- عدد الأقساط المسددة.
+- عدد الأقساط المتبقية.
 
-* Total amount.
-* Paid amount.
-* Remaining amount.
-* Total installments.
-* Paid installments.
-* Remaining installments.
-
-But printing calculations must not change the customer account or database records.
+لكن حسابات الطباعة للعرض فقط، ويُمنع أن تعدّل حساب الزبون أو أي سجل في قاعدة البيانات.
 
 ---
 
-# 11. General Expenses
+## 11. المصروفات
 
-General expenses are expenses from the Expenses section that are not linked to a car.
+### 11.1 المصروفات العامة
 
-They reduce net profit.
+المصروف العام هو مصروف من قسم المصروفات وغير مرتبط بسيارة.
 
-A general expense must:
-
-* Reduce partner cash if paid by partners.
-* Appear in Qasa and Cash if it affects partner cash.
-* Reduce net profit.
-
-General expense effect:
-
-```text
-affects_qasa = true
-affects_partner_cash = true
-affects_profit = false
-```
-
-Net profit must subtract general expenses separately from the `expenses` table.
-
-General expenses should be identified as:
+يُعرّف عادةً بالشرط:
 
 ```text
 car_number IS NULL OR car_number = ''
 ```
 
----
+أثره:
 
-# 12. Car Expenses
+- يخفض كاش الشركاء إذا دفعه الشريكان.
+- يظهر في القاصة والكاش إذا أثّر فعلًا في نقد الشركاء.
+- يخفض صافي الربح مرة واحدة.
+- يُقسم تحمله 50% لكل شريك.
 
-Car expenses are expenses linked to a specific car.
-
-Examples:
-
-* Repair cost.
-* Registration cost.
-* Transport cost.
-* Car-specific commission.
-* Any cost that belongs to one car.
-
-Car expenses:
-
-* Are part of the car cost.
-* Reduce the car profit.
-* Do not reduce general net profit directly.
-* Should not be counted twice.
-
-Car expense formula:
-
-```text
-Car Cost = Purchase Price + Car Expenses
-```
-
-Car expense partner cash movement:
+تصنيف حركة النقد للمصروف العام:
 
 ```text
 affects_qasa = true
@@ -647,56 +583,175 @@ affects_partner_cash = true
 affects_profit = false
 ```
 
-Car expense must not be treated as a general expense.
+ويُطرح المصروف من صافي الربح بصورة مستقلة من جدول `expenses`.
+
+### 11.2 مصروفات السيارات
+
+مصروف السيارة هو كل تكلفة مرتبطة بسيارة محددة، مثل:
+
+- التصليح.
+- التسجيل.
+- النقل.
+- العمولة الخاصة بالسيارة.
+- أي تكلفة تخص السيارة وحدها.
+
+أثره:
+
+- يدخل في كلفة السيارة.
+- يخفض ربح السيارة.
+- لا يُطرح مباشرة كمصروف عام.
+- يخفض القاصة والكاش إذا دفعه الشريكان.
+- لا يجوز احتسابه مرتين.
+
+تصنيف حركة النقد:
+
+```text
+affects_qasa = true
+affects_partner_cash = true
+affects_profit = false
+```
 
 ---
 
-# 13. Agencies
+## 12. الوكالات
 
-Agency profit is recognized when recorded.
+### 12.1 المبدأ العام
 
-Agency profit must be split 50/50 between the two partners.
-
-Agency profit appears in:
-
-* Profit Distribution.
-* Profit Card.
-* Net Profit.
-* General operations log.
-
-If agency profit is also a real cash receipt, then the cash receipt may appear in Qasa/Cash.
-
-But it must not be double-counted.
-
-## Agency Linking Rule
-
-Every agency profit must be linked to a clear source:
+يجب ربط كل وكالة وكل حركة وكالة بمعرّف رقمي واضح:
 
 ```text
 agency_id
-or
 agency_transaction_id
 ```
 
-Never delete agency profit by only matching:
+يُمنع حذف ربح وكالة أو تحديثه اعتمادًا على تطابق الاسم والتاريخ والملاحظات فقط.
+
+إذا وُجدت وكالتان بالأسماء والتاريخ نفسيهما ومعرّفين مختلفين، فإن حذف إحداهما يجب ألا يؤثر في الأخرى.
+
+### 12.2 الوكالة النقدية أو المستلمة
+
+عندما تكون:
 
 ```text
-name
-date
-notes
+payment_status = 'واصل'
 ```
 
-This is unsafe.
+يحدث الآتي:
 
-If two agencies have the same names and date, deleting one must not affect the other.
+1. يُعترف بكامل مبلغ الوكالة ربحًا عند الاستلام.
+2. يُنشأ صف `profit_recognition`:
+
+```text
+affects_profit = true
+affects_qasa = false
+affects_partner_cash = false
+```
+
+3. يُنشأ صف `cash_movement`:
+
+```text
+affects_profit = false
+affects_qasa = true
+affects_partner_cash = true
+```
+
+4. يظهر المبلغ في الربح والقاصة والكاش.
+5. لا يُنشأ رصيد ذمم مدينة لأن المبلغ مستلم.
+
+قيدها:
+
+```text
+مدين: النقد/القاصة        مبلغ الوكالة
+دائن: الإيراد             مبلغ الوكالة
+```
+
+### 12.3 الوكالة الآجلة أو غير المستلمة
+
+عندما تكون:
+
+```text
+payment_status = 'غير واصل'
+```
+
+يحدث الآتي:
+
+1. لا يُعترف بأي ربح.
+2. لا تُنشأ حركة نقدية.
+3. يُنشأ رصيد ذمم مدينة:
+
+```text
+kind = 'وكالة'
+source_type = 'agency'
+source_role = 'agency_receivable'
+```
+
+4. يظهر المبلغ في الذمم المدينة وسجل العمليات العام فقط.
+5. لا يظهر في بطاقة الربح أو القاصة أو الكاش.
+
+القيد عند تسجيلها:
+
+```text
+مدين: الذمم المدينة       مبلغ الوكالة
+دائن: الإيراد المؤجل      مبلغ الوكالة
+```
+
+### 12.4 استلام وكالة كانت آجلة
+
+عند تحويل الوكالة من «غير واصل» إلى «واصل»، أو تسجيل دفعة مستلمة عليها:
+
+1. يُعكس رصيد الذمم أو يُعلّم بأنه مسدد.
+2. تُنشأ حركة نقدية بالمبلغ المستلم.
+3. يُنشأ اعتراف بالربح بالمبلغ المستحق للاعتراف.
+4. يظهر المبلغ في الربح والقاصة والكاش.
+
+القيود:
+
+```text
+مدين: النقد/القاصة        مبلغ الاستلام
+دائن: الذمم المدينة       مبلغ الاستلام
+
+مدين: الإيراد المؤجل      مبلغ الربح المعترف به
+دائن: الإيراد             مبلغ الربح المعترف به
+```
+
+### 12.5 حركات الوكالة اللاحقة
+
+تتبع `agency_transactions` القاعدة نفسها:
+
+- إذا كانت الوكالة «واصل»: تُسجل الحركة ربحًا وكاشًا فورًا.
+- إذا كانت الوكالة «غير واصل»: تضاف الحركة إلى الذمم، ولا يُعترف بربح أو كاش حتى الاستلام.
+
+### 12.6 مصدرَا أرباح الوكالات
+
+قد توجد مبالغ أولية في:
+
+```text
+agencies.amount_iqd
+agencies.amount_usd
+```
+
+وحركات لاحقة في:
+
+```text
+agency_transactions.amount
+```
+
+هذان مصدران مستقلان لأحداث مختلفة، وجمعهما ليس احتسابًا مزدوجًا ما دام كل حدث مرتبطًا بمعرّفه الخاص ويخضع لحالة الاستلام الصحيحة.
 
 ---
 
-# 14. Investors
+## 13. المستثمرون والممولون والشركات
 
-Investor deposits and withdrawals affect Qasa but not partner Cash.
+### 13.1 المستثمرون
 
-Investor deposit:
+تظهر حركات المستثمر في:
+
+- سجل العمليات العام.
+- القاصة.
+
+ولا تظهر في كاش الشركاء.
+
+إيداع المستثمر أو سحبه:
 
 ```text
 affects_qasa = true
@@ -704,27 +759,13 @@ affects_partner_cash = false
 affects_profit = false
 ```
 
-Investor withdrawal:
+إيداع المستثمر يزيد التزام الشركة تجاهه، ولا يُعد ربحًا.
 
-```text
-affects_qasa = true
-affects_partner_cash = false
-affects_profit = false
-```
+إذا دفع الشركاء مبلغًا للمستثمر من كاشهم، تُنشأ حركة مستقلة لكاش الشركاء.
 
-If partners pay an investor from partner cash, create a separate partner cash movement for the payment.
+### 13.2 الممولون
 
----
-
-# 15. Funders
-
-Funder transactions do not appear in Qasa or partner Cash by themselves.
-
-Funder financing means the funder provided financing or created a liability.
-
-It must not automatically reduce partner cash.
-
-Funder financing:
+تمويل الممول بحد ذاته:
 
 ```text
 affects_qasa = false
@@ -732,7 +773,11 @@ affects_partner_cash = false
 affects_profit = false
 ```
 
-Funder repayment from partners must create a separate partner cash movement:
+- لا يخفض كاش الشركاء تلقائيًا.
+- لا يغير القاصة.
+- يزيد التزام الشركة تجاه الممول.
+
+عندما يسدد الشركاء للممول من كاشهم، تُنشأ حركة منفصلة:
 
 ```text
 source_type = funder_payment
@@ -742,21 +787,19 @@ affects_partner_cash = true
 affects_profit = false
 ```
 
-The repayment must reduce partner cash once only.
+ويجب أن يخفض السداد كاش الشركاء مرة واحدة فقط.
 
----
+### 13.3 الشركات
 
-# 16. Companies
+حركة الشركة بذاتها تظهر في:
 
-Company transactions do not appear in Qasa or partner Cash by themselves.
+- سجل العمليات العام.
+- قسم الحسابات.
+- الذمم المدينة أو الالتزامات حسب الرصيد.
 
-Company-related balances appear in:
+ولا تظهر في القاصة أو كاش الشركاء تلقائيًا.
 
-* Customer/accounts section.
-* Receivables or liabilities.
-* General operations log.
-
-If partners pay a company from partner cash, create a separate partner cash movement:
+إذا دفع الشركاء للشركة من كاشهم، تُنشأ حركة مستقلة:
 
 ```text
 source_type = company_payment
@@ -766,117 +809,94 @@ affects_partner_cash = true
 affects_profit = false
 ```
 
-The company transaction itself must still not appear in Qasa/Cash.
+ولا تتحول حركة الشركة الأصلية نفسها إلى حركة قاصة أو كاش.
 
 ---
 
-# 17. Dashboard Rules
+## 14. لوحة المعلومات وحالة الشركة
 
-Dashboard cards must match their original sections.
+### 14.1 بطاقة القاصة
 
-## 17.1 Qasa Card
-
-Qasa Card source:
-
-```text
-Qasa tab = partner movements + investor movements
-```
-
-It must use:
+يجب أن تساوي نتيجة تبويب القاصة تمامًا، باستخدام:
 
 ```text
 affects_qasa = true
 kind IN ('شريك', 'مستثمر')
 ```
 
-## 17.2 Cash Card
+### 14.2 بطاقة الكاش
 
-Cash Card source:
-
-```text
-Cash tab inside Qasa = partner movements only
-```
-
-It must use:
+يجب أن تساوي نتيجة تبويب الكاش تمامًا، باستخدام:
 
 ```text
 affects_partner_cash = true
 kind = 'شريك'
 ```
 
-## 17.3 Profit Card
+### 14.3 بطاقة الربح
 
-Profit Card source:
-
-```text
-Profit recognition rows - general expenses only
-```
-
-It must use:
+مصدرها:
 
 ```text
 affects_profit = true
 ```
 
-Then subtract general expenses only.
+ثم تُطرح المصروفات العامة فقط.
 
-## 17.4 Inventory Card
+يجب أن تساوي بطاقة الربح نتيجة قسم توزيع الأرباح.
 
-Inventory value must represent available cars only.
+### 14.4 بطاقة المخزون
 
-Sold cars must not remain in inventory value.
+تمثل قيمة السيارات المتاحة فقط. لا يجوز أن تبقى السيارات المباعة ضمن قيمة المخزون.
 
-## 17.5 Receivables
+### 14.5 الذمم المدينة
 
-Receivables mean amounts owed to the company.
+تمثل المبالغ التي يدين بها الآخرون للشركة، وتأتي من منطق الحسابات، لا من القاصة.
 
-They come from customer/accounts logic, not from Qasa.
+### 14.6 الالتزامات
 
-## 17.6 Liabilities
+تمثل المبالغ التي تدين بها الشركة للآخرين، وقد تشمل المستثمرين والممولين والشركات وأي حساب ذي رصيد دائن على الشركة.
 
-Liabilities mean amounts the company owes to others.
+### 14.7 قيمة الشركة
 
-They include investors, funders, companies, or any account that has a liability balance.
+المعادلة الاقتصادية العامة:
+
+```text
+قيمة الشركة =
+كاش الشركاء
++ قيمة السيارات المتاحة
++ الذمم المدينة
+- الالتزامات
+```
+
+لكن عند حساب حصة كل شريك داخل صفحة حالة الشركة، يجب تجنب إضافة الكاش مرتين؛ لأن رصيد الشريك المباشر يتضمن أصلًا حصته من الكاش.
+
+لذلك يكون الجزء المشترك المضاف لكل شريك:
+
+```text
+الحصة المشتركة لكل شريك =
+(المخزون + الذمم المدينة - الالتزامات) / 2
+```
+
+ثم تُجمع مع رصيد الشريك المباشر الذي يحتوي على حصته من الكاش.
+
+هذا الاستثناء تنفيذي لمنع الاحتساب المزدوج، ولا يغيّر المعادلة الاقتصادية العامة لقيمة الشركة.
 
 ---
 
-# 18. Company Status Page
+## 15. التعديل والحذف والعكس
 
-Company Status must show:
+عند تعديل عملية أصلية أو حذفها، لا يجوز تعديل أو حذف إلا السجلات المولّدة التابعة لها.
 
-```text
-Company Value = Cash + Available Car Value + Receivables - Liabilities
-```
-
-Where:
+يجب الاعتماد على المجموعة:
 
 ```text
-Cash = partner cash only
-Available Car Value = available inventory only
-Receivables = what others owe the company
-Liabilities = what the company owes others
+source_type
+source_id
+source_role
 ```
 
-Company Status is not just partner balance.
-
----
-
-# 19. Ledger and Audit Rules
-
-Every generated transaction must have a clear source.
-
-Required references:
-
-* Customer payment profit must reference the customer payment id.
-* Car sale profit must reference the car number.
-* General expense partner movement must reference the expense id.
-* Car expense partner movement must reference the car expense id.
-* Agency profit must reference agency id or agency transaction id.
-* Funder/company partner payment must reference the original settlement transaction.
-
-## Forbidden
-
-Do not rely only on:
+ويُمنع الاعتماد المنفرد على:
 
 ```text
 name
@@ -885,509 +905,689 @@ notes
 description
 ```
 
-to delete or update accounting transactions.
+لأن هذه الحقول قد تتكرر بين عمليات مستقلة.
 
-These are not safe identifiers.
+كل عملية حذف أو عكس يجب أن تكون:
 
----
+- محددة المصدر.
+- ذرية ضمن معاملة قاعدة بيانات.
+- قابلة للتدقيق.
+- غير مؤثرة في عمليات تحمل وصفًا مشابهًا لكنها تملك معرّفات مختلفة.
 
-# 20. Editing and Deleting Transactions
+### 15.1 الإلغاء المحاسبي مقابل الحذف المادي
 
-When a source transaction is edited or deleted, only its related generated transactions may be edited or deleted.
+في العمليات التي أنشأت أثرًا ماليًا حقيقيًا، يكون السلوك الافتراضي هو **الإلغاء والعكس المحاسبي**، لا محو التاريخ بلا أثر.
 
-Use:
+عند الإلغاء:
 
-```text
-source_type
-source_id
-source_role
-```
+1. تُزال العملية من الأرصدة والبطاقات والتقارير النشطة.
+2. تُنشأ قيود عكسية واضحة لكل أثر مالي سبق إنشاؤه.
+3. تُربط القيود العكسية بالعملية الأصلية بواسطة المعرّفات.
+4. تُعلّم العملية الأصلية بأنها ملغاة أو معكوسة.
+5. يبقى `audit_log` محفوظًا وغير قابل للحذف من خلال واجهة الاستخدام.
+6. لا يجوز استخدام الإلغاء لإخفاء عملية من سجل التدقيق.
 
-Do not delete unrelated transactions because they have the same note, same date, same name, or same description.
-
----
-
-# 21. Required Test Scenario: Installment Sale
-
-The system must pass this test:
-
-```text
-Purchase Price = 10,000,000
-Selling Price = 20,000,000
-Car Expenses = 0
-Sale Type = Installments
-Down Payment = 5,000,000
-Remaining = 15,000,000
-Monthly Installment = 1,000,000
-```
-
-Expected:
-
-```text
-Full Car Profit = 10,000,000
-Profit Ratio = 50%
-```
-
-After down payment:
-
-```text
-Qasa increase = 5,000,000
-Cash increase = 5,000,000
-Recognized Profit = 2,500,000
-Partner 1 Profit = 1,250,000
-Partner 2 Profit = 1,250,000
-```
-
-After one installment:
-
-```text
-Qasa increase = 1,000,000
-Cash increase = 1,000,000
-Recognized Profit = 500,000
-Partner 1 Profit = 250,000
-Partner 2 Profit = 250,000
-```
-
-After all payments:
-
-```text
-Total Recognized Profit = 10,000,000
-Partner 1 Profit = 5,000,000
-Partner 2 Profit = 5,000,000
-Customer Remaining Balance = 0
-```
-
-Forbidden result:
-
-```text
-Adding full car profit again on the last installment.
-```
+يجوز الحذف المادي فقط عندما تكون العملية غير مكتملة ولم تنشئ أثرًا ماليًا حقيقيًا، أو ضمن عملية ترحيل وصيانة موثقة بصلاحية إدارية. وحتى في هذه الحالة يجب الاحتفاظ بسجل تدقيق يوضح الكيان المحذوف وسببه ومن نفذ الحذف.
 
 ---
 
-# 22. Required Test Scenario: Cash Sale
+## 16. التكرار ومنع الإنشاء المزدوج
+
+### 16.1 رمز الإنشاء `creation_token`
+
+كل عملية إنشاء في النظام، دون استثناء، يجب أن تقبل `creation_token` فريدًا من نوع UUID v4 أو معرّفًا مكافئًا آمنًا.
+
+يشمل ذلك على الأقل:
+
+- السيارات ودورات الشراء.
+- عمليات البيع.
+- المصروفات العامة ومصروفات السيارات.
+- الوكالات وحركات الوكالة.
+- الحسابات.
+- الأقساط.
+- المقدمات والدفعات.
+- الإيداعات والسحوبات.
+- التسويات.
+- الإدخالات اليدوية.
+- أي عملية تنشئ قيودًا أو صفوفًا مولدة.
+
+القواعد الإلزامية:
+
+1. الرمز نفسه مع البيانات نفسها يعيد نتيجة العملية الأصلية ومعرّفها من دون إنشاء أي نسخة إضافية.
+2. الرمز نفسه مع بيانات مختلفة يُرفض بخطأ صريح؛ ولا يجوز إعادة استخدام الرمز لعملية أخرى.
+3. يجب فرض تفرد الرمز بقيد `UNIQUE` داخل قاعدة البيانات، لا بالتحقق البرمجي وحده.
+4. إذا وصل طلبان متزامنان بالرمز نفسه، تنشأ عملية واحدة فقط.
+5. يجب حفظ بصمة أو ملخص للبيانات الأصلية مع الرمز للتحقق من تطابق إعادة المحاولة.
+6. كل الصفوف المولدة من الطلب نفسه تحمل `operation_id` نفسه.
+7. لا يجوز حذف سجل الرمز بما يسمح بإعادة إنشاء العملية نفسها لاحقًا بصورة مكررة.
+
+آلية `agencies.creation_token` المطبقة حاليًا يجب الحفاظ عليها وتعميمها على بقية عمليات الإنشاء.
+
+### 16.2 الحماية من النقر المزدوج دون رمز
+
+عند غياب `creation_token`، يجب منع الإدخال المتطابق خلال نافذة خمس ثوانٍ وفق الآتي:
+
+#### الوكالة
 
 ```text
-Purchase Price = 10,000,000
-Selling Price = 20,000,000
-Car Expenses = 0
-Sale Type = Cash
+old_agent_name
+new_agent_name
+date
+amount_iqd
+amount_usd
 ```
 
-Expected:
+#### المصروف
 
 ```text
-Qasa increase = 20,000,000
-Cash increase = 20,000,000
-Recognized Profit = 10,000,000
-Partner 1 Profit = 5,000,000
-Partner 2 Profit = 5,000,000
+description
+amount
+date
+currency
+car_number
 ```
 
-Forbidden result:
+#### السيارة
 
 ```text
-Qasa/Cash increase = 30,000,000
+chassis_number
+purchase_price
+purchase_date
 ```
+
+هذه الحماية تمنع إعادة إرسال الطلب نفسه فقط، ولا تمنع إنشاء عملية مستقلة لاحقًا بالقيم نفسها عندما تكون مقصودة.
+
+### 16.3 تكرار رقم الشاصي مسموح
+
+يجوز أن يتكرر `chassis_number` بين سجلات سيارات مختلفة، لأن السيارة المادية نفسها قد تُشترى وتباع ثم تُشترى من جديد، وتمثل كل دورة حدثًا محاسبيًا مستقلًا.
+
+القواعد:
+
+1. لا يُرفض إنشاء سيارة لأن رقم الشاصي موجود سابقًا.
+2. يُنشأ سجل جديد بمعرّف رقمي مستقل.
+3. إذا كان `car_number` المطلوب موجودًا، يولد النظام صيغة فريدة مثل:
+
+```text
+CAR-100
+CAR-100#2
+CAR-100#3
+```
+
+4. لكل سجل سيارة مشترياته ومبيعاته ومصروفاته وقيوده المستقلة.
+5. يجب إزالة أي قيد `UNIQUE` على `chassis_number` أو تحويله إلى فهرس غير فريد.
+
+لا تتعارض هذه القاعدة مع حماية النقر المزدوج؛ الممنوع هو تكرار الطلب المتطابق خلال خمس ثوانٍ، لا إعادة شراء السيارة في دورة مستقلة.
 
 ---
 
-# 23. Required Test Scenario: Car Expense
+## 17. استقلال العمليات وسلامة التعديل والحذف
+
+### 17.1 استقلال كل دورة شراء للسيارة
+
+كل مرة تُشترى فيها سيارة، حتى لو كانت السيارة المادية نفسها قد سُجلت أو بيعت سابقًا، يجب إنشاء سجل جديد بمعرّف رقمي مستقل `car_id` يمثل دورة الشراء الجديدة وحدها.
+
+تطبق القواعد الآتية إلزاميًا:
+
+1. لا ترتبط دورة الشراء الجديدة بأي دورة سابقة بسبب تشابه رقم الشاصي أو رقم اللوحة أو رقم السيارة الظاهر.
+2. يجوز تكرار رقم الشاصي ورقم اللوحة في دورات شراء مستقلة.
+3. يكون لكل دورة شراء مستقلة:
+   - سعر شراء خاص بها.
+   - مصروفات خاصة بها.
+   - عملية بيع مستقلة.
+   - أقساط ودفعات مستقلة.
+   - أرباح أو خسائر مستقلة.
+   - قيود دفتر أستاذ وحركات شريك وقاصة وكاش مستقلة.
+4. يجب أن تشير جميع العمليات التابعة إلى `car_id` الخاص بدورة الشراء المقصودة، لا إلى رقم الشاصي أو اللوحة.
+5. لا يجوز أن يؤدي تعديل أو بيع أو حذف دورة إلى التأثير في أي دورة شراء أخرى للسيارة نفسها.
+
+### 17.2 معرّف مستقل لكل كيان ولكل عملية
+
+يجب أن يمتلك كل كيان أو حدث في النظام معرّفًا فريدًا وثابتًا. تكون المعرّفات الداخلية رقمية من نوع `INTEGER PRIMARY KEY` كلما كان الكيان مخزنًا في جدول محلي، ويُستخدم UUID أو ULID فقط لمعرّف الترابط العام `operation_id` أو لرموز مقاومة التكرار.
+
+يشمل ذلك على الأقل:
 
 ```text
-Purchase Price = 10,000,000
-Car Expense = 1,000,000
-Selling Price = 20,000,000
+car_id
+sale_id
+account_id
+expense_id
+car_expense_id
+agency_id
+agency_transaction_id
+installment_id
+payment_id
+partner_transaction_id
+ledger_entry_id
+audit_id
+operation_id
 ```
 
-Expected:
+#### معرّف العملية الموحد `operation_id`
+
+كل إجراء واحد ينفذه المستخدم أو النظام يجب أن يحصل على `operation_id` واحدًا، وتحمله جميع السجلات الناتجة عنه.
+
+مثال: بيع سيارة واحدة قد ينشئ عملية بيع، وتحديث مخزون، وذمة زبون، وجدول أقساط، وحركة كاش، واعتراف ربح، وقيود دفتر أستاذ، وحصص شريكين. جميع هذه السجلات يجب أن تحمل `operation_id` نفسه مع احتفاظ كل سجل بمعرّفه الخاص.
+
+يستخدم `operation_id` من أجل:
+
+- تتبع العملية كاملة عبر الجداول.
+- إلغاء العملية أو عكسها ذريًا.
+- منع بقاء أثر جزئي.
+- تدقيق جميع الصفوف التي أنشأها طلب واحد.
+- منع حذف صفوف لا تنتمي إلى العملية المقصودة.
+
+#### كيان مستقل لعملية البيع
+
+يجب تخزين كل عملية بيع في كيان مستقل، ويفضل جدولًا باسم:
 
 ```text
-Car Cost = 11,000,000
-Full Car Profit = 9,000,000
+car_sales
 ```
 
-The car expense:
+ويحتوي على الأقل على:
 
-* Reduces partner Cash/Qasa if paid by partners.
-* Increases car cost.
-* Does not reduce general net profit directly.
-* Must not be counted twice.
+```text
+id
+operation_id
+car_id
+customer_account_id
+sale_type
+selling_price
+currency
+sale_date
+status
+creation_token
+version
+created_at
+updated_at
+```
+
+لا يجوز أن تكون هوية البيع هي رقم السيارة أو رقم الشاصي أو صف السيارة نفسه.
+
+تكون سلسلة الربط الإلزامية:
+
+```text
+دورة شراء السيارة: car_id
+عملية البيع: sale_id
+القسط: installment_id
+الدفعة: payment_id
+```
+
+وترتبط الأقساط والدفعات والربح والذمم والقيود بـ`sale_id` المناسب، حتى إذا بيعت السيارة المادية نفسها في دورة أخرى لاحقًا.
+
+#### منع المعرّفات النصية
+
+يُمنع منعًا مطلقًا استخدام الحقول الآتية كمفتاح ربط أو حذف أو تحديث أو مطابقة محاسبية:
+
+```text
+رقم الشاصي
+رقم اللوحة
+رقم السيارة الظاهر
+اسم الشخص أو الحساب
+الملاحظة
+الوصف
+التاريخ
+الكلمة المفتاحية
+الهاشتاغ
+```
+
+تُستخدم هذه الحقول للعرض والبحث فقط.
+
+لا يجوز أن يحتوي `source_id` أو `reference_id` أو `entity_id` على رقم شاصي أو رقم لوحة أو اسم أو رقم سيارة نصي عندما يكون للكيان معرّف رقمي.
+
+مثال صحيح:
+
+```text
+source_type = car_sale
+source_id = 928
+source_role = profit_recognition
+```
+
+مثال ممنوع:
+
+```text
+source_id = "CAR-123"
+source_id = "ABC-987"
+source_id = "بيع سيارة أحمد"
+```
+
+ولا يجوز تنفيذ حذف أو تحديث محاسبي بواسطة:
+
+```sql
+notes LIKE ...
+description LIKE ...
+name = ...
+chassis_number = ...
+plate_number = ...
+car_number = ...
+```
+
+إلا كبحث للعرض قبل اختيار المعرّف الحقيقي، وليس لتنفيذ العملية نفسها.
+
+العلاقات الداخلية تُبنى بمفاتيح خارجية رقمية، مثل:
+
+```text
+car_sales.car_id
+car_expenses.car_id
+installments.sale_id
+payment_events.sale_id
+payment_events.installment_id
+agency_transactions.agency_id
+partner_transactions.source_id
+financial_ledger.reference_id
+```
+
+### 17.3 احتساب الربح من إجمالي التكلفة
+
+في جميع طرق البيع، بما فيها البيع النقدي، وموعد التسليم، والبيع بالتقسيط، يكون احتساب الربح وفق الآتي:
+
+```text
+إجمالي تكلفة السيارة = سعر الشراء + مجموع مصروفات السيارة المرتبطة بـ car_id
+ربح أو خسارة السيارة = سعر البيع - إجمالي تكلفة السيارة
+```
+
+لا يجوز احتساب الربح من سعر البيع ناقص سعر الشراء وحده، ولا يجوز إهمال مصروفات السيارة أو طرحها مرتين.
+
+### 17.4 إعادة احتساب الربح بعد تعديل التكلفة
+
+عند تعديل سعر شراء سيارة مباعة، أو إضافة مصروف سيارة، أو تعديل مصروفها، أو حذفه، يجب فورًا إعادة احتساب:
+
+```text
+إجمالي التكلفة الجديد
+الربح أو الخسارة الكاملة الجديدة
+نسبة الربح الجديدة
+أرباح الدفعات المعترف بها
+حصة كل شريك
+```
+
+ويجب تنفيذ ذلك بواسطة `car_id` و`sale_id` والمعرّفات الأصلية فقط.
+
+في البيع النقدي:
+
+- تُعاد بناء أو تسوية سجلات `profit_recognition` الخاصة بالسيارة.
+- لا تتغير حركة الكاش الأصلية ولا سعر البيع المستلم.
+- إذا تحول الربح إلى خسارة، تسجل الخسارة بقيمة سالبة وتخفض صافي الربح.
+
+في البيع بالتقسيط أو بموعد تسليم:
+
+- لا تُحذف المقدمة أو الأقساط أو الدفعات التي سبق استلامها.
+- لا تتغير قيمة ما دفعه الزبون تاريخيًا.
+- لا يتغير دين الزبون أو جدول أقساطه لمجرد تغير تكلفة السيارة؛ لأن دين الزبون يعتمد على سعر البيع، بينما التكلفة تؤثر في الربح.
+- تُعاد تسوية الأرباح المعترف بها عن الدفعات المستلمة وفق نسبة الربح الجديدة، من دون إنشاء حركة كاش جديدة.
+- يُعاد احتساب الربح المتوقع في الدفعات الباقية وفق الربح الكامل الجديد.
+- إذا أصبح الربح المعترف به سابقًا أكبر من الربح الكامل الجديد، يجب إنشاء تسوية ربح سالبة أو إعادة بناء آمنة تخفضه إلى الحد الصحيح.
+- لا يجوز أن يتجاوز مجموع الربح المعترف به الربح الكامل الجديد.
+
+إذا عُدّل **سعر البيع نفسه**، عندها فقط يعاد احتساب دين الزبون:
+
+```text
+المبلغ المتبقي الجديد = سعر البيع الجديد - مجموع الدفعات المستلمة فعلًا
+```
+
+ثم يوزع المبلغ المتبقي الجديد على الأقساط غير المدفوعة فقط، مع الحفاظ على جميع الدفعات السابقة ومعرّفاتها وتواريخها. يتحمل آخر قسط فرق التقريب.
+
+إذا كان مجموع المدفوع أكبر من سعر البيع الجديد، فلا تُنشأ أقساط سالبة؛ بل يسجل رصيد زائد أو مبلغ مستحق للزبون، ولا تتم تسويته إلا بعملية صريحة موثقة.
+
+### 17.5 الحذف الشامل والذري للسيارة
+
+عند حذف سيارة، سواء كانت متوفرة أو مباعة، يجب حذف جميع السجلات التشغيلية والمحاسبية التابعة لدورة الشراء المحددة بواسطة `car_id` فقط، بما في ذلك عند وجودها:
+
+- عملية الشراء والبيع.
+- مصروفات السيارة.
+- الأقساط والمقدمات والدفعات.
+- الذمم المرتبطة بالبيع.
+- سجلات الاعتراف بالربح أو الخسارة.
+- قيود دفتر الأستاذ.
+- حركات الشركاء.
+- آثار القاصة والكاش.
+- بطاقة الربح وتوزيع الأرباح.
+- سجل المعاملات التشغيلي.
+- أي صفوف مولدة أو جداول وسيطة مرتبطة بالمصدر.
+
+بعد الحذف يجب ألا يظهر أثر السيارة في الأرباح أو القاصة أو الكاش أو حسابات الشركاء أو حساب الزبون أو التقارير أو لوحة المعلومات.
+
+يجب تنفيذ الحذف داخل معاملة قاعدة بيانات واحدة. إذا تعذر حذف أي جزء أو فشل فحص السلامة، يُنفذ `ROLLBACK` ولا يُحذف أي جزء من العملية.
+
+لا يجوز أن يمتد الحذف إلى دورة شراء أخرى تحمل الشاصي أو اللوحة أو الاسم أو الوصف نفسه.
+
+### 17.6 الحذف الشامل والذري للوكالة
+
+عند حذف وكالة، يجب بواسطة `agency_id` حذف جميع حركاتها وذممها وقيودها وأرباحها وحركاتها النقدية وآثارها في:
+
+- قسم الأرباح وبطاقة الربح.
+- القاصة والكاش.
+- حسابات الشركاء.
+- سجل المعاملات.
+- الذمم المدينة أو الإيراد المؤجل.
+- دفتر الأستاذ وأي سجلات مولدة مرتبطة بها.
+
+يجب ألا يتأثر أي سجل لوكالة أخرى، حتى لو تطابقت الأسماء والتاريخ والمبالغ.
+
+### 17.7 الحذف الشامل والذري للمصروف
+
+عند حذف مصروف عام أو مصروف سيارة، يجب بواسطة `expense_id` أو `car_expense_id` حذف جميع قيوده وآثاره المولدة من:
+
+- الأرباح وصافي الربح.
+- القاصة والكاش.
+- حسابات الشركاء.
+- سجل المعاملات.
+- دفتر الأستاذ.
+- كلفة السيارة وربحها عند كونه مصروف سيارة.
+
+إذا كان المصروف مرتبطًا بسيارة مباعة، يجب بعد حذفه إعادة احتساب كلفة السيارة وربحها وتسويات أرباحها وفق القسم 17.4.
+
+### 17.8 سجل التدقيق عند الحذف والتعديل
+
+يجب أن يسجل `audit_log` كل إنشاء أو تعديل أو حذف أو عكس، مع الاحتفاظ على الأقل بالحقول الآتية:
+
+```text
+operation_id
+entity_type
+entity_id
+action
+old_values
+new_values
+user_id
+session_id
+timestamp
+reason
+```
+
+لا يدخل سجل التدقيق في الأرصدة أو الأرباح أو القاصة، ولا يُحذف عند حذف الكيان الأصلي. ويجب أن يحتفظ بلقطة تاريخية تمكّن من معرفة ما حُذف ولماذا ومن نفذ العملية.
+
+### 17.9 هوية الحساب ومنع تكرار الأسماء
+
+يجب أن يمتلك كل حساب من أنواع:
+
+```text
+زبون
+ممول
+شركة
+مستثمر
+وكالة
+شريك
+```
+
+معرّفًا رقميًا ثابتًا:
+
+```text
+account_id INTEGER PRIMARY KEY
+```
+
+يكون الاسم صفة قابلة للتعديل وليس هوية الحساب. لذلك:
+
+- جميع الذمم والأقساط والدفعات والقيود ترتبط بـ`account_id`.
+- تغيير اسم الحساب لا ينشئ حسابًا جديدًا.
+- تغيير الاسم لا يقطع ارتباط العمليات التاريخية.
+- لا يجوز تحديث عشرات الجداول بالاسم عند تغييره.
+- لا يجوز حذف حساب توجد له أرصدة أو عمليات إلا بعملية دمج أو إلغاء موثقة.
+
+عند إضافة حساب جديد من الأنواع المذكورة، يجب رفض الإضافة إذا كان الاسم موجودًا مسبقًا في **أي نوع من هذه الأنواع**، التزامًا بقاعدة النظام التي تمنع تكرار الاسم عبر جميع الحسابات.
+
+تتم المقارنة باستخدام عمود إلزامي:
+
+```text
+normalized_name
+```
+
+ويشمل التطبيع على الأقل:
+
+- حذف الفراغات من البداية والنهاية.
+- دمج الفراغات المتكررة.
+- تجاهل اختلاف حالة الأحرف الإنجليزية.
+- توحيد الصيغ العربية المعتمدة للهمزات.
+- توحيد `ى` و`ي` لأغراض المقارنة.
+- منع الاسم الفارغ أو المكوّن من مسافات فقط.
+
+يجب فرض قيد `UNIQUE` على `normalized_name` عبر الحسابات المذكورة، وألا يكون المنع معتمدًا على الواجهة فقط.
+
+عند محاولة تعديل اسم حساب إلى اسم موجود:
+
+- يُرفض التعديل صراحة.
+- لا يحدث دمج تلقائي أو صامت.
+- دمج الحسابات، إن دُعم مستقبلًا، يجب أن يكون عملية إدارية مستقلة تحفظ المصدر والهدف وسجل التدقيق.
+
+### 17.10 المعاملات الذرية ومنع الحفظ الجزئي
+
+يجب تنفيذ كل عملية مركبة داخل معاملة قاعدة بيانات واحدة، ومنها:
+
+- شراء السيارة.
+- بيع السيارة.
+- استلام المقدمة أو القسط.
+- تعديل تكلفة سيارة مباعة.
+- إنشاء وكالة أو استلامها.
+- حذف سيارة أو وكالة أو مصروف.
+
+إما أن تنجح جميع تغييرات العملية معًا، أو يُنفذ `ROLLBACK` كامل. يُمنع أن تُحفظ عملية البيع مثلًا بينما تفشل الأقساط أو القيود أو حركة الكاش أو الربح.
+
+### 17.11 عدم تعديل التاريخ المحاسبي بصمت
+
+أي دفعة أو قسط أو حركة نقدية تم تسجيلها لا يجوز حذفها أو تغيير مبلغها أو تاريخها بصمت بسبب تعديل لاحق.
+
+عند الحاجة إلى التصحيح، يجب استخدام أحد الأسلوبين:
+
+1. عكس العملية القديمة ثم إنشاء عملية مصححة بمعرّف جديد.
+2. إنشاء تعديل موثق يحتفظ بالقيمة السابقة والجديدة وسجل السبب.
+
+يجب التمييز بين تاريخ العملية، وتاريخ الاستحقاق، وتاريخ الدفع، وتاريخ الإنشاء، وتاريخ التعديل، وعدم استبدال التاريخ الأصلي بتاريخ إعادة البناء.
+
+### 17.12 العملات والتقريب
+
+- لا يجوز جمع مبالغ الدينار والدولار في قيمة واحدة.
+- يجب الاحتفاظ بالعملة الأصلية لكل عملية.
+- أي تحويل عملة يجب أن يسجل سعر الصرف وتاريخه والمبلغ الأصلي والناتج.
+- يجب استخدام قاعدة تقريب موحدة.
+- يتحمل آخر قسط فرق توزيع المبلغ المتبقي.
+- يذهب فرق تقسيم أصغر وحدة بين الشريكين إلى الشريك الأول وفق القاعدة الحتمية المعتمدة.
+
+### 17.13 منع الكتابة المتضاربة والتزامن الخطر
+
+يجب منع مستخدم أو طلب متأخر من الكتابة فوق تعديل أحدث للكيان نفسه. يستخدم لذلك قفل تفاؤلي يحتوي على:
+
+```text
+version
+updated_at
+```
+
+ويشترط في أمر التحديث أن يطابق الإصدار الذي قرأه المستخدم. إذا تغير الإصدار، يُرفض الحفظ بخطأ تعارض واضح.
+
+يجب كذلك فرض القيود الآتية داخل قاعدة البيانات والمعاملات:
+
+- لا يمكن بيع `car_id` نفسه مرتين.
+- لا يمكن تسجيل `payment_id` أو دفع القسط نفسه مرتين.
+- لا يمكن تنفيذ حذف وتعديل للكيان نفسه في اللحظة نفسها.
+- لا يمكن استخدام `creation_token` نفسه لبيانات مختلفة.
+- لا يمكن أن ينجح طلبان متزامنان لتغيير الحالة نفسها من القيمة القديمة ذاتها.
+- لا تعتمد الحماية على فحص الواجهة أو تعطيل الزر فقط.
+- يجب أن تكون قيود التفرد والتحقق ضمن قاعدة البيانات أو المعاملة نفسها.
+- عند حدوث تعارض، لا يُحفظ أي جزء من العملية الخاسرة.
+
+### 17.14 اختبار دائم لكل خطأ مُصلح
+
+عند إصلاح خطأ محاسبي أو خطأ تكرار مؤثر، يضاف اختبار موجّه قصير يثبت الحالة. لا تُنشأ مصفوفات أو تقارير اختبار كبيرة لا تضيف حماية مباشرة لمسار التسليم.
 
 ---
 
-# 24. Required Test Scenario: General Expense
+## 18. المفاتيح الخارجية وسلامة قاعدة البيانات
 
-General expense:
+يجب تفعيل المفاتيح الخارجية على **كل اتصال** بقاعدة SQLite:
 
-```text
-Rent = 1,000,000
+```sql
+PRAGMA foreign_keys = ON;
 ```
 
-Expected:
+لا يكفي تشغيلها أثناء الترحيل أو في اتصال واحد.
+
+يجب تعريف العلاقات الرقمية الحقيقية مع سياسة حذف وتحديث صريحة، مثل:
 
 ```text
-Partner Cash decreases by 1,000,000
-Each partner bears 500,000
-Net Profit decreases by 1,000,000
+car_sales.car_id → cars.id
+car_expenses.car_id → cars.id
+installments.sale_id → car_sales.id
+payment_events.sale_id → car_sales.id
+payment_events.installment_id → installments.id
+agency_transactions.agency_id → agencies.id
 ```
 
-This expense is not part of any car cost.
+القواعد الإلزامية:
+
+1. يمنع إدخال أي سجل تابع إذا لم يكن المصدر موجودًا.
+2. يمنع حذف مصدر إذا كانت سياسة النظام تقتضي العكس بدل الحذف.
+3. لا يستخدم `ON DELETE CASCADE` عشوائيًا في الجداول المالية؛ يجب أن يكون السلوك مقصودًا وموثقًا.
+4. قبل كل `COMMIT` لعملية حذف أو ترحيل حساسة، يجب التحقق من عدم وجود سجلات يتيمة.
+5. يجب تشغيل:
+
+```sql
+PRAGMA foreign_key_check;
+PRAGMA integrity_check;
+```
+
+ضمن اختبارات السلامة، وقبل اعتماد نسخة احتياطية مستعادة.
+
+### 18.1 ترحيل البنية النصية الحالية إلى المعرّفات
+
+يجب أن يتم الانتقال من العلاقات النصية القديمة إلى المعرّفات الرقمية بواسطة Migration آمن ومتدرج:
+
+1. إنشاء الأعمدة والجداول الرقمية الجديدة من دون حذف القديمة أولًا.
+2. إنشاء `car_sales` و`account_id` و`operation_id` وبقية المعرّفات المطلوبة.
+3. تعبئة المعرّفات الجديدة من البيانات الحالية باستخدام قواعد مطابقة موثقة.
+4. إيقاف الترحيل عند وجود سجل ملتبس لا يمكن ربطه بمصدر واحد يقينًا؛ ويُمنع التخمين.
+5. التحقق من تطابق الأرصدة والأرباح والقاصة والكاش والذمم قبل الترحيل وبعده.
+6. تشغيل فحوص المفاتيح الخارجية والسجلات اليتيمة.
+7. تحويل مسارات الكتابة والقراءة إلى المعرّفات الجديدة.
+8. إبقاء الحقول النصية القديمة للعرض فقط خلال فترة انتقالية.
+9. حذف الاعتماد البرمجي على الحقول القديمة قبل التفكير في حذفها من المخطط.
+10. تنفيذ الترحيل كله داخل معاملة واحدة.
+11. إذا فشل أي جزء، يُنفذ `ROLLBACK` وتبقى القاعدة القديمة قابلة للعمل.
+12. لا يجوز أن يؤدي الترحيل إلى دمج دورتين لسيارة تحملان الشاصي أو اللوحة نفسيهما.
 
 ---
 
-# 24.1 Required Test Scenario: Cash Car Loss
+## 19. النسخ الاحتياطي والاستعادة
 
-A car is sold for cash below its cost:
-
-```text
-Purchase Price = 10,000,000
-Car Expenses = 1,000,000
-Selling Price = 8,000,000
-Sale Type = Cash
-```
-
-Expected:
-
-```text
-Car Cost = 11,000,000
-Car Profit (Loss) = 8,000,000 - 11,000,000 = -3,000,000
-Qasa/Cash increases by 8,000,000 (the actual selling price)
-Net Profit decreases by 3,000,000 (the loss)
-```
-
-Forbidden result:
-
-```text
-Loss is ignored and net profit is not reduced.
-```
+هذه الميزة خارج نطاق المنتج المعتمد. لا تعرض الواجهة أوامر نسخ أو استعادة، ولا يشغّل التطبيق نسخًا دورية أو نسخًا قبل الترحيل. سلامة الترحيلات تتحقق بالمعاملة الذرية و`ROLLBACK` وفحوص SQLite على القاعدة نفسها.
 
 ---
 
-# 25. Required Test Scenario: Investor
+## 20. شروط القبول النهائي
 
-Investor deposit:
+لا يُعد النظام صحيحًا إلا إذا تحققت جميع الشروط الآتية:
 
-```text
-Investor deposits 10,000,000
-```
-
-Expected:
-
-```text
-Qasa increases by 10,000,000
-Partner Cash does not increase
-Profit does not increase
-Liability to investor increases
-```
-
----
-
-# 26. Required Test Scenario: Funder
-
-Funder financing:
-
-```text
-Funder finances a car for 10,000,000
-```
-
-Expected:
-
-```text
-Partner Cash does not decrease
-Qasa does not change
-Funder liability increases
-Profit does not change
-```
-
-Funder repayment from partners:
-
-```text
-Partners repay funder 10,000,000
-```
-
-Expected:
-
-```text
-Partner Cash decreases by 10,000,000
-Each partner bears 5,000,000
-Funder liability decreases
-```
-
-The repayment must happen once only.
+1. نتيجة تبويب القاصة تساوي بطاقة القاصة.
+2. نتيجة تبويب الكاش تساوي بطاقة الكاش.
+3. لا تظهر حركات الممولين والشركات بذاتها في القاصة أو الكاش.
+4. تظهر حركات المستثمرين في القاصة ولا تظهر في كاش الشركاء.
+5. تزيد دفعات الزبائن القاصة والكاش بقيمة الدفعة الفعلية فقط.
+6. يزيد ربح الدفعة الربح فقط، ولا يزيد القاصة أو الكاش مرة ثانية.
+7. لا يتجاوز ربح الأقساط المعترف به الربح الكامل للسيارة.
+8. لا ينشئ القسط الأخير ربح السيارة الكامل مرة أخرى.
+9. تخفض المصروفات العامة صافي الربح مرة واحدة.
+10. تخفض مصروفات السيارة ربحها عبر الكلفة فقط.
+11. تُسجل خسارة السيارة كربح سالب وتخفض صافي الربح.
+12. ترتبط الوكالات وحركاتها بمعرّفات، لا بالأسماء والتواريخ فقط.
+13. لا يُعترف بربح الوكالة الآجلة ولا بكاشها قبل الاستلام.
+14. حذف عملية لا يحذف أي عملية أخرى غير مرتبطة بها.
+15. لا تكتب دوال القراءة في قاعدة البيانات.
+16. تساوي بطاقة الربح نتيجة توزيع الأرباح.
+17. تُقسم جميع أرباح وتكاليف الشركاء بنسبة 50/50.
+18. لا تدخل السيارات المباعة ضمن المخزون المتاح.
+19. تصبح ذمة الزبون صفرًا عند اكتمال السداد.
+20. لا يعاد إحياء الصفوف المعكوسة عند إعادة بناء الأرباح.
+21. تحتوي جميع السجلات المحاسبية على بيانات مصدر مكتملة.
+22. تمنع رموز الإنشاء وإجراءات الحماية الإدخال المكرر.
+23. يُسمح بتكرار رقم الشاصي في دورات شراء مستقلة.
+24. لا يُضاف الكاش مرتين عند حساب حصة الشريك في قيمة الشركة.
+25. تمتلك كل دورة شراء `car_id` مستقلًا، وكل بيع `sale_id` مستقلًا.
+26. تمتلك كل دفعة `payment_id` وكل قسط `installment_id` مستقلين.
+27. تحمل جميع الصفوف المولدة من الإجراء نفسه `operation_id` واحدًا.
+28. لا يستخدم أي مسار حذف أو تعديل `notes` أو الاسم أو الشاصي أو اللوحة أو `car_number` لتحديد المصدر.
+29. ترتبط الحسابات داخليًا بواسطة `account_id` ولا يؤدي تغيير الاسم إلى قطع العلاقات.
+30. تكون `PRAGMA foreign_keys = ON` مفعلة على كل اتصال.
+31. لا توجد أي مخالفة في `foreign_key_check` أو `integrity_check`.
+32. لا يمكن بيع السيارة أو دفع القسط أو إنشاء العملية نفسها مرتين بالتزامن.
+33. لا توجد أوامر أو شاشات نسخ احتياطي أو استعادة ضمن المنتج.
+34. تنجح الفحوص الموجّهة للمحاسبة والهوية الرقمية وتكرار الشاصي ومنع تكرار الوكالة.
 
 ---
 
-# 27. Required Test Scenario: Agency
+## 21. قائمة تحقق للوكيل المنفذ
 
-Create two agency transactions with:
+قبل إضافة أي قيد أو سجل، أجب بوضوح عن الأسئلة الآتية:
 
-```text
-Same old agent name
-Same new agent name
-Same date
-Different transaction ids
-```
+1. هل هذه حركة نقد حقيقية؟
+2. هل تؤثر في القاصة؟
+3. هل تؤثر في كاش الشركاء؟
+4. هل هي اعتراف بالربح فقط؟
+5. هل تؤثر في الربح؟
+6. ما `source_type`؟
+7. ما المعرّف الرقمي في `source_id`؟
+8. ما `source_role`؟
+9. هل يمكن حذف السجل بأمان من دون التأثير في عملية أخرى؟
+10. ما `operation_id` الذي يجمع جميع آثار الإجراء؟
+11. إن كانت العملية بيعًا، فما `sale_id`؟
+12. إن كانت مرتبطة بحساب، فما `account_id`؟
+13. هل جميع العلاقات مفاتيح خارجية رقمية صالحة؟
+14. هل العملية داخل معاملة واحدة قابلة للتراجع؟
+15. هل العملية مقاومة لإعادة الإرسال والتكرار والتزامن؟
+16. هل تحترم القاعدة الأحدث الخاصة بنوع العملية وحالة الاستلام؟
+17. هل تتوافق بالكامل مع هذه الوثيقة؟
 
-Deleting one agency transaction must delete only its own profit rows.
-
-It must not delete the other agency transaction profit.
-
----
-
-# 28. Final Acceptance Rules
-
-The system is correct only if all these are true:
-
-1. Qasa tab equals Qasa card.
-2. Cash tab equals Cash card.
-3. Funders and companies do not appear in Qasa/Cash.
-4. Investors appear in Qasa but not in partner Cash.
-5. Customer payments increase Qasa/Cash only by the actual payment amount.
-6. Payment profit increases profit only, not Qasa/Cash again.
-7. Total recognized installment profit never exceeds full car profit.
-8. Last installment does not create full car profit again.
-9. General expenses reduce net profit.
-10. Car expenses reduce car profit through car cost only.
-11. Agency profits are linked by id, not by name/date only.
-12. Deleting one transaction does not delete unrelated transactions.
-13. Read-only functions never write to the database.
-14. Dashboard profit equals Profit Distribution.
-15. All partner profit shares are split 50/50.
+إذا لم تكن الإجابة واضحة، فلا تستخدم اسم العملية أو وصفها للتخمين. استخدم حقولًا صريحة، ومعرّفات فريدة، واختبارات تثبت السلوك.
 
 ---
 
-# 29. AI Implementation Reminder
+## 22. الإلغاء المحاسبي للسيارات والوكالات والمصروفات
 
-When modifying the code, always ask:
+كلمة «حذف» في واجهة المستخدم تعني **إلغاءً محاسبيًا وعكسًا كاملًا**، ولا تعني محو التاريخ المالي من قاعدة البيانات.
 
-1. Is this a real cash movement?
-2. Does it affect Qasa?
-3. Does it affect partner Cash?
-4. Is it only profit recognition?
-5. Does it affect profit?
-6. What is the original source id?
-7. Can this be deleted safely without affecting unrelated rows?
-8. Is this consistent with Instructions.md?
+القواعد الإلزامية:
 
-If the answer is unclear, do not guess by transaction name only.
+1. تبقى العملية الأصلية محفوظة لأغراض التدقيق.
+2. تُنشأ عملية عكس مستقلة تحمل `operation_id` خاصًا بها وترتبط بالعملية الأصلية.
+3. تُلغى كل الصفوف النشطة المرتبطة بالكيان اعتمادًا على المعرّفات الرقمية فقط.
+4. تختفي العملية الملغاة من القوائم والتقارير والأرصدة النشطة.
+5. لا تدخل الصفوف الأصلية والصفوف المعكوسة معًا في الرصيد أو الربح.
+6. لا يجوز تنفيذ `DELETE` فعلي على القيود المالية أو سجل التدقيق.
+7. يجب أن توضح نافذة التأكيد للمستخدم أن القيود والدفعات والأرباح ستُعكس من السجلات النشطة، وأن سجل التدقيق سيبقى محفوظًا.
 
-Use explicit fields and clear source references.
+عند إلغاء سيارة:
 
----
+- تُعكس قيود الشراء والممول أو الشركة ومصروفات السيارة والبيع والقاصة وكاش الشركاء والأرباح.
+- إذا كان البيع بموعد تسليم أو أقساط، تُعكس المقدمة والدفعات المسددة وتُلغى الذمم والأقساط غير المسددة.
+- يُلغى البيع النشط وتتحول السيارة إلى حالة `محذوفة`، ولا تظهر في السيارات المتوفرة أو المباعة.
 
-# 30. Confirmed Architecture Behaviors (Not Bugs)
+عند إلغاء وكالة:
 
-The following behaviors have been reviewed and confirmed as correct. They must not be flagged as bugs by future audits or AI reviews.
+- تُعكس آثارها سواء كانت `واصل` أو `غير واصل`.
+- تُعكس جميع معاملاتها المرتبطة بها بواسطة `agency_id`.
+- لا يبقى ربح أو نقد أو ذمة نشطة ناتجة عنها.
 
-## 30.1 Cash Sale — Cash Movement + Signed Profit Recognition Rows
+عند إلغاء مصروف:
 
-When a car is sold for cash, the system deposits the full selling price to partners in a single `cash_movement` row (affects_qasa = affects_partner_cash = 1, affects_profit = 0). In addition, `rebuild_cash_sale_profit_recognition` creates SIGNED `profit_recognition` rows (source_type = `car_sale`, affects_profit = 1, affects_qasa = affects_partner_cash = 0) carrying the car profit — or the negative loss — split 50/50. `calculate_analytical_profit` reads these `profit_recognition` rows (it does not recompute from the `cars` table). The profit rows never enter Qasa/Cash, so there is no double counting. This is by design and is correct.
-
-## 30.2 Down Payment — Full Two-Effect Treatment
-
-The installment down payment (`sale_down_payment`) is handled by `apply_partner_transaction_splits`, which detects the type prefix "مقدمة" and calls `create_customer_payment_accounting_effects`. This creates the same two effects as any installment payment (cash_movement + profit_recognition). The down payment is NOT missing its effects.
-
-## 30.3 Partner Balance Already Contains Cash Share
-
-Partner `iqd_balance` / `usd_balance` already includes each partner's 50% share of cash (because cash deposits increase the partner's balance). In the Company Status page, `sharedIqd` must NOT include cash again, otherwise cash would be double-counted: once in the partner's direct balance and once in the shared calculation. The formula `sharedIqd = (inventory + receivables - liabilities) / 2` is correct.
-
-## 30.4 Fixed Two Partners
-
-The system has exactly two partners, hardcoded in business logic (50/50 split). Reading partner names from the database is for name resolution only, not for determining the split ratio. Dividing by 2 in read paths (e.g. `get_profit_distribution_summary`) is correct and intentional.
-
-## 30.5 Agency Profit Sources Are Distinct
-
-Agency profits come from two separate, non-overlapping sources: the `agencies.amount_iqd/amount_usd` (initial amounts at agency creation) and `agency_transactions.amount` (subsequent transactions against that agency). These are added together in `calculate_analytical_profit`. This is not double-counting — they represent different events.
-
-## 30.6 Qasa vs Cash — Correct Kind Filtering
-
-- Qasa tab (`قاصه/قاصة`): `affects_qasa = 1 AND kind IN ('شريك', 'مستثمر')` — includes partners and investors.
-- Cash tab (`الكاش`): `affects_partner_cash = 1 AND kind = 'شريك'` — partners only, not investors.
-
-This is correct per sections 2.1 and 2.2.
-
-## 30.7 Profit Rebuild — Must Skip Reversed Rows
-
-When rebuilding profit recognitions (`rebuild_customer_payment_profit_recognitions`), the delete query must filter `COALESCE(is_reversed, 0) = 0`. This prevents resurrecting profit rows that were correctly marked as reversed during a payment reversal.
-
-## 30.8 Down Payment Cap — Must Include Existing Down Payments
-
-When validating a down payment update, the cap check must include all existing down payments for the same sale (not just installment events). The formula is: `new_amount + paid_installments + existing_down_payments <= selling_price`.
-
-## 30.9 Agency Profit — Recognized When Recorded, Cash Only When Received
-
-Per section 13, agency profit `profit_recognition` rows are created as soon as the agency is recorded, even when the payment status is "غير واصل". The `cash_movement` rows are created only when the status is "واصل" (real cash). While unpaid, a receivable row (kind = "وكالة") tracks the amount owed. The ledger always credits `revenue` at record time, debiting `cash` when received or `receivable` while owed.
-
-## 30.10 Deferred Revenue Ledger Account Holds Unearned Profit Only
-
-For installment/term sales, the sale ledger entries follow the installment method: `Dr receivable (selling price)`, `Cr inventory (car cost)`, and `Cr deferred_revenue (full car profit only)`. Loss sales record `Dr expense "خسارة بيع سيارة"` instead of a deferred credit. Each payment's profit recognition transfers `Dr deferred_revenue / Cr revenue` for the profit portion, so the deferred account reaches exactly zero when the full car profit is recognized.
-
-## 30.11 Deterministic 50/50 Split Remainder
-
-When an odd smallest unit cannot be split evenly, the remainder deterministically goes to the FIRST partner (alphabetical order). Rebuilding generated rows therefore always reproduces identical amounts.
+- يبقى المصروف الأصلي محفوظًا بعلامة العكس.
+- يُنشأ مصروف عكسي وتُعكس قيود القاصة وكاش الشركاء والقيود المحاسبية المرتبطة.
+- لا يظهر المصروف الأصلي أو العكسي ضمن المصروفات النشطة.
 
 ---
 
-# 31. ID-Based Design and Agency Cash vs Credit Rules
+## 23. الاختبارات الفعلية الإلزامية
 
-This section defines new mandatory rules added by the forensic re-audit. These rules override any conflicting statement in section 30.
+التفاصيل التنفيذية ومصفوفة الحالات وأوامر التشغيل موجودة في الملف المستقل:
 
-## 31.1 ID-Based Design — Everything Must Have a Unique ID
+[`TEST_INSTRUCTIONS.md`](TEST_INSTRUCTIONS.md)
 
-Every entity in the system must be identified by a unique numeric ID (INTEGER PRIMARY KEY AUTOINCREMENT), never by a text field alone.
+القواعد المختصرة الملزمة:
 
-Entities that already have IDs:
-- `cars.car_number` is the PRIMARY KEY, but every car also has an implicit `rowid`.
-- `partner_transactions.id` — auto-increment.
-- `financial_ledger.id` — auto-increment.
-- `agencies.id` — auto-increment.
-- `agency_transactions.id` — auto-increment.
-- `expenses.id` — auto-increment.
-- `car_expenses.id` — auto-increment.
-- `audit_log.id` — auto-increment.
-- `users.id` — auto-increment.
-
-Entities that must gain IDs (design requirement):
-- All `partner_transactions.source_id` values must reference a numeric ID, never a text name.
-- All `financial_ledger.reference_id` values must reference a numeric ID when the entity type has one.
-- All `audit_log.entity_id` values must reference a numeric ID.
-
-## 31.2 Idempotency Tokens (creation_token)
-
-Every create operation must accept an optional `creation_token` (UUID v4). If the same token is submitted twice, the second request must return the original entity's ID without creating a duplicate.
-
-Entities that must support `creation_token`:
-- `agencies` — already implemented (§31.2.1).
-- `cars` — must be added.
-- `expenses` — must be added.
-- `car_expenses` — must be added.
-- `partner_transactions` (manual entries) — must be added.
-- `agency_transactions` — must be added.
-
-### 31.2.1 Agency creation_token (already implemented)
-
-The `agencies` table has a `creation_token TEXT` column with a `UNIQUE` index. `add_agency` checks for an existing token before inserting. If found, it returns the existing ID.
-
-## 31.3 Duplicate Chassis and Car Numbers — Allowed with Different IDs
-
-A chassis number (`chassis_number`) MAY be shared by multiple car records. Each car record has its own `car_number` (primary key) and its own `rowid`.
-
-When a user adds a car with a chassis number that already exists:
-1. The operation MUST succeed (no rejection).
-2. A new car record is created with a new `car_number`.
-3. If the requested `car_number` already exists, the system auto-generates a unique variant by appending `#2`, `#3`, etc.
-4. The new car has its own independent accounting (own purchase ledger, own sale ledger, own expenses).
-
-This rule supersedes any previous unique constraint on `chassis_number`. The `UNIQUE` index on `chassis_number` (added in migration v31) must be removed or made non-unique.
-
-Rationale: the same physical vehicle may be purchased, sold, and re-purchased multiple times. Each cycle is an independent accounting event with its own cost basis, sale price, and profit.
-
-## 31.4 Agency Cash vs Credit — Profit Recognition Rules
-
-This section REPLACES §30.9 with a stricter rule.
-
-### 31.4.1 Cash Agency (payment_status = "واصل")
-
-When an agency is recorded with `payment_status = "واصل"` (cash received):
-
-1. The full agency amount is recognized as profit immediately.
-2. A `profit_recognition` row is created (`affects_profit = 1`, `affects_qasa = 0`, `affects_partner_cash = 0`).
-3. A `cash_movement` row is created (`affects_profit = 0`, `affects_qasa = 1`, `affects_partner_cash = 1`).
-4. The agency amount appears in:
-   - Profit card (via `affects_profit = 1`).
-   - Qasa tab (via `affects_qasa = 1`).
-   - Cash tab (via `affects_partner_cash = 1`).
-5. No receivable row is created (the cash was received).
-
-### 31.4.2 Credit Agency (payment_status = "غير واصل")
-
-When an agency is recorded with `payment_status = "غير واصل"` (cash NOT received):
-
-1. NO profit is recognized. No `profit_recognition` row is created.
-2. NO cash movement is created. No `cash_movement` row is created.
-3. A receivable row is created (`kind = "وكالة"`, `source_type = "agency"`, `source_role = "agency_receivable"`) tracking the amount owed.
-4. The agency amount does NOT appear in:
-   - Profit card (no `affects_profit = 1` row).
-   - Qasa tab (no `affects_qasa = 1` row).
-   - Cash tab (no `affects_partner_cash = 1` row).
-5. The agency amount DOES appear in:
-   - Receivables (via the `agency_receivable` row).
-   - General operations log (display only).
-
-### 31.4.3 Receiving Payment on a Credit Agency
-
-When the user marks a credit agency as "واصل" (received) — via `set_agency_receivable_status` or by creating a payment transaction through the agency account:
-
-1. The receivable row is reversed (or marked as paid).
-2. A `profit_recognition` row is created (the profit is now recognized).
-3. A `cash_movement` row is created (the cash entered Qasa/Cash).
-4. The agency amount now appears in Profit card, Qasa tab, and Cash tab.
-
-### 31.4.4 Ledger Entries for Agency
-
-Cash agency ledger:
-```text
-Dr cash (قاصه)           agency_amount
-Cr revenue (agency_id)   agency_amount
-```
-
-Credit agency ledger (at record time):
-```text
-Dr receivable (new_agent_name)  agency_amount
-Cr revenue (agency_id)          agency_amount
-```
-
-Wait — this credits revenue, which would show in the profit card via the ledger. To strictly enforce "no profit until paid", the credit agency ledger must instead be:
-
-```text
-Dr receivable (new_agent_name)  agency_amount
-Cr deferred_revenue (agency_id) agency_amount
-```
-
-When the payment is received:
-```text
-Dr cash (قاصه)                  agency_amount
-Cr receivable (new_agent_name)  agency_amount
-Dr deferred_revenue (agency_id) agency_amount
-Cr revenue (agency_id)          agency_amount
-```
-
-This ensures `calculate_analytical_profit` (which reads `affects_profit = 1` rows from `partner_transactions`, NOT the ledger `revenue` account) does not count the agency profit until the `profit_recognition` row is created at payment time.
-
-### 31.4.5 Agency Transactions (subsequent transactions against an existing agency)
-
-`agency_transactions` (added via `add_agency_transaction`) follow the same cash-vs-credit rule:
-- If the agency's `payment_status` is "واصل": the transaction amount is recognized as profit + cash immediately.
-- If the agency's `payment_status` is "غير واصل": the transaction amount is added to the receivable, no profit recognized until paid.
-
-## 31.5 Duplicate Addition Prevention
-
-### 31.5.1 Duplicate Agency Prevention
-
-If `add_agency` is called twice with the same `creation_token`, the second call returns the original agency ID without creating a duplicate.
-
-If `add_agency` is called twice WITHOUT a `creation_token` but with identical data (same `old_agent_name`, `new_agent_name`, `date`, `amount_iqd`, `amount_usd`), the system must NOT create a duplicate. It must detect the duplicate within a 5-second window and return the existing agency ID.
-
-### 31.5.2 Duplicate Expense Prevention
-
-If `add_expense` is called twice with the same `creation_token`, the second call returns the original expense ID without creating a duplicate.
-
-If `add_expense` is called twice WITHOUT a `creation_token` but with identical data (same `description`, `amount`, `date`, `currency`, `car_number`), the system must detect the duplicate within a 5-second window and return the existing expense ID.
-
-### 31.5.3 Duplicate Car Prevention
-
-If `add_car` is called twice with the same `creation_token`, the second call returns without creating a duplicate.
-
-If `add_car` is called twice WITHOUT a `creation_token` but with identical data (same `chassis`, `purchase_price`, `purchase_date`), the system must detect the duplicate within a 5-second window and return without creating a duplicate.
-
-NOTE: This does NOT prevent adding a car with the same `chassis_number` as an existing car — that is allowed (§31.3). It only prevents the EXACT same car record from being inserted twice in rapid succession (double-click protection).
-
-## 31.6 Source Metadata Completeness
-
-Every `partner_transaction` and every `financial_ledger` row must have:
-- `source_type` — non-null, non-empty.
-- `source_id` — non-null, non-empty, references a numeric ID.
-- `source_role` — non-null, non-empty.
-
-Rows that do not meet this requirement are considered corrupt and must be flagged by the audit.
+1. كل إنشاء أو تعديل أو بيع أو دفع أو إلغاء في الاختبارات الشاملة يتم بالنقر والكتابة من واجهة تطبيق Tauri الفعلية.
+2. يمنع استخدام Backend وهمي أو `localStorage` كقاعدة بيانات للاختبارات المحاسبية.
+3. تعمل الاختبارات على ملف SQLite مؤقت ومعزول كليًا عن بيانات المستخدم.
+4. يُسمح بأوامر تشخيص للقراءة فقط، تُبنى حصريًا تحت ميزة Cargo باسم `e2e`، للتحقق الدقيق من القيود والأرباح والأقساط وسجل التدقيق بعد تنفيذ العملية من الواجهة.
+5. لا تدخل أوامر التشخيص في نسخة الإنتاج ولا تملك أي أمر كتابة.
+6. يجب أن تشمل الاختبارات إضافة وبيع وتعديل وإلغاء السيارات بكل أنواع الشراء والبيع، وتعديل الأرباح والمتبقي والأقساط، وإلغاء الوكالات والمصروفات، وفتح نوافذ الإيداع والسحب.
+7. لا تُقبل النتيجة النهائية إلا بعد نجاح اختبارات Rust والواجهة الوحدوية والبناء واختبارات Tauri الفعلية وفحوص سلامة SQLite.
+8. يمنع استخدام التأخير الثابت الطويل؛ تعتمد الاختبارات على انتظار ظهور الحالة المطلوبة، وتعمل بتسلسل واحد لأن قاعدة البيانات مشتركة داخل جلسة الاختبار.
+9. يجب أن يتوازن المدين والدائن لكل `operation_id` ولكل عملة بصورة مستقلة؛ التوازن الإجمالي للقاعدة لا يكفي.
+10. جميع الصفوف المولدة من تسديد شركة أو ممول بواسطة الشريكين تحمل `operation_id` للعملية الأم نفسها.
+11. استلام مبلغ حقيقي من ممول أو شركة يثبت طرف القاصة المقابل، أما التسديد فيستخدم قيود الدفع المولدة من المصدر الفعلي.
+12. صفوف عكس دفعة القسط لا تبقى مؤثرة في رصيد العميل بعد إعادة دفع القسط؛ حالة جدول الأقساط والدفعات النشطة هي المرجع.
+13. تُقسم اختبارات E2E إلى قواعد مستقلة حسب المجال، ويعاد تشغيل تطبيق Tauri والتحقق من الاستمرارية بعد كل مجال.

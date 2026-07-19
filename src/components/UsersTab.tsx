@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { callTauri } from "../api/tauri";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 interface UserInfo {
   id: number;
@@ -24,18 +25,25 @@ export function UsersTab({ onLogout, sessionToken }: UsersTabProps) {
   const [formDisplayName, setFormDisplayName] = useState("");
   const [formError, setFormError] = useState("");
   const [formSuccess, setFormSuccess] = useState("");
+  const [userPendingDeletion, setUserPendingDeletion] = useState<UserInfo | null>(null);
+  const [deletingUser, setDeletingUser] = useState(false);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
+    if (!sessionToken) {
+      setUsers([]);
+      setLoading(false);
+      return;
+    }
     try {
-      const data = await callTauri<UserInfo[]>("get_users");
+      const data = await callTauri<UserInfo[]>("get_users", { sessionToken });
       setUsers(data || []);
     } catch (err) {
       console.error("فشل تحميل المستخدمين:", err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [sessionToken]);
 
   useEffect(() => {
     void loadUsers();
@@ -108,14 +116,17 @@ export function UsersTab({ onLogout, sessionToken }: UsersTabProps) {
     }
   };
 
-  const handleDelete = async (user: UserInfo) => {
-    if (!confirm(`هل أنت متأكد من حذف المستخدم "${user.display_name}"؟`)) return;
-
+  const handleDelete = async () => {
+    if (!userPendingDeletion || deletingUser) return;
+    setDeletingUser(true);
     try {
-      await callTauri("delete_user", { id: user.id, sessionToken });
-      void loadUsers();
+      await callTauri("delete_user", { id: userPendingDeletion.id, sessionToken });
+      setUserPendingDeletion(null);
+      await loadUsers();
     } catch (err) {
       alert(String(err));
+    } finally {
+      setDeletingUser(false);
     }
   };
 
@@ -124,10 +135,14 @@ export function UsersTab({ onLogout, sessionToken }: UsersTabProps) {
       <div className="users-tab__header">
         <h2>إدارة المستخدمين</h2>
         <div className="users-tab__actions">
-          <button className="btn btn--primary" onClick={openNewForm}>
+          <button className="btn btn--primary" onClick={openNewForm} data-testid="btn-add-user">
             + مستخدم جديد
           </button>
-          <button className="btn btn--secondary" onClick={onLogout}>
+          <button
+            className="btn btn--secondary"
+            data-testid="btn-logout"
+            onClick={onLogout}
+          >
             تسجيل الخروج
           </button>
         </div>
@@ -150,7 +165,7 @@ export function UsersTab({ onLogout, sessionToken }: UsersTabProps) {
             <div className="users-tab__empty">لا يوجد مستخدمون</div>
           ) : (
             users.map((user, idx) => (
-              <div key={user.id} className="users-tab__grid row">
+              <div key={user.id} className="users-tab__grid row" data-testid={`user-row-${user.username}`}>
                 <span>{idx + 1}</span>
                 <span>{user.username}</span>
                 <span>{user.display_name}</span>
@@ -160,8 +175,9 @@ export function UsersTab({ onLogout, sessionToken }: UsersTabProps) {
                   </button>
                   <button
                     className="btn btn--small btn--danger"
-                    onClick={() => handleDelete(user)}
+                    onClick={() => setUserPendingDeletion(user)}
                     disabled={user.id === 1}
+                    data-testid={`delete-user-${user.username}`}
                   >
                     حذف
                   </button>
@@ -180,6 +196,7 @@ export function UsersTab({ onLogout, sessionToken }: UsersTabProps) {
               <label>اسم المستخدم</label>
               <input
                 type="text"
+                data-testid="user-username"
                 value={formUsername}
                 onChange={(e) => setFormUsername(e.target.value)}
                 placeholder="أدخل اسم المستخدم"
@@ -190,6 +207,7 @@ export function UsersTab({ onLogout, sessionToken }: UsersTabProps) {
               <label>الاسم المعروض</label>
               <input
                 type="text"
+                data-testid="user-display-name"
                 value={formDisplayName}
                 onChange={(e) => setFormDisplayName(e.target.value)}
                 placeholder="أدخل الاسم المعروض"
@@ -200,6 +218,7 @@ export function UsersTab({ onLogout, sessionToken }: UsersTabProps) {
               <label>{editingUser ? "كلمة المرور الجديدة (اترك فارغاً لعدم التغيير)" : "كلمة المرور"}</label>
               <input
                 type="password"
+                data-testid="user-password"
                 value={formPassword}
                 onChange={(e) => setFormPassword(e.target.value)}
                 placeholder={editingUser ? "اترك فارغاً لعدم التغيير" : "أدخل كلمة المرور"}
@@ -209,12 +228,29 @@ export function UsersTab({ onLogout, sessionToken }: UsersTabProps) {
             {formError && <div className="form-error">{formError}</div>}
             {formSuccess && <div className="form-success">{formSuccess}</div>}
             <div className="form-actions">
-              <button className="btn btn--primary" onClick={handleSave}>حفظ</button>
+              <button className="btn btn--primary" onClick={handleSave} data-testid="btn-save-user">حفظ</button>
               <button className="btn btn--secondary" onClick={() => setShowForm(false)}>إلغاء</button>
             </div>
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={userPendingDeletion !== null}
+        title="حذف المستخدم"
+        message={
+          userPendingDeletion
+            ? `هل أنت متأكد من حذف المستخدم "${userPendingDeletion.display_name}"؟`
+            : ""
+        }
+        confirmLabel="حذف المستخدم"
+        danger
+        loading={deletingUser}
+        onConfirm={() => void handleDelete()}
+        onCancel={() => {
+          if (!deletingUser) setUserPendingDeletion(null);
+        }}
+      />
     </div>
   );
 }

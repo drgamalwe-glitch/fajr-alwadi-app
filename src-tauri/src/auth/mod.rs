@@ -8,7 +8,8 @@
 pub use crate::legacy::{
     add_user, change_password, cleanup_expired_sessions, clear_login_attempts,
     count_recent_login_attempts, create_session, delete_user, get_users, hash_password, login,
-    logout, record_failed_login_attempt, require_admin_session, update_user, verify_password,
+    logout, record_failed_login_attempt, require_admin_session, require_authenticated_session,
+    update_user, verify_password,
 };
 
 // Items not yet enumerated are still accessible via `crate::legacy::*`.

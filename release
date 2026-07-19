@@ -1,25 +1,12 @@
-#!/bin/bash
-set -e
-DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$DIR" || exit 1
-VERSION_FILE="src/version.ts"
+#!/usr/bin/env bash
+set -euo pipefail
 
-CURRENT=$(perl -nle 'print $1 if /APP_VERSION = "([^"]+)"/' "$VERSION_FILE")
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
 
-MAJOR=$(echo "$CURRENT" | cut -d. -f1)
-MINOR=$(echo "$CURRENT" | cut -d. -f2)
-NEW_MINOR=$((MINOR + 1))
-NEW_VERSION="$MAJOR.$NEW_MINOR"
+# بوابة تسليم مختصرة: فحوص المخاطر الأساسية ثم بناء المنصة الحالية فقط.
+npm ci
+npm run test:delivery
+npm run tauri build
 
-echo "🚀 Releasing version $NEW_VERSION ..."
-
-sed -i '' "s/APP_VERSION = \"$CURRENT\"/APP_VERSION = \"$NEW_VERSION\"/" "$VERSION_FILE"
-
-git add .
-git commit -m "Release version $NEW_VERSION"
-git push origin main
-
-git tag -a v$NEW_VERSION -m "Version $NEW_VERSION"
-git push origin v$NEW_VERSION
-
-echo "✅ Released version $NEW_VERSION successfully!"
+echo "GO: بُنيت نسخة التسليم للمنصة الحالية بنجاح."

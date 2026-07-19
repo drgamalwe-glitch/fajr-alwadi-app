@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { cn } from "../lib/utils";
 import { toEnglishDigits } from "../utils/numberInput";
 import {
@@ -32,7 +32,7 @@ export function YearScrollField({
 }: YearScrollFieldProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const composing = useRef(false);
-  const fallback = new Date().getFullYear();
+  const fallback = useMemo(() => new Date().getFullYear(), []);
 
   useEffect(() => {
     if (disabled || composing.current) return;
@@ -44,7 +44,7 @@ export function YearScrollField({
     if (document.activeElement !== el) {
       el.value = normalizeYearValue(value, fallback);
     }
-  }, [value, disabled]);
+  }, [value, disabled, fallback]);
 
   const handleInput = () => {
     if (composing.current) return;

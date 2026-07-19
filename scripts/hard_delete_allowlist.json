@@ -1,0 +1,10 @@
+[
+  {
+    "path": "src-tauri/src/legacy/partners.rs",
+    "function": "delete_partner",
+    "table": "partners",
+    "classification": "non_financial",
+    "reason": "The unused account master row is deleted only after proving no transaction or numeric ledger history exists.",
+    "test_name": "deleting_unused_partner_master_row_is_non_financial"
+  }
+]

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Car } from "../../src/types";
+import {
+  carToForm,
+  hasSoldCarCostAccountingChange,
+} from "../../src/components/carHelpers";
 import { carNetProfit, carProfitPercentage } from "../../src/utils/finance";
 import { moneyAdd, moneySub } from "../../src/utils/money";
 
@@ -105,6 +109,23 @@ describe("Instructions.md §6.1 — Car Cost = Purchase + Car Expenses", () => {
       expenses_sum: "1000000",
     });
     expect(carNetProfit(car).toString()).toBe("9000000");
+  });
+});
+
+describe("Sold financed-car edit routing", () => {
+  it("treats database purchase type دين and UI type تمويل as the same accounting type", () => {
+    const car = makeCar({
+      status: "مبيوعة",
+      purchase_type: "دين",
+      financer_name: "ممول E2E",
+      purchase_price: "20000000",
+      selling_price: "26000000",
+      payment_type: "موعد",
+      amount_paid: "6000000",
+      amount_remaining: "20000000",
+    });
+
+    expect(hasSoldCarCostAccountingChange(car, carToForm(car))).toBe(false);
   });
 });
 

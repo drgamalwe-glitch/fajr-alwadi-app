@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { callTauri } from "../api/tauri";
 import type { CashRegisterEntry } from "../types";
 import { PriceDisplay } from "@/components/ui";
@@ -21,7 +21,7 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
   const [page, setPage] = useState(0);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const data = await callTauri<CashRegisterEntry[]>("get_cash_register_entries", {
@@ -36,11 +36,11 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [paymentType]);
 
   useEffect(() => {
     void load();
-  }, [paymentType]);
+  }, [load]);
 
   const handleSort = (key: string) => {
     setSortConfig((prev) => ({
@@ -84,7 +84,7 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
   };
 
   return (
-    <>
+    <div data-testid="cash-register-root" style={{ display: "contents" }}>
       {totalPages >= 1 && (
         <div className="table-page-dots" aria-label="تنقل بين الصفحات">
           {Array.from({ length: totalPages }, (_, idx) => (
@@ -161,6 +161,6 @@ export function CashRegisterTab({ paymentType }: CashRegisterTabProps) {
         </table>
       </div>
     </section>
-    </>
+    </div>
   );
 }

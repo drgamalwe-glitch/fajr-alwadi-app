@@ -1,0 +1,8 @@
+[advisories]
+informational_warnings = ["unmaintained"]
+
+[output]
+deny = []
+format = "terminal"
+quiet = false
+show_tree = true

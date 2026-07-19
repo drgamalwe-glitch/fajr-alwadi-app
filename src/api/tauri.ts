@@ -110,11 +110,8 @@ function serializeTauriMoneyArgs(value: unknown, key?: string, depth = 0): unkno
 // real backend regressions. There is no browser-only fallback anymore.
 //
 // To run the app: `npm run tauri dev` (opens Tauri webview with live backend).
-// To run E2E tests: set VITE_E2E=1 and start e2e-bridge/server.mjs, which
-// forwards to the real Rust backend over HTTP.
-//
-// Any future need for browser-only testing MUST go through the E2E bridge or
-// a separate fixture system — re-adding a mock layer is FORBIDDEN by §6.2.
+// Focused unit tests use pure fixtures; no browser bridge or mock accounting
+// backend is shipped with the product.
 
 export function buildCarInvokeArgs(form: CarFormState, creationToken?: string) {
   const isSold = form.status === "مبيوعة";
@@ -137,6 +134,8 @@ export function buildCarInvokeArgs(form: CarFormState, creationToken?: string) {
   // FORENSIC FIX (re-audit 2026-07-11, FORENSIC-FRONT-2-4):
   // Pass creationToken to backend for idempotency (§31.2/§31.5.3).
   return {
+    carId: form.carId ?? null,
+    expectedVersion: form.expectedVersion ?? null,
     num: form.num.trim(),
     chassis: form.chassis.trim(),
     model: form.model.trim(),
@@ -173,33 +172,6 @@ export function buildCarInvokeArgs(form: CarFormState, creationToken?: string) {
   };
 }
 
-const E2E_BRIDGE_URL = "http://127.0.0.1:3899/__e2e/invoke";
-
-const isE2E = () =>
-  typeof import.meta !== "undefined" &&
-  import.meta.env?.VITE_E2E === "1";
-
-// E2E bridge is for Playwright tests only. Requires VITE_E2E=1 build flag and a
-// running bridge server on port 3899. Never available in production builds.
-async function e2eInvoke<T>(
-  command: string,
-  args: Record<string, unknown> = {},
-): Promise<T> {
-  // Production guard: the E2E bridge MUST never be reachable from a production
-  // build, even if VITE_E2E was somehow set.
-  if (import.meta.env.PROD) {
-    throw new Error("E2E bridge disabled in production");
-  }
-  const res = await fetch(E2E_BRIDGE_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command, args }),
-  });
-  const json = await res.json();
-  if (json.error) throw new Error(json.error);
-  return (json.data ?? json.result) as T;
-}
-
 export async function callTauri<T>(
   command: string,
   args: Record<string, unknown> = {},
@@ -208,10 +180,6 @@ export async function callTauri<T>(
 
   if (isTauri()) {
     return invoke<T>(command, serializedArgs);
-  }
-
-  if (isE2E()) {
-    return e2eInvoke<T>(command, serializedArgs);
   }
 
   // FORENSIC FIX (re-audit 2026-07-11, MOCK-ISOLATION-1):
@@ -236,15 +204,9 @@ export async function callTauri<T>(
   // IPC) is the single source of truth, both in production AND in
   // development. If you are running the app outside the Tauri webview
   // (e.g. `npm run dev` in a plain browser tab), every callTauri() will
-  // throw a hard error so the failure is impossible to miss. To exercise
-  // the UI without a live backend, use the E2E bridge (VITE_E2E=1) which
-  // forwards to the real Rust backend over HTTP.
+  // throw a hard error so the failure is impossible to miss.
   throw new Error(
-    `[fajr-alwadi] Backend unavailable: Tauri IPC bridge not detected and E2E bridge disabled ` +
-    `(command=${command}). Run the app inside the Tauri webview (npm run tauri dev) ` +
-    `or set VITE_E2E=1 and start the e2e-bridge server. The localStorage mock ` +
-    `layer was removed because it was re-implementing backend logic in TypeScript ` +
-    `and producing false positives during development (§6.2 of the executive prompt).`,
+    `[fajr-alwadi] Backend unavailable: Tauri IPC bridge not detected ` +
+    `(command=${command}). Run the app inside the Tauri webview (npm run tauri dev).`,
   );
 }
-

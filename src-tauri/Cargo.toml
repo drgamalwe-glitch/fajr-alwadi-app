@@ -9,13 +9,16 @@ edition = "2021"
 name = "fajir_alwadi_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = []
+e2e = [
+    "dep:tauri-plugin-wdio",
+    "dep:tauri-plugin-wdio-webdriver",
+]
+
 [build-dependencies]
 # D2: Pin tauri-build to a specific minor version range.
 tauri-build = { version = "2.6", features = [] }
-
-[features]
-default = []
-accounting-test-support = ["tauri/test"]
 
 # Run cargo audit regularly. See deny.toml for license/advisory config.
 # D2: Pin tauri to a specific minor version range to avoid surprise major bumps.
@@ -37,6 +40,8 @@ argon2 = "0.5"
 rand_core = { version = "0.6", features = ["std"] }
 chrono = { version = "0.4", features = ["clock"] }
 urlencoding = "2"
+tauri-plugin-wdio = { version = "1.2", optional = true }
+tauri-plugin-wdio-webdriver = { version = "1.2", optional = true }
 
 [profile.release]
 panic = "abort"

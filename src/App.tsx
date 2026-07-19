@@ -25,7 +25,7 @@ type CarOpenTarget = {
   initialPage?: 0 | 1;
 };
 
-type DashboardSubTab = "dashboard" | "company-status" | "users" | "settings";
+type DashboardSubTab = "dashboard" | "company-status" | "users" | "settings" | "periods";
 type PartnersFinancialSubTab = "customers" | "personal" | "receivables" | "liabilities";
 type CarsSubTab = "available" | "sold";
 const CARS_SUB_TABS = new Set<CarsSubTab>(["available", "sold"]);
@@ -216,6 +216,8 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserInfo | null>(null);
   /** Bug AU3: Session token issued by the Rust backend on login. Passed to admin commands. */
   const [sessionToken, setSessionToken] = useState<string | null>(null);
+  const sessionTokenRef = useRef(sessionToken);
+  useEffect(() => { sessionTokenRef.current = sessionToken; });
   const pendingTabRef = useRef<TabId | null>(null);
   const tabCloseRequestRef = useRef<{ request: (afterClose?: () => void) => void } | null>(null);
   const dirtyRef = useRef(false);
@@ -444,7 +446,7 @@ export default function App() {
         navigateTo(section);
       } else {
         if (section === "dashboard") {
-          const arr: DashboardSubTab[] = ["dashboard", "company-status", "users", "settings"];
+          const arr: DashboardSubTab[] = ["dashboard", "company-status", "users", "settings", "periods"];
           const idx = arr.indexOf(currentDashboardSubTab);
           const nextVal = arr[(idx + 1) % arr.length];
           setCurrentDashboardSubTab(nextVal);
@@ -495,7 +497,7 @@ export default function App() {
         navigateTo(section);
       } else {
         if (section === "dashboard") {
-          const arr: DashboardSubTab[] = ["dashboard", "company-status", "users", "settings"];
+          const arr: DashboardSubTab[] = ["dashboard", "company-status", "users", "settings", "periods"];
           const idx = arr.indexOf(currentDashboardSubTab);
           const nextVal = arr[(idx - 1 + arr.length) % arr.length];
           setCurrentDashboardSubTab(nextVal);
@@ -539,9 +541,11 @@ export default function App() {
     doNavigate();
   }, [activeTab, navigateTo, resetAllSubTabsToDefault, currentDashboardSubTab, currentCarsSubTab, currentPartnersFinancialSubTab, currentFinancialSubTab, currentExpensesSubTab]);
 
-  const refreshData = useCallback(async () => {
-    // A4: reset loading state and clear stale errors so retry button reflects in-progress load.
-    setLoading(true);
+  const refreshData = useCallback(async (options?: { showLoading?: boolean }) => {
+    const showLoading = options?.showLoading === true;
+    // Only the initial load and explicit retry replace the page. Mutations refresh
+    // data in place so an open car/account form keeps its local UI state.
+    if (showLoading) setLoading(true);
     setError(null);
     try {
       const [carsResult, partnersResult] = await Promise.allSettled([
@@ -567,14 +571,14 @@ export default function App() {
     } catch {
       setError("تعذر تحميل البيانات من قاعدة البيانات المحلية.");
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, []);
 
   // A10: ignore flag prevents state updates on unmounted/stale calls.
   useEffect(() => {
     let ignore = false;
-    void refreshData().then(() => {
+    void refreshData({ showLoading: true }).then(() => {
       if (ignore) return;
     });
     return () => { ignore = true; };
@@ -585,7 +589,8 @@ export default function App() {
     document.documentElement.style.setProperty("--background", `url('${currentBg}')`);
     localStorage.setItem(SELECTED_BACKGROUND_STORAGE_KEY, currentBg);
 
-    if (backgroundPersistReady) {
+    const sessionToken = sessionTokenRef.current;
+    if (backgroundPersistReady && sessionToken) {
       callTauri<string>("set_selected_background", { sessionToken, background: currentBg }).catch((err) => {
         console.error("تعذر حفظ الخلفية المختارة في إعدادات التطبيق:", err);
       });
@@ -757,7 +762,7 @@ export default function App() {
     setExportingExcel(true);
     setExportMessage(null);
     try {
-      const filePath = await callTauri<string>("export_database_to_excel", { sessionToken });
+      const filePath = await callTauri<string>("export_database_to_excel", { sessionToken: sessionTokenRef.current });
       setExportMessage(`تم التصدير: ${filePath}`);
     } catch (err) {
       console.error("فشل تصدير Excel:", err);
@@ -819,7 +824,7 @@ export default function App() {
           {error && (
             <div className="alert alert--error" role="alert">
               {error}
-              <button type="button" className="alert-retry" onClick={() => refreshData()}>
+              <button type="button" className="alert-retry" onClick={() => refreshData({ showLoading: true })}>
                 إعادة المحاولة
               </button>
             </div>

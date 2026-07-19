@@ -4,7 +4,7 @@
 - **الحالة**: مقبول (Accepted)
 - **المُقرّر**: فريق التدقيق الجنائي — جولة 11-B
 - **المعرّف في `docs/BUG_REGRESSIONS.md`**: IDEMPOTENCY-1
-- **المراجع**: `Instructions.md` §31.2 و§31.5, `final.md` §2 (Idempotency غير مكتمل)
+- **المراجع**: `Instructions.md` §31.2 و§31.5، `reports/FINAL_REPORT.md`، `docs/BUG_REGRESSIONS.md`
 
 ## السياق
 
@@ -20,7 +20,7 @@
   - إن تغيّر أي حقل (مثلًا notes)، يفشل الكشف.
   - إن جاء الطلب الثاني بعد 6 ثوانٍ، يفشل الكشف.
   - إن جاء الطلب من عملية متوازية (race condition)، قد يفشل الكشف.
-- `final.md` §2 صرّح: "Idempotency غير مكتمل — خطورة عالية. `add_partner_transaction` اليدوي لا يقبل `creation_token` في توقيعه الحالي".
+- كان التدقيق السابق قد صنّف idempotency كمسار غير مكتمل؛ أُغلق ذلك لاحقًا بالمطالبة المركزية وبصمة payload واختبارات replay/رفض الاختلاف.
 
 ### المشكلة الجوهرية
 
@@ -170,7 +170,7 @@ LIMIT 1
 ## مراجع
 
 - `Instructions.md` §31.2 (Idempotency Tokens), §31.5 (Duplicate Addition Prevention).
-- `final.md` §2 — "Idempotency غير مكتمل" (الدافع لهذا القرار).
+- `reports/FINAL_REPORT.md` — دليل إغلاق مسار idempotency ونتائج اختباره.
 - `src-tauri/src/lib.rs` — تنفيذ `creation_token` في كل أمر إنشاء (الأسطر مذكورة في `docs/COMMAND_CATALOG.md`).
 - `src/utils/idempotency.ts` — `newCreationToken()` للواجهة.
 - `docs/SCHEMA.md` — عمود `creation_token` في كل جدول (cars, expenses, car_expenses, partner_transactions, agency_transactions, agencies).

@@ -11,17 +11,10 @@ const normalizePartnerName = (name: string) =>
     .replace(/ى/g, "ي")
     .replace(/\s+/g, " ");
 
-const partnerImages: Record<string, string> = {
-  "منتصر": "/partners/muntasir.jpg",
-  "امير": "/partners/amir.jpg",
-};
-
-const getPartnerImage = (name: string) => {
-  const normalized = normalizePartnerName(name);
-  if (normalized.includes("امير")) return partnerImages["امير"];
-  if (normalized.includes("منتصر")) return partnerImages["منتصر"];
-  return undefined;
-};
+const PARTNER_IMAGE_PATHS = [
+  "/partners/amir.jpg",
+  "/partners/muntasir.jpg",
+];
 
 /**
  * FORENSIC FIX (re-audit 2026-07-11, FRONT-LOGIC-3):
@@ -42,12 +35,14 @@ export function CompanyStatusTab({
   summary,
   unifiedAccounts: _unifiedAccounts,
   partners,
+  sessionToken,
   onNavigateToTab,
   onNavigateToPartner,
 }: {
   summary: FinancialSummary | null;
   unifiedAccounts: UnifiedAccount[];
   partners: Partner[];
+  sessionToken?: string | null;
   onNavigateToTab?: (tab: TabId, subTab?: string) => void;
   onNavigateToPartner?: (target: string | { name: string; kind?: string | null; action?: "deposit" | "withdraw" | "settle_installment"; transactionId?: number | null }) => void;
 }) {
@@ -58,24 +53,26 @@ export function CompanyStatusTab({
     setLoadError(null);
     try {
       const status = await callTauri<CompanyStatus>("get_company_status", {
-        sessionToken: null,
+        sessionToken: sessionToken ?? null,
       });
       setCompanyStatus(status);
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : String(err));
     }
-  }, []);
+  }, [sessionToken]);
 
   useEffect(() => {
     void loadCompanyStatus();
   }, [loadCompanyStatus]);
 
   const sharikPartners = partners.filter((p) => p.kind === "شريك");
-  const amirPartner = sharikPartners.find((p) => normalizePartnerName(p.partner_name).includes("امير"));
-  const muntasirPartner = sharikPartners.find((p) => normalizePartnerName(p.partner_name).includes("منتصر"));
-  const fallbackPartners = sharikPartners.filter((p) => p !== amirPartner && p !== muntasirPartner);
-  const partner1 = amirPartner ?? fallbackPartners[0] ?? null;
-  const partner2 = muntasirPartner ?? fallbackPartners.find((p) => p !== partner1) ?? null;
+  const partner1 = sharikPartners[0] ?? null;
+  const partner2 = sharikPartners[1] ?? null;
+
+  const getPartnerImage = (partnerName: string) => {
+    const idx = sharikPartners.findIndex((p) => p.partner_name === partnerName);
+    return idx >= 0 && idx < PARTNER_IMAGE_PATHS.length ? PARTNER_IMAGE_PATHS[idx] : undefined;
+  };
   if (!summary || !companyStatus) {
     return (
       <div className="wadhisharikah-container">
