@@ -1,8 +1,42 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR" || exit 1
 VERSION_FILE="src/version.ts"
+REMOTE="origin"
+TARGET_BRANCH="main"
+
+if ! git remote get-url "$REMOTE" >/dev/null 2>&1; then
+  echo "❌ Git remote '$REMOTE' is not configured."
+  echo "   Configure it first, for example: git remote add origin <repository-url>"
+  exit 1
+fi
+
+BRANCH=$(git branch --show-current)
+if [ -z "$BRANCH" ]; then
+  echo "❌ Cannot release from a detached HEAD. Switch to a branch first."
+  exit 1
+fi
+if [ "$BRANCH" != "$TARGET_BRANCH" ]; then
+  echo "❌ Releases must be created from '$TARGET_BRANCH' (current branch: '$BRANCH')."
+  echo "   Switch first: git switch $TARGET_BRANCH"
+  exit 1
+fi
+
+if [ -n "$(git status --porcelain)" ]; then
+  echo "❌ The working tree is not clean. Commit or stash your changes first."
+  exit 1
+fi
+
+git fetch "$REMOTE" "$TARGET_BRANCH" --tags
+if ! git merge-base --is-ancestor "$REMOTE/$TARGET_BRANCH" HEAD; then
+  echo "❌ Local '$TARGET_BRANCH' is not up to date with '$REMOTE/$TARGET_BRANCH'."
+  echo "   Pull or merge the remote changes before releasing."
+  exit 1
+fi
+
+# Verify remote access and branch safety before changing the version locally.
+git push --dry-run "$REMOTE" "$TARGET_BRANCH"
 
 CURRENT=$(perl -nle 'print $1 if /APP_VERSION = "([^"]+)"/' "$VERSION_FILE")
 
@@ -15,11 +49,9 @@ echo "🚀 Releasing version $NEW_VERSION ..."
 
 sed -i '' "s/APP_VERSION = \"$CURRENT\"/APP_VERSION = \"$NEW_VERSION\"/" "$VERSION_FILE"
 
-git add .
+git add "$VERSION_FILE"
 git commit -m "Release version $NEW_VERSION"
-git push origin main
-
-git tag -a v$NEW_VERSION -m "Version $NEW_VERSION"
-git push origin v$NEW_VERSION
+git tag -a "v$NEW_VERSION" -m "Version $NEW_VERSION"
+git push --atomic -u "$REMOTE" "$TARGET_BRANCH" "v$NEW_VERSION"
 
 echo "✅ Released version $NEW_VERSION successfully!"
